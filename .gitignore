@@ -1,0 +1,44 @@
+# Secrets & credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+proxy.txt
+.user.ini
+
+# Dependencies & build output
+node_modules/
+vendor/
+frontend/dist/
+whatsapp-engine/dist/
+whatsapp-engine/data/
+backend/public/assets/
+backend/public/index.html
+
+# Auth sessions & runtime caches
+.wwebjs_auth/
+.wwebjs_cache/
+.baileys_auth/
+.auth/
+
+# Storage & uploaded media
+backend/public/storage/
+
+# Logs
+*.log
+logs/
+
+# Archives & database dumps
+*.tar.gz
+*.tgz
+*.sql
+*.sql.gz
+*.sqlite
+*.wav
+
+# OS & editor
+.DS_Store
+*.swp
+*.swo
+*~
