@@ -34,6 +34,7 @@ logs/
 *.tgz
 *.sql
 *.sql.gz
+!database_dump.sql.gz
 *.sqlite
 *.wav
 
