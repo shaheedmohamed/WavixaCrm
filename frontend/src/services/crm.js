@@ -285,6 +285,40 @@ class CrmService {
     const resp = await this.client().get(`/conversations/${id}/media`);
     return resp.data;
   }
+
+  // CRM Pricing & Plans
+  async getPricingPlans() {
+    const token = this.getToken();
+    const resp = await axios.get(`${API_BASE}/crm/plans`, {
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+    return resp.data;
+  }
+
+  async calculateQuote(payload) {
+    const resp = await axios.post(`${API_BASE}/crm/plans/calculate`, payload);
+    return resp.data;
+  }
+
+  async subscribePlan(planSlug, paymentMethod = 'demo_checkout') {
+    const resp = await this.client().post('/plans/subscribe', {
+      plan_slug: planSlug,
+      payment_method: paymentMethod,
+    });
+    return resp.data;
+  }
+
+  async purchaseAddon(addonType, quantity = 1, messageTier = 'tier_1k') {
+    const resp = await this.client().post('/plans/addons/purchase', {
+      addon_type: addonType,
+      quantity,
+      message_tier: messageTier,
+    });
+    return resp.data;
+  }
 }
 
 export default new CrmService();

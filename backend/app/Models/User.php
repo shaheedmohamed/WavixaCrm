@@ -53,6 +53,9 @@ class User extends Authenticatable
         'crm_parent_id',
         'crm_assigned_sessions',
         'crm_group_id',
+        'crm_plan_id',
+        'crm_custom_agents_limit',
+        'crm_custom_sessions_limit',
     ];
 
     /**

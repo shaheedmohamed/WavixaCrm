@@ -133,6 +133,12 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     // Public CRM auth route
     Route::post('/crm/auth/login', [\App\Http\Controllers\Api\CrmController::class, 'login'])->middleware('throttle:auth');
 
+    // CRM Pricing & Plans (Public + Authenticated quote & catalog)
+    Route::get('/crm/plans', [\App\Http\Controllers\Api\CrmPricingController::class, 'index'])
+        ->middleware('throttle:public');
+    Route::post('/crm/plans/calculate', [\App\Http\Controllers\Api\CrmPricingController::class, 'calculate'])
+        ->middleware('throttle:public');
+
     // CRM media resolver — used by <img>/<audio> tags which cannot send
     // Authorization headers; the sanctum token is validated from ?token=.
     Route::get('/crm/media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamMedia'])
@@ -207,6 +213,10 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/auto-reply', [AutoReplyController::class, 'saveSettings']);
         Route::get('/auto-reply/logs', [AutoReplyController::class, 'getLogs']);
         Route::post('/auto-reply/test-ai', [AutoReplyController::class, 'testAI']);
+
+        // CRM Subscription & Add-ons purchase for authenticated owners
+        Route::post('/plans/subscribe', [\App\Http\Controllers\Api\CrmPricingController::class, 'subscribe']);
+        Route::post('/plans/addons/purchase', [\App\Http\Controllers\Api\CrmPricingController::class, 'purchaseAddon']);
 
         // Voice calls via the WhatsApp Web call bridge
         Route::get('/call/state', [\App\Http\Controllers\Api\CrmCallController::class, 'state']);

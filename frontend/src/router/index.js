@@ -110,6 +110,7 @@ import CrmAdminActivity from '@/pages/crm/admin/AdminActivity.vue';
 import CrmChat from '@/pages/crm/CrmChat.vue';
 import CrmStatuses from '@/pages/crm/CrmStatuses.vue';
 import CrmAutoReply from '@/pages/crm/CrmAutoReply.vue';
+import CrmPricing from '@/pages/crm/CrmPricing.vue';
 import crm from '@/services/crm';
 
 const routes = [
@@ -648,7 +649,19 @@ const routes = [
         component: CrmAutoReply,
         meta: { isCrm: true, requiresOwner: true },
       },
+      {
+        path: 'plans',
+        name: 'CrmPlans',
+        component: CrmPricing,
+        meta: { isCrm: true, requiresAuth: false },
+      },
     ],
+  },
+  {
+    path: '/crm/pricing',
+    name: 'CrmPricingStandalone',
+    component: CrmPricing,
+    meta: { requiresAuth: false, isCrm: true },
   },
   {
     path: '/',

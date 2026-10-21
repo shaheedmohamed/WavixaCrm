@@ -115,9 +115,20 @@
           <h1 class="text-2xl xs:text-3xl sm:text-5xl font-black text-white leading-tight mb-2 sm:mb-3">
             {{ t('landing.pricing_title') }}
           </h1>
-          <p class="text-xs sm:text-base text-slate-300 max-w-xl mx-auto leading-relaxed font-medium">
+          <p class="text-xs sm:text-base text-slate-300 max-w-xl mx-auto leading-relaxed font-medium mb-4">
             {{ t('landing.pricing_subtitle') }}
           </p>
+
+          <!-- Banner link to Multi-Agent CRM Pricing -->
+          <div class="inline-flex flex-col sm:flex-row items-center gap-2 p-2 px-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 text-xs">
+            <span class="text-emerald-400 font-bold">تبحث عن نظام CRM متعدد الوكلاء لإدارة محادثات واتساب؟</span>
+            <router-link
+              to="/crm/pricing"
+              class="px-3 py-1 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black transition-all shadow-md active:scale-95 text-[11px]"
+            >
+              استعراض باقات Wavixa CRM ←
+            </router-link>
+          </div>
         </div>
       </section>
 

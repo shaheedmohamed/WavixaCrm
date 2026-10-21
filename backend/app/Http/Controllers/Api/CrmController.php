@@ -11,6 +11,7 @@ use App\Services\FraudDetectionService;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use App\Models\WhatsAppSession;
+use App\Services\CrmSubscriptionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
@@ -24,9 +25,11 @@ class CrmController extends Controller
 {
     private string $engineUrl;
     private string $apiKey;
+    protected CrmSubscriptionService $subscriptionService;
 
-    public function __construct()
+    public function __construct(CrmSubscriptionService $subscriptionService)
     {
+        $this->subscriptionService = $subscriptionService;
         $this->engineUrl = rtrim(config('services.whatsapp.url', 'http://127.0.0.1:3005'), '/');
         $this->apiKey = config('services.whatsapp.api_key', 'wavixa-local-api-key-2026');
     }
@@ -175,6 +178,14 @@ class CrmController extends Controller
             $groupName = CrmGroup::whereKey($user->crm_group_id)->value('name');
         }
 
+        $owner = $this->resolveOwner();
+        $planLimits = null;
+        try {
+            $planLimits = $this->subscriptionService->getOwnerCrmLimits($owner);
+        } catch (\Throwable $e) {
+            Log::warning("Could not compute CRM limits for user {$user->id}: " . $e->getMessage());
+        }
+
         return [
             'id' => $user->id,
             'name' => $user->name,
@@ -184,6 +195,7 @@ class CrmController extends Controller
             'assigned_sessions' => $user->crm_assigned_sessions ?? [],
             'group_id' => $user->crm_group_id,
             'group_name' => $groupName,
+            'limits' => $planLimits,
         ];
     }
 
@@ -362,6 +374,17 @@ class CrmController extends Controller
         }
 
         $owner = $this->resolveOwner();
+
+        try {
+            $this->subscriptionService->assertCanAddDevice($owner);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'code' => 'DEVICE_LIMIT_REACHED',
+            ], 403);
+        }
+
         $existingCount = WhatsAppSession::where('user_id', $owner->id)->count();
         $autoName = 'ج' . ($existingCount + 1);
 
@@ -667,6 +690,16 @@ class CrmController extends Controller
         }
 
         $owner = $this->resolveOwner();
+
+        try {
+            $this->subscriptionService->assertCanAddAgent($owner);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'code' => 'AGENT_LIMIT_REACHED',
+            ], 403);
+        }
 
         $request->validate([
             'name' => 'required|string|max:100',
@@ -1500,6 +1533,17 @@ class CrmController extends Controller
             return $this->lockedResponse($locker);
         }
 
+        $owner = $this->resolveOwner();
+        try {
+            $this->subscriptionService->assertCanSendMessage($owner);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'code' => 'MESSAGE_LIMIT_REACHED',
+            ], 403);
+        }
+
         $session = $conversation->session;
         if ($request->filled('session_id') && in_array($request->session_id, $allowedSessionIds)) {
             $session = WhatsAppSession::find($request->session_id) ?: $session;
@@ -1688,6 +1732,17 @@ class CrmController extends Controller
 
         if ($locker = $this->conversationLocker($conversation, $request->user())) {
             return $this->lockedResponse($locker);
+        }
+
+        $owner = $this->resolveOwner();
+        try {
+            $this->subscriptionService->assertCanSendMessage($owner);
+        } catch (\RuntimeException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+                'code' => 'MESSAGE_LIMIT_REACHED',
+            ], 403);
         }
 
         $session = $conversation->session;

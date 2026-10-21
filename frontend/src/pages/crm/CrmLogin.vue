@@ -91,8 +91,16 @@
       </div>
 
       <!-- Footer Info -->
-      <div class="text-center mt-6 text-xs text-slate-500">
-        &copy; 2026 Wavixa Platform — نظام المحادثات وخدمة العملاء متعدد الأجهزة
+      <div class="text-center mt-6 text-xs text-slate-500 space-y-2">
+        <div>
+          <router-link to="/crm/pricing" class="text-emerald-400 hover:text-emerald-300 font-bold transition-colors inline-flex items-center gap-1">
+            <span>استعراض باقات وأسعار Wavixa CRM</span>
+            <span>←</span>
+          </router-link>
+        </div>
+        <div>
+          &copy; 2026 Wavixa Platform — نظام المحادثات وخدمة العملاء متعدد الأجهزة
+        </div>
       </div>
     </div>
   </div>
