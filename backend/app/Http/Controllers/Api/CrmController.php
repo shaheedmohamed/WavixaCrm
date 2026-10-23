@@ -178,10 +178,9 @@ class CrmController extends Controller
             $groupName = CrmGroup::whereKey($user->crm_group_id)->value('name');
         }
 
-        $owner = $this->resolveOwner();
         $planLimits = null;
         try {
-            $planLimits = $this->subscriptionService->getOwnerCrmLimits($owner);
+            $planLimits = $this->subscriptionService->getOwnerCrmLimits($this->resolveOwnerFor($user));
         } catch (\Throwable $e) {
             Log::warning("Could not compute CRM limits for user {$user->id}: " . $e->getMessage());
         }
