@@ -899,10 +899,6 @@ class WhatsAppWebhookController extends Controller
                 if ($phone && $conversation->contact_phone !== $phone) {
                     $convUpdates['contact_phone'] = $phone;
                 }
-                if (isset($conv['unreadCount']) && ($conversation->unread_count ?? 0) < (int) $conv['unreadCount']) {
-                    $convUpdates['unread_count'] = (int) $conv['unreadCount'];
-                }
-
                 $lastMsg = collect($msgs)->sortByDesc('timestamp')->first();
                 // Conversation-level fallback travels in milliseconds on some
                 // proto versions — normalize to seconds before Carbon sees it.
@@ -927,6 +923,21 @@ class WhatsAppWebhookController extends Controller
                                         : WhatsAppMessage::STATUS_SENT))
                                 : WhatsAppMessage::STATUS_DELIVERED;
                         }
+                    }
+                }
+                // Phone-side truth: a chat the owner read on the WhatsApp app
+                // carries unreadCount 0 in the sync payload. Lowering our
+                // counter is safe only when this chunk is at least as fresh as
+                // what we already store — a stale chunk must never erase a
+                // live unread badge.
+                if (isset($conv['unreadCount'])) {
+                    $syncUnread = (int) $conv['unreadCount'];
+                    $storedUnread = (int) ($conversation->unread_count ?? 0);
+                    $chunkIsFresh = !$newestTs
+                        || !$conversation->last_message_at
+                        || (int) $newestTs >= $conversation->last_message_at->getTimestamp();
+                    if ($syncUnread > $storedUnread || ($syncUnread < $storedUnread && $chunkIsFresh)) {
+                        $convUpdates['unread_count'] = $syncUnread;
                     }
                 }
                 if ($convUpdates) {
@@ -1192,6 +1203,12 @@ class WhatsAppWebhookController extends Controller
                 if ($conversation->resolved_at) {
                     $convUpdate['resolved_at'] = null;
                     $convUpdate['resolved_by'] = null;
+                }
+            } else {
+                // Reply sent straight from the WhatsApp app — the owner has
+                // clearly seen this chat, so a stale unread badge is wrong.
+                if (($conversation->unread_count ?? 0) > 0) {
+                    $convUpdate['unread_count'] = 0;
                 }
             }
             if ($senderName && (!$conversation->contact_name || str_starts_with($conversation->contact_name, '+'))) {

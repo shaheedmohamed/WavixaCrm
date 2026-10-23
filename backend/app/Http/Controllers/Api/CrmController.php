@@ -1623,6 +1623,7 @@ class CrmController extends Controller
                 'last_message_status' => 'sent',
                 'last_message_at' => now(),
                 'last_outgoing_user_id' => $request->user()->id,
+                'unread_count' => 0,
             ]);
 
             // Broadcast so other agents/devices with the CRM open see the
@@ -1931,6 +1932,7 @@ class CrmController extends Controller
                 'last_message_status' => 'sent',
                 'last_message_at' => now(),
                 'last_outgoing_user_id' => $request->user()->id,
+                'unread_count' => 0,
             ]);
 
             // Broadcast so other agents/devices with the CRM open see the
@@ -2300,6 +2302,7 @@ class CrmController extends Controller
             'last_message_status' => 'sent',
             'last_message_at' => now(),
             'last_outgoing_user_id' => $request->user()->id,
+            'unread_count' => 0,
         ]);
 
         try {
