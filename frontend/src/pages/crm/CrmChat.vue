@@ -234,6 +234,11 @@
                   :title="'المحادثة محجوزة لهذا الموظف'"
                 >مع {{ assignedName(c) }}</span>
                 <span
+                  v-else-if="c.last_outgoing_user_id"
+                  class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-300 whitespace-nowrap"
+                  :title="'آخر موظف رد على هذه المحادثة'"
+                >رد: {{ lastSenderName(c) }}</span>
+                <span
                   v-else-if="c.resolved_at"
                   class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-500/15 text-emerald-300 whitespace-nowrap"
                 >✓ مكتمل</span>
@@ -402,6 +407,11 @@
               v-if="activeConv.assigned_agent_id"
               class="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[11px] font-bold whitespace-nowrap"
             >مع {{ assignedName(activeConv) }}</span>
+            <span
+              v-else-if="activeConv.last_outgoing_user_id"
+              class="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-300 text-[11px] font-bold whitespace-nowrap"
+              :title="'آخر موظف رد على هذه المحادثة'"
+            >آخر رد: {{ lastSenderName(activeConv) }}</span>
             <span
               v-else-if="activeConv.resolved_at"
               class="px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 text-[11px] font-bold whitespace-nowrap"
@@ -1476,6 +1486,7 @@ const lockedByOther = computed(() => {
   return c.assigned_agent_id !== user.value?.id;
 });
 const assignedName = (c) => c?.assigned_agent?.name || (c?.assigned_agent_id === user.value?.id ? user.value?.name : 'موظف');
+const lastSenderName = (c) => c?.last_outgoing_user?.name || (c?.last_outgoing_user_id === user.value?.id ? user.value?.name : 'موظف');
 
 const openResolveModal = () => {
   resolveRating.value = activeConv.value?.rating || 0;

@@ -105,7 +105,7 @@ class CrmController extends Controller
     private function broadcastConversation(WhatsAppConversation $conversation): void
     {
         try {
-            $conversation->loadMissing(['assignedAgent:id,name', 'resolvedBy:id,name']);
+            $conversation->loadMissing(['assignedAgent:id,name', 'resolvedBy:id,name', 'lastOutgoingUser:id,name']);
             event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'conversation.update', [
                 'conversation' => array_merge(
                     $conversation->only([
@@ -113,7 +113,7 @@ class CrmController extends Controller
                         'contact_avatar', 'last_message', 'last_message_at',
                         'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
-                        'rating', 'rating_note',
+                        'rating', 'rating_note', 'last_outgoing_user_id',
                     ]),
                     [
                         'assigned_agent' => $conversation->assignedAgent ? [
@@ -123,6 +123,10 @@ class CrmController extends Controller
                         'resolved_by_agent' => $conversation->resolvedBy ? [
                             'id' => $conversation->resolvedBy->id,
                             'name' => $conversation->resolvedBy->name,
+                        ] : null,
+                        'last_outgoing_user' => $conversation->lastOutgoingUser ? [
+                            'id' => $conversation->lastOutgoingUser->id,
+                            'name' => $conversation->lastOutgoingUser->name,
                         ] : null,
                     ]
                 ),
@@ -1085,6 +1089,7 @@ class CrmController extends Controller
                 'session:id,device_name,phone_number',
                 'assignedAgent:id,name',
                 'resolvedBy:id,name',
+                'lastOutgoingUser:id,name',
             ])
             ->whereIn('session_id', $allowedSessionIds);
 
@@ -1617,6 +1622,7 @@ class CrmController extends Controller
                 'last_message_direction' => 'outgoing',
                 'last_message_status' => 'sent',
                 'last_message_at' => now(),
+                'last_outgoing_user_id' => $request->user()->id,
             ]);
 
             // Broadcast so other agents/devices with the CRM open see the
@@ -1625,11 +1631,15 @@ class CrmController extends Controller
                 event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'message.new', [
                     'session_id' => $session->id,
                     'conversation_id' => $conversation->id,
-                    'conversation' => $conversation->only([
-                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
-                        'contact_avatar', 'last_message', 'last_message_at',
-                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
-                    ]),
+                    'conversation' => array_merge(
+                        $conversation->only([
+                            'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                            'contact_avatar', 'last_message', 'last_message_at',
+                            'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                            'last_outgoing_user_id',
+                        ]),
+                        ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                    ),
                     'message' => $msgRecord->toArray(),
                 ]));
             } catch (\Throwable $e) {
@@ -1920,6 +1930,7 @@ class CrmController extends Controller
                 'last_message_direction' => 'outgoing',
                 'last_message_status' => 'sent',
                 'last_message_at' => now(),
+                'last_outgoing_user_id' => $request->user()->id,
             ]);
 
             // Broadcast so other agents/devices with the CRM open see the
@@ -1929,11 +1940,15 @@ class CrmController extends Controller
                 event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'message.new', [
                     'session_id' => $session->id,
                     'conversation_id' => $conversation->id,
-                    'conversation' => $conversation->only([
-                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
-                        'contact_avatar', 'last_message', 'last_message_at',
-                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
-                    ]),
+                    'conversation' => array_merge(
+                        $conversation->only([
+                            'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                            'contact_avatar', 'last_message', 'last_message_at',
+                            'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                            'last_outgoing_user_id',
+                        ]),
+                        ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                    ),
                     'message' => $msgRecord->toArray(),
                 ]));
             } catch (\Throwable $e) {
@@ -2284,17 +2299,22 @@ class CrmController extends Controller
             'last_message_direction' => 'outgoing',
             'last_message_status' => 'sent',
             'last_message_at' => now(),
+            'last_outgoing_user_id' => $request->user()->id,
         ]);
 
         try {
             event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'message.new', [
                 'session_id' => $session->id,
                 'conversation_id' => $conv->id,
-                'conversation' => $conv->only([
-                    'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
-                    'contact_avatar', 'last_message', 'last_message_at',
-                    'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
-                ]),
+                'conversation' => array_merge(
+                    $conv->only([
+                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                        'contact_avatar', 'last_message', 'last_message_at',
+                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                        'last_outgoing_user_id',
+                    ]),
+                    ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                ),
                 'message' => $msgRecord->toArray(),
             ]));
         } catch (\Throwable $e) {

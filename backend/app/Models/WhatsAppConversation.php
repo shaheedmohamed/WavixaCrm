@@ -28,6 +28,7 @@ class WhatsAppConversation extends Model
         'is_pinned',
         'assigned_agent_id',
         'assigned_at',
+        'last_outgoing_user_id',
         'resolved_at',
         'resolved_by',
         'rating',
@@ -69,6 +70,11 @@ class WhatsAppConversation extends Model
     public function resolvedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'resolved_by');
+    }
+
+    public function lastOutgoingUser(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'last_outgoing_user_id');
     }
 
     public function logs(): HasMany
