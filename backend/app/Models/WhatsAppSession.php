@@ -27,6 +27,7 @@ class WhatsAppSession extends Model
         'history_synced_messages',
         'history_sync_request_id',
         'history_synced_at',
+        'history_sync_last_chunk_at',
     ];
 
     protected $casts = [
@@ -34,6 +35,7 @@ class WhatsAppSession extends Model
         'last_activity_at' => 'datetime',
         'qr_generated_at' => 'datetime',
         'history_synced_at' => 'datetime',
+        'history_sync_last_chunk_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

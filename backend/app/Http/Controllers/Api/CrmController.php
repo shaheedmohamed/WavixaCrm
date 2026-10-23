@@ -582,6 +582,7 @@ class CrmController extends Controller
                     'history_synced_conversations' => 0,
                     'history_synced_messages' => 0,
                     'history_sync_request_id' => null,
+                    'history_sync_last_chunk_at' => now(),
                 ]);
             }
             return response()->json([
@@ -604,7 +605,7 @@ class CrmController extends Controller
     {
         $owner = $this->resolveOwner();
         $devices = WhatsAppSession::where('user_id', $owner->id)
-            ->get(['id', 'device_name', 'status', 'history_sync_progress', 'history_synced_conversations', 'history_synced_messages', 'history_synced_at', 'last_activity_at'])
+            ->get(['id', 'device_name', 'status', 'history_sync_progress', 'history_synced_conversations', 'history_synced_messages', 'history_synced_at', 'history_sync_last_chunk_at'])
             ->map(fn ($s) => [
                 'id' => $s->id,
                 'device_name' => $s->device_name,
@@ -613,12 +614,13 @@ class CrmController extends Controller
                 'synced_conversations' => (int) $s->history_synced_conversations,
                 'synced_messages' => (int) $s->history_synced_messages,
                 'synced_at' => $s->history_synced_at,
-                // A sync counts as live only while chunks keep arriving —
-                // otherwise a stalled sync would pin the bar forever.
+                // A sync counts as live only while real chunks keep arriving —
+                // last_activity_at is refreshed by ordinary incoming messages
+                // and would pin the bar forever on a busy device.
                 'syncing' => $s->history_sync_progress > 0
                     && $s->history_sync_progress < 100
-                    && $s->last_activity_at
-                    && $s->last_activity_at->gt(now()->subMinutes(3)),
+                    && $s->history_sync_last_chunk_at
+                    && $s->history_sync_last_chunk_at->gt(now()->subMinutes(5)),
             ]);
 
         return response()->json(['success' => true, 'devices' => $devices]);

@@ -1023,6 +1023,7 @@ class WhatsAppWebhookController extends Controller
 
             $syncUpdates = [
                 'last_activity_at' => now(),
+                'history_sync_last_chunk_at' => now(),
                 'history_synced_conversations' => DB::raw('history_synced_conversations + ' . $convsSeen),
                 'history_synced_messages' => DB::raw('history_synced_messages + ' . $imported),
             ];
