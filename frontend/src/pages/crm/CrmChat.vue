@@ -1,14 +1,14 @@
 <template>
-  <div class="h-full flex overflow-hidden bg-[#111b21] text-[#e9edef] font-sans antialiased relative" dir="rtl">
+  <div class="h-full flex overflow-hidden bg-[#18242b] text-[#f0f2f5] font-sans antialiased relative" dir="rtl">
     <!-- Boot splash — stays up until devices + conversations resolve once -->
     <Transition name="wx-fade">
-      <div v-if="initialLoading" class="absolute inset-0 z-50 bg-[#111b21] flex flex-col items-center justify-center">
+      <div v-if="initialLoading" class="absolute inset-0 z-50 bg-[#18242b] flex flex-col items-center justify-center">
         <img src="/logo.png" alt="Wavixa" class="w-20 h-20 object-contain" />
-        <div class="text-3xl font-light text-[#e9edef] mt-3 tracking-wide">Wavixa</div>
-        <div class="w-56 h-[3px] rounded-full bg-[#8696a0]/20 overflow-hidden mt-14">
+        <div class="text-3xl font-light text-[#f0f2f5] mt-3 tracking-wide">Wavixa</div>
+        <div class="w-56 h-[3px] rounded-full bg-[#96a4ad]/20 overflow-hidden mt-14">
           <span class="wx-progress"></span>
         </div>
-        <div class="flex items-center gap-1.5 text-[#8696a0] text-xs mt-5">
+        <div class="flex items-center gap-1.5 text-[#96a4ad] text-xs mt-5">
           <svg width="12" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 1 1 6 0v3H9z"/></svg>
           مشفرة تمامًا بين الطرفين
         </div>
@@ -17,18 +17,18 @@
 
     <!-- LEFT PANEL: Conversation List -->
     <aside
-      class="w-full md:w-[380px] lg:w-[420px] bg-[#111b21] border-l border-[#222e35] flex flex-col shrink-0 z-10 transition-all duration-200"
+      class="w-full md:w-[380px] lg:w-[420px] bg-[#18242b] border-l border-[#2c3c45] flex flex-col shrink-0 z-10 transition-all duration-200"
       :class="{ 'max-md:hidden': activeConv && !showListOnMobile }"
     >
       <!-- WhatsApp List Header -->
-      <div class="h-16 bg-[#202c33] px-4 flex items-center justify-between border-b border-[#222e35] shrink-0">
+      <div class="h-16 bg-[#25343d] px-4 flex items-center justify-between border-b border-[#2c3c45] shrink-0">
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-sm shadow">
             {{ userInitial }}
           </div>
           <div>
-            <h2 class="text-sm font-bold text-[#e9edef] leading-tight">{{ user?.name || 'مستخدم CRM' }}</h2>
-            <p class="text-[11px] text-[#8696a0]">
+            <h2 class="text-sm font-bold text-[#f0f2f5] leading-tight">{{ user?.name || 'مستخدم CRM' }}</h2>
+            <p class="text-[11px] text-[#96a4ad]">
               {{ isOwner ? 'مسؤول النظام' : (user?.group_name || 'خدمة العملاء') }}
               <span
                 v-if="isAgent"
@@ -44,7 +44,7 @@
           <!-- Start New Chat -->
           <button
             @click="showNewChatModal = true"
-            class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors"
+            class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
             title="محادثة جديدة"
           >
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -55,7 +55,7 @@
           <!-- Refresh button -->
           <button
             @click="loadConversations"
-            class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors"
+            class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
             :class="{ 'animate-spin': loadingConvs }"
             title="تحديث المحادثات"
           >
@@ -67,7 +67,7 @@
       </div>
 
       <!-- Search & Filters -->
-      <div class="p-2.5 bg-[#111b21] border-b border-[#222e35] space-y-2 shrink-0">
+      <div class="p-2.5 bg-[#18242b] border-b border-[#2c3c45] space-y-2 shrink-0">
         <!-- Search Input -->
         <div class="relative">
           <input
@@ -75,9 +75,9 @@
             @input="debouncedSearch"
             type="text"
             placeholder="بحث في المحادثات أو الأرقام..."
-            class="w-full bg-[#202c33] text-[#d1d7db] placeholder-[#8696a0] text-xs rounded-lg pl-3 pr-9 py-2 focus:outline-none focus:ring-1 focus:ring-[#00a884]"
+            class="w-full bg-[#25343d] text-[#dfe5e8] placeholder-[#96a4ad] text-xs rounded-lg pl-3 pr-9 py-2 focus:outline-none focus:ring-1 focus:ring-[#00a884]"
           />
-          <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#8696a0]">
+          <div class="absolute inset-y-0 right-3 flex items-center pointer-events-none text-[#96a4ad]">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
           </div>
         </div>
@@ -116,7 +116,7 @@
             <select
               v-model="filterSessionId"
               @change="loadConversations"
-              class="bg-[#202c33] text-xs text-[#aebac1] font-semibold rounded-full px-3 py-1 pr-6 border-0 focus:outline-none focus:ring-1 focus:ring-[#00a884] cursor-pointer"
+              class="bg-[#25343d] text-xs text-[#aebac1] font-semibold rounded-full px-3 py-1 pr-6 border-0 focus:outline-none focus:ring-1 focus:ring-[#00a884] cursor-pointer"
             >
               <option :value="null">كل الأجهزة</option>
               <option v-for="d in devices" :key="d.id" :value="d.id">
@@ -128,7 +128,7 @@
       </div>
 
       <!-- History sync progress — chats being pulled from WhatsApp -->
-      <div v-if="syncingDevices.length" class="px-3 py-2.5 border-b border-[#202c33] bg-[#111b21] space-y-2.5 shrink-0">
+      <div v-if="syncingDevices.length" class="px-3 py-2.5 border-b border-[#25343d] bg-[#18242b] space-y-2.5 shrink-0">
         <div v-for="d in syncingDevices" :key="d.id">
           <div class="flex items-center justify-between text-[11px] mb-1.5">
             <span class="text-[#00a884] font-bold flex items-center gap-1.5">
@@ -137,12 +137,12 @@
             </span>
             <!-- WhatsApp sends no % on full/recent sync chunks — show the
                  real imported counts instead of a bar frozen at 1%. -->
-            <span class="text-[#8696a0] font-bold">
+            <span class="text-[#96a4ad] font-bold">
               <template v-if="d.progress > 1"><span dir="ltr">{{ d.progress }}% · </span></template>
               <span dir="ltr">{{ d.synced_conversations || 0 }}</span> محادثة<template v-if="d.synced_messages"> · <span dir="ltr">{{ d.synced_messages }}</span> رسالة</template>
             </span>
           </div>
-          <div class="h-1.5 rounded-full bg-[#202c33] overflow-hidden">
+          <div class="h-1.5 rounded-full bg-[#25343d] overflow-hidden">
             <div v-if="d.progress > 1" class="h-full bg-[#00a884] rounded-full transition-all duration-700" :style="{ width: Math.min(d.progress, 100) + '%' }"></div>
             <span v-else class="wx-progress"></span>
           </div>
@@ -150,13 +150,13 @@
       </div>
 
       <!-- Conversations Scroll List -->
-      <div class="flex-1 overflow-y-auto divide-y divide-[#202c33]/40">
-        <div v-if="loadingConvs && !conversations.length" class="p-8 flex flex-col items-center gap-3 text-xs text-[#8696a0]">
+      <div class="flex-1 overflow-y-auto divide-y divide-[#25343d]/40">
+        <div v-if="loadingConvs && !conversations.length" class="p-8 flex flex-col items-center gap-3 text-xs text-[#96a4ad]">
           <span class="wx-spinner w-6 h-6"></span>
           جاري تحميل المحادثات...
         </div>
 
-        <div v-else-if="!conversations.length" class="p-8 text-center text-xs text-[#8696a0]">
+        <div v-else-if="!conversations.length" class="p-8 text-center text-xs text-[#96a4ad]">
           لا توجد محادثات تطابق بحثك.
         </div>
 
@@ -165,7 +165,7 @@
           :key="c.id"
           @click="selectConversation(c)"
           class="w-full text-right p-3 transition-colors flex items-center gap-3 relative group"
-          :class="activeConv?.id === c.id ? 'bg-[#2a3942]' : 'hover:bg-[#202c33]/70'"
+          :class="activeConv?.id === c.id ? 'bg-[#30424c]' : 'hover:bg-[#25343d]/70'"
         >
           <!-- Contact Avatar -->
           <div class="w-12 h-12 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-white font-bold flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden">
@@ -180,7 +180,7 @@
             <!-- Online / connected indicator dot if recent -->
             <span
               v-if="c.unread_count > 0"
-              class="absolute bottom-0 right-0 w-3 h-3 bg-[#00a884] rounded-full ring-2 ring-[#111b21]"
+              class="absolute bottom-0 right-0 w-3 h-3 bg-[#00a884] rounded-full ring-2 ring-[#18242b]"
             ></span>
           </div>
 
@@ -189,7 +189,7 @@
             <!-- Row 1: Contact Name + Time -->
             <div class="flex items-center justify-between mb-1">
               <div class="flex items-center gap-1.5 min-w-0">
-                <span class="font-bold text-sm text-[#e9edef] truncate">
+                <span class="font-bold text-sm text-[#f0f2f5] truncate">
                   {{ convTitle(c) || 'مستخدم' }}
                 </span>
                 <!-- Customer star rating, set when a chat is resolved -->
@@ -214,13 +214,13 @@
                 </span>
               </div>
 
-              <span class="text-[11px] text-[#8696a0] shrink-0 font-medium">
+              <span class="text-[11px] text-[#96a4ad] shrink-0 font-medium">
                 {{ formatChatTime(c.last_message_at) }}
               </span>
             </div>
 
             <!-- Row 2: Last message + unread pill -->
-            <div class="flex items-center justify-between text-xs text-[#8696a0]">
+            <div class="flex items-center justify-between text-xs text-[#96a4ad]">
               <div class="flex items-center gap-1 truncate max-w-[240px]">
                 <span v-if="typingConvs[c.id]" class="text-[#00a884] font-semibold animate-pulse">
                   يكتب الآن…
@@ -230,9 +230,9 @@
                 <span v-if="c.last_message_direction === 'outgoing'" class="text-xs">
                   <span v-if="c.last_message_status === 'failed'" class="text-[#f15c6d] font-bold">✗</span>
                   <span v-else-if="c.last_message_status === 'read'" class="text-[#53bdeb] font-bold">✓✓</span>
-                  <span v-else-if="c.last_message_status === 'delivered' || !c.last_message_status" class="text-[#8696a0]">✓✓</span>
-                  <span v-else-if="c.last_message_status === 'sending' || c.last_message_status === 'queued'" class="text-[#8696a0]">🕐</span>
-                  <span v-else class="text-[#8696a0]">✓</span>
+                  <span v-else-if="c.last_message_status === 'delivered' || !c.last_message_status" class="text-[#96a4ad]">✓✓</span>
+                  <span v-else-if="c.last_message_status === 'sending' || c.last_message_status === 'queued'" class="text-[#96a4ad]">🕐</span>
+                  <span v-else class="text-[#96a4ad]">✓</span>
                 </span>
                 <!-- Media icons -->
                 <span v-if="c.last_message_type === 'image'" class="text-[#aebac1]">📷 صورة</span>
@@ -266,7 +266,7 @@
                 >✓ مكتمل</span>
                 <span
                   v-if="c.unread_count > 0"
-                  class="min-w-[20px] h-5 px-1.5 rounded-full bg-[#00a884] text-[#111b21] font-black text-[11px] flex items-center justify-center shadow-sm"
+                  class="min-w-[20px] h-5 px-1.5 rounded-full bg-[#00a884] text-[#18242b] font-black text-[11px] flex items-center justify-center shadow-sm"
                 >
                   {{ c.unread_count }}
                 </span>
@@ -278,21 +278,21 @@
     </aside>
 
     <!-- RIGHT PANEL: Active WhatsApp Chat Area -->
-    <main class="flex-1 flex flex-col min-w-0 bg-[#0b141a] relative">
+    <main class="flex-1 flex flex-col min-w-0 bg-[#131f26] relative">
       <!-- Empty State when no conversation selected -->
-      <div v-if="!activeConv" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#222e35]/30">
-        <div class="w-20 h-20 rounded-3xl bg-[#202c33] text-[#00a884] flex items-center justify-center mb-6 shadow-xl shadow-black/30">
+      <div v-if="!activeConv" class="flex-1 flex flex-col items-center justify-center p-8 text-center bg-[#2c3c45]/30">
+        <div class="w-20 h-20 rounded-3xl bg-[#25343d] text-[#00a884] flex items-center justify-center mb-6 shadow-xl shadow-black/30">
           <svg class="w-10 h-10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
           </svg>
         </div>
-        <h2 class="text-2xl font-bold text-[#e9edef] mb-2">Wavixa WhatsApp CRM</h2>
-        <p class="text-sm text-[#8696a0] max-w-md mb-6 leading-relaxed">
+        <h2 class="text-2xl font-bold text-[#f0f2f5] mb-2">Wavixa WhatsApp CRM</h2>
+        <p class="text-sm text-[#96a4ad] max-w-md mb-6 leading-relaxed">
           نظام محادثات احترافي متعدد الأجهزة. اختر محادثة من القائمة للبدء في الرد أو ابدأ محادثة جديدة مع عميل.
         </p>
         <button
           @click="showNewChatModal = true"
-          class="px-5 py-2.5 rounded-xl bg-[#00a884] hover:bg-[#02906f] text-[#111b21] font-bold text-sm transition-all shadow-lg shadow-[#00a884]/20"
+          class="px-5 py-2.5 rounded-xl bg-[#00a884] hover:bg-[#02906f] text-[#18242b] font-bold text-sm transition-all shadow-lg shadow-[#00a884]/20"
         >
           بدء محادثة جديدة
         </button>
@@ -301,14 +301,14 @@
       <!-- Active Chat Window -->
       <template v-else>
         <!-- Chat Header -->
-        <header class="h-16 bg-[#202c33] px-4 border-b border-[#222e35] flex items-center justify-between shrink-0 z-20">
+        <header class="h-16 bg-[#25343d] px-4 border-b border-[#2c3c45] flex items-center justify-between shrink-0 z-20">
           <!-- Multi-select action bar — replaces the normal header -->
           <template v-if="selectMode">
             <div class="flex items-center gap-3 w-full">
-              <button @click="exitSelectMode" class="p-1.5 text-[#aebac1] hover:text-white rounded-full hover:bg-[#374248] transition-colors">
+              <button @click="exitSelectMode" class="p-1.5 text-[#aebac1] hover:text-white rounded-full hover:bg-[#3d505c] transition-colors">
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
               </button>
-              <span class="text-sm font-bold text-[#e9edef]">{{ selectedIds.length }} محددة</span>
+              <span class="text-sm font-bold text-[#f0f2f5]">{{ selectedIds.length }} محددة</span>
               <div class="flex-1"></div>
               <button
                 :disabled="!selectedIds.length"
@@ -366,7 +366,7 @@
             <!-- Contact details & device indicator -->
             <div class="min-w-0">
               <div class="flex items-center gap-2">
-                <h3 class="text-sm font-bold text-[#e9edef] truncate">
+                <h3 class="text-sm font-bold text-[#f0f2f5] truncate">
                   {{ convTitle(activeConv) }}
                 </h3>
                 <!-- Device badge in header -->
@@ -386,11 +386,11 @@
               <p v-if="typingConvs[activeConv.id]" class="text-[11px] text-[#00a884] font-semibold animate-pulse">
                 يكتب الآن…
               </p>
-              <p v-else class="text-[11px] text-[#8696a0] font-mono" dir="ltr">
+              <p v-else class="text-[11px] text-[#96a4ad] font-mono" dir="ltr">
                 +{{ activeConv.contact_phone }}<template v-if="activeConv.contact_username && convTitle(activeConv) !== '@' + activeConv.contact_username"> · @{{ activeConv.contact_username }}</template>
               </p>
               <p v-if="activeConv.rating" class="text-[11px] text-amber-400 leading-tight">
-                {{ '★'.repeat(activeConv.rating) }}<span v-if="activeConv.rating_note" class="text-[#8696a0]"> — {{ activeConv.rating_note }}</span>
+                {{ '★'.repeat(activeConv.rating) }}<span v-if="activeConv.rating_note" class="text-[#96a4ad]"> — {{ activeConv.rating_note }}</span>
               </p>
             </div>
             </div>
@@ -404,7 +404,7 @@
               @click="startCall(false)"
               :disabled="callBusy"
               class="p-2 rounded-full transition-colors"
-              :class="callState !== 'idle' ? 'text-[#00a884] bg-[#00a884]/15' : 'text-[#aebac1] hover:text-[#00a884] hover:bg-[#374248] disabled:opacity-40'"
+              :class="callState !== 'idle' ? 'text-[#00a884] bg-[#00a884]/15' : 'text-[#aebac1] hover:text-[#00a884] hover:bg-[#3d505c] disabled:opacity-40'"
               title="مكالمة صوتية واتساب"
             >
               <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -417,7 +417,7 @@
               @click="startCall(true)"
               :disabled="callBusy"
               class="p-2 rounded-full transition-colors"
-              :class="callState !== 'idle' ? 'text-[#00a884] bg-[#00a884]/15' : 'text-[#aebac1] hover:text-[#00a884] hover:bg-[#374248] disabled:opacity-40'"
+              :class="callState !== 'idle' ? 'text-[#00a884] bg-[#00a884]/15' : 'text-[#aebac1] hover:text-[#00a884] hover:bg-[#3d505c] disabled:opacity-40'"
               title="مكالمة فيديو واتساب"
             >
               <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -477,7 +477,7 @@
             <div class="relative">
               <button
                 @click="showDateJump = !showDateJump"
-                class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors"
+                class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
                 title="الذهاب إلى تاريخ"
               >
                 <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
@@ -487,20 +487,20 @@
               </button>
               <div
                 v-if="showDateJump"
-                class="absolute top-11 left-0 z-40 bg-[#233138] border border-[#2a3942] rounded-xl shadow-2xl p-3 w-56"
+                class="absolute top-11 left-0 z-40 bg-[#2c3b44] border border-[#30424c] rounded-xl shadow-2xl p-3 w-56"
               >
-                <p class="text-[11px] text-[#8696a0] mb-2 font-semibold">اذهب إلى يوم معين</p>
+                <p class="text-[11px] text-[#96a4ad] mb-2 font-semibold">اذهب إلى يوم معين</p>
                 <input
                   type="date"
                   v-model="jumpDate"
                   :max="todayStr"
                   dir="ltr"
-                  class="w-full bg-[#111b21] border border-[#2a3942] rounded-lg px-2.5 py-1.5 text-sm text-[#e9edef] focus:outline-none focus:border-[#00a884] [color-scheme:dark]"
+                  class="w-full bg-[#18242b] border border-[#30424c] rounded-lg px-2.5 py-1.5 text-sm text-[#f0f2f5] focus:outline-none focus:border-[#00a884] [color-scheme:dark]"
                 />
                 <button
                   @click="jumpToDate"
                   :disabled="!jumpDate"
-                  class="mt-2 w-full py-1.5 rounded-lg bg-[#00a884] hover:bg-[#02906f] text-[#111b21] text-xs font-bold disabled:opacity-40 transition-colors"
+                  class="mt-2 w-full py-1.5 rounded-lg bg-[#00a884] hover:bg-[#02906f] text-[#18242b] text-xs font-bold disabled:opacity-40 transition-colors"
                 >
                   اذهب
                 </button>
@@ -508,13 +508,13 @@
             </div>
 
             <!-- Outgoing device selector (which phone sends) -->
-            <div class="hidden sm:flex items-center gap-1.5 bg-[#111b21] px-2.5 py-1 rounded-lg border border-[#2a3942]">
-              <span class="text-[11px] text-[#8696a0]">الإرسال من:</span>
+            <div class="hidden sm:flex items-center gap-1.5 bg-[#18242b] px-2.5 py-1 rounded-lg border border-[#30424c]">
+              <span class="text-[11px] text-[#96a4ad]">الإرسال من:</span>
               <select
                 v-model="sendSessionId"
                 class="bg-transparent text-xs text-[#00a884] font-bold focus:outline-none cursor-pointer"
               >
-                <option v-for="d in connectedDevices" :key="d.id" :value="d.id" class="bg-[#111b21] text-white">
+                <option v-for="d in connectedDevices" :key="d.id" :value="d.id" class="bg-[#18242b] text-white">
                   {{ d.device_name }}
                 </option>
               </select>
@@ -530,7 +530,7 @@
           class="flex-1 overflow-y-auto p-4 space-y-2 relative z-10 bg-transparent"
         >
           <!-- Loading spinner while the page of messages resolves -->
-          <div v-if="loadingMessages" class="flex flex-col items-center justify-center gap-3 p-12 text-xs text-[#8696a0]">
+          <div v-if="loadingMessages" class="flex flex-col items-center justify-center gap-3 p-12 text-xs text-[#96a4ad]">
             <span class="wx-spinner w-7 h-7"></span>
             جاري تحميل الرسائل...
           </div>
@@ -541,7 +541,7 @@
               <span class="wx-spinner w-5 h-5"></span>
             </div>
             <div v-else-if="!hasMoreMessages && messages.length" class="text-center pb-2">
-              <span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#182229] text-[#ffd279] text-[11px] shadow">
+              <span class="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-lg bg-[#202d35] text-[#ffd279] text-[11px] shadow">
                 <svg width="11" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 1a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-1V6a5 5 0 0 0-5-5zm-3 8V6a3 3 0 1 1 6 0v3H9z"/></svg>
                 الرسائل مشفرة تمامًا بين الطرفين
               </span>
@@ -549,7 +549,7 @@
           </template>
 
           <div v-if="!loadingMessages && !messages.length" class="text-center py-12">
-            <span class="px-4 py-1.5 rounded-lg bg-[#182229] text-[#8696a0] text-xs shadow">
+            <span class="px-4 py-1.5 rounded-lg bg-[#202d35] text-[#96a4ad] text-xs shadow">
               لا توجد رسائل سابقة. ابدأ المحادثة الآن!
             </span>
           </div>
@@ -558,7 +558,7 @@
           <template v-for="(m, i) in messages" :key="m.id">
             <!-- Day separator pill -->
             <div v-if="isNewDay(i)" class="flex justify-center py-1 sticky top-0 z-10">
-              <span class="px-4 py-1.5 rounded-lg bg-[#182229] text-[#8696a0] text-[11px] shadow">
+              <span class="px-4 py-1.5 rounded-lg bg-[#202d35] text-[#96a4ad] text-[11px] shadow">
                 {{ dayLabel(m.timestamp || m.created_at) }}
               </span>
             </div>
@@ -578,8 +578,8 @@
             <div
               class="max-w-[85%] md:max-w-[70%] lg:max-w-[65%] rounded-lg p-1.5 px-2.5 shadow-sm relative transition-all"
               :class="[
-                m.direction === 'outgoing' ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none ml-2' : 'bg-[#202c33] text-[#e9edef] rounded-tl-none mr-2',
-                selectedIds.includes(m.id) ? 'ring-2 ring-[#00a884] ring-offset-1 ring-offset-[#0b141a]' : '',
+                m.direction === 'outgoing' ? 'bg-[#006d5b] text-[#f0f2f5] rounded-tr-none ml-2' : 'bg-[#25343d] text-[#f0f2f5] rounded-tl-none mr-2',
+                selectedIds.includes(m.id) ? 'ring-2 ring-[#00a884] ring-offset-1 ring-offset-[#131f26]' : '',
               ]"
             >
               <!-- WhatsApp Bubble Corner Tails -->
@@ -588,7 +588,7 @@
                 viewBox="0 0 8 13"
                 height="13"
                 width="8"
-                class="absolute top-0 -right-2 text-[#005c4b] fill-current pointer-events-none"
+                class="absolute top-0 -right-2 text-[#006d5b] fill-current pointer-events-none"
               >
                 <path d="M5.188 0H0v12.19l6.467-8.622C7.526 1.156 6.958 0 5.188 0z"/>
               </svg>
@@ -597,7 +597,7 @@
                 viewBox="0 0 8 13"
                 height="13"
                 width="8"
-                class="absolute top-0 -left-2 text-[#202c33] fill-current pointer-events-none"
+                class="absolute top-0 -left-2 text-[#25343d] fill-current pointer-events-none"
               >
                 <path d="M1.533 3.568L8 12.19V0H2.812C1.042 0 .474 1.156 1.533 3.568z"/>
               </svg>
@@ -606,7 +606,7 @@
               <span
                 v-if="selectMode"
                 class="absolute top-1/2 -translate-y-1/2 z-40 w-5 h-5 rounded-full border-2 flex items-center justify-center pointer-events-none"
-                :class="[selectedIds.includes(m.id) ? 'bg-[#00a884] border-[#00a884]' : 'border-[#8696a0]', m.direction === 'outgoing' ? '-left-8' : '-right-8']"
+                :class="[selectedIds.includes(m.id) ? 'bg-[#00a884] border-[#00a884]' : 'border-[#96a4ad]', m.direction === 'outgoing' ? '-left-8' : '-right-8']"
               >
                 <svg v-if="selectedIds.includes(m.id)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
               </span>
@@ -622,7 +622,7 @@
               </div>
 
               <!-- Forwarded label — like WhatsApp's "Forwarded" tag -->
-              <div v-if="m.is_forwarded" class="mb-1 flex items-center gap-1 text-[10px] italic text-[#8696a0] select-none">
+              <div v-if="m.is_forwarded" class="mb-1 flex items-center gap-1 text-[10px] italic text-[#96a4ad] select-none">
                 <svg class="w-3.5 h-3.5 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7"/></svg>
                 <span>مُعاد توجيهها</span>
               </div>
@@ -630,14 +630,14 @@
               <!-- Quoted / Reply To Message if any -->
               <div
                 v-if="m.reply_to_id"
-                class="mb-1 p-1.5 rounded-md bg-black/20 border-r-4 border-[#00a884] text-[11px] text-[#8696a0] cursor-pointer"
+                class="mb-1 p-1.5 rounded-md bg-black/20 border-r-4 border-[#00a884] text-[11px] text-[#96a4ad] cursor-pointer"
                 @click="scrollToMessage(m.reply_to_id)"
               >
                 <template v-if="quotedPreview(m.reply_to_id)">
                   <p class="font-bold text-[#00a884] text-[10px] mb-0.5">
                     {{ quotedPreview(m.reply_to_id).direction === 'outgoing' ? 'أنت' : convTitle(activeConv) }}
                   </p>
-                  <p class="truncate max-w-[220px] text-[#d1d7db]">
+                  <p class="truncate max-w-[220px] text-[#dfe5e8]">
                     {{ quotedPreview(m.reply_to_id).message || `[${quotedPreview(m.reply_to_id).message_type}]` }}
                   </p>
                 </template>
@@ -704,18 +704,18 @@
                         :key="bi"
                         class="w-[2.5px] rounded-full transition-colors"
                         :style="{ height: bh + 'px' }"
-                        :class="activeAudioId === m.id && ((audioCurrentTime / (audioDurations[m.id] || m.media?.seconds || 1)) >= (bi / 28)) ? (m.direction === 'outgoing' ? 'bg-[#53bdeb]' : 'bg-[#00a884]') : 'bg-[#8696a0]/40'"
+                        :class="activeAudioId === m.id && ((audioCurrentTime / (audioDurations[m.id] || m.media?.seconds || 1)) >= (bi / 28)) ? (m.direction === 'outgoing' ? 'bg-[#53bdeb]' : 'bg-[#00a884]') : 'bg-[#96a4ad]/40'"
                       ></span>
                     </div>
                     <!-- Duration -->
-                    <div class="flex items-center justify-between text-[11px] text-[#8696a0] -mt-0.5">
+                    <div class="flex items-center justify-between text-[11px] text-[#96a4ad] -mt-0.5">
                       <span>{{ activeAudioId === m.id && audioPlaying ? formatAudioSeconds(audioCurrentTime) : getAudioDuration(m) }}</span>
                     </div>
                   </div>
 
                   <!-- Profile Avatar with Mic Badge -->
                   <div class="relative shrink-0">
-                    <div class="w-10 h-10 rounded-full overflow-hidden bg-[#2a3942] flex items-center justify-center text-xs font-bold text-[#e9edef]">
+                    <div class="w-10 h-10 rounded-full overflow-hidden bg-[#30424c] flex items-center justify-center text-xs font-bold text-[#f0f2f5]">
                       <img
                         v-if="m.direction === 'outgoing' ? user?.avatar : avatarSrc(activeConv)"
                         :src="m.direction === 'outgoing' ? user?.avatar : avatarSrc(activeConv)"
@@ -725,7 +725,7 @@
                       <span v-else>{{ m.direction === 'outgoing' ? 'U' : convInitial(activeConv) }}</span>
                     </div>
                     <!-- Cyan mic badge -->
-                    <span class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#0b141a] flex items-center justify-center shadow-sm">
+                    <span class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#131f26] flex items-center justify-center shadow-sm">
                       <svg class="w-2.5 h-2.5 text-[#53bdeb]" fill="currentColor" viewBox="0 0 24 24">
                         <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
                       </svg>
@@ -752,34 +752,34 @@
                     <span class="text-[7px] font-black text-white leading-none mt-0.5 px-0.5 truncate w-full text-center">{{ docInfo(m).ext }}</span>
                   </div>
                   <div class="flex-1 min-w-0" dir="ltr" style="text-align:left">
-                    <p class="text-xs font-bold text-[#e9edef] truncate">{{ docInfo(m).fileName }}</p>
-                    <p class="text-[10px] text-[#8696a0] mt-0.5">{{ docInfo(m).sub }}</p>
+                    <p class="text-xs font-bold text-[#f0f2f5] truncate">{{ docInfo(m).fileName }}</p>
+                    <p class="text-[10px] text-[#96a4ad] mt-0.5">{{ docInfo(m).sub }}</p>
                   </div>
                 </component>
               </div>
 
               <!-- Media Content: Location / Contact -->
               <div v-else-if="m.message_type === 'location'" class="mb-1">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#dfe5e8]">
                   <span class="text-base">📍</span>
                   <span>{{ m.message || 'موقع' }}</span>
                 </div>
               </div>
               <div v-else-if="m.message_type === 'contact'" class="mb-1">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#dfe5e8]">
                   <span class="text-base">👤</span>
                   <span>{{ m.message || 'جهة اتصال' }}</span>
                 </div>
               </div>
               <div v-else-if="m.message_type === 'call'" class="mb-1">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#dfe5e8]">
                   <span class="text-base">{{ m.direction === 'incoming' ? '📲' : '📞' }}</span>
                   <span>{{ m.message || 'مكالمة صوتية' }}</span>
                 </div>
               </div>
 
               <!-- Text Message Content (caption or plain text; hides [placeholder] labels on media) -->
-              <p v-if="m.message && !['location', 'contact', 'call'].includes(m.message_type) && !isPlaceholderText(m)" class="text-[14.2px] whitespace-pre-wrap leading-[19px] break-words px-0.5 text-[#e9edef]">
+              <p v-if="m.message && !['location', 'contact', 'call'].includes(m.message_type) && !isPlaceholderText(m)" class="text-[14.2px] whitespace-pre-wrap leading-[19px] break-words px-0.5 text-[#f0f2f5]">
                 <template v-for="(part, pi) in msgParts(m)" :key="pi"><a
                     v-if="part.t === 'link'"
                     :href="part.href"
@@ -795,21 +795,21 @@
               </p>
 
               <!-- Footer: Time + Status Ticks -->
-              <div class="flex items-center justify-end gap-1 text-[11px] text-[#8696a0] mt-0.5 select-none pl-1" dir="ltr">
+              <div class="flex items-center justify-end gap-1 text-[11px] text-[#96a4ad] mt-0.5 select-none pl-1" dir="ltr">
                 <span>{{ formatTime(m.timestamp || m.created_at) }}</span>
                 <span v-if="m.direction === 'outgoing'">
-                  <span v-if="m.status === 'sending'" class="text-[#8696a0]">🕐</span>
+                  <span v-if="m.status === 'sending'" class="text-[#96a4ad]">🕐</span>
                   <span v-else-if="m.status === 'failed'" class="text-[#f15c6d] font-bold" title="فشل الإرسال">✗</span>
                   <span v-else-if="m.status === 'read'" class="text-[#53bdeb] font-bold">✓✓</span>
-                  <span v-else-if="m.status === 'delivered'" class="text-[#8696a0]">✓✓</span>
-                  <span v-else class="text-[#8696a0]">✓</span>
+                  <span v-else-if="m.status === 'delivered'" class="text-[#96a4ad]">✓✓</span>
+                  <span v-else class="text-[#96a4ad]">✓</span>
                 </span>
               </div>
 
               <!-- Reactions Display Pills (e.g. ❤️ 1, 👍 2) -->
               <div
                 v-if="m.reactions && m.reactions.length > 0"
-                class="absolute -bottom-2.5 right-2 flex items-center gap-1 bg-[#182229] border border-[#2a3942] rounded-full px-1.5 py-0.5 shadow-md z-10"
+                class="absolute -bottom-2.5 right-2 flex items-center gap-1 bg-[#202d35] border border-[#30424c] rounded-full px-1.5 py-0.5 shadow-md z-10"
               >
                 <span
                   v-for="(r, idx) in m.reactions"
@@ -829,7 +829,7 @@
               >
                 <button
                   @click="toggleReactionPicker(m.id)"
-                  class="w-6 h-6 rounded-full bg-[#202c33] text-[#aebac1] hover:text-white flex items-center justify-center text-xs shadow"
+                  class="w-6 h-6 rounded-full bg-[#25343d] text-[#aebac1] hover:text-white flex items-center justify-center text-xs shadow"
                   title="إضافة تفاعل"
                 >
                   😀
@@ -839,7 +839,7 @@
               <!-- Reaction Picker Popover -->
               <div
                 v-if="activeReactionMessageId === m.id"
-                class="absolute -top-10 z-30 bg-[#202c33] border border-[#2a3942] rounded-full px-2 py-1 shadow-2xl flex items-center gap-1.5"
+                class="absolute -top-10 z-30 bg-[#25343d] border border-[#30424c] rounded-full px-2 py-1 shadow-2xl flex items-center gap-1.5"
                 :class="m.direction === 'outgoing' ? 'left-0' : 'right-0'"
               >
                 <button
@@ -852,7 +852,7 @@
                 </button>
                 <button
                   @click="activeReactionMessageId = null"
-                  class="text-xs text-[#8696a0] hover:text-white px-1"
+                  class="text-xs text-[#96a4ad] hover:text-white px-1"
                 >
                   ✕
                 </button>
@@ -871,7 +871,7 @@
         <button
           v-if="hasNewerMessages"
           @click="loadMessages(activeConv.id)"
-          class="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full bg-[#00a884] text-[#111b21] text-xs font-bold shadow-lg hover:bg-[#02906f] transition-colors"
+          class="absolute bottom-24 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 px-4 py-2 rounded-full bg-[#00a884] text-[#18242b] text-xs font-bold shadow-lg hover:bg-[#02906f] transition-colors"
         >
           ↓ الرجوع لأحدث الرسائل
         </button>
@@ -881,18 +881,18 @@
         <button
           v-if="showScrollDown"
           @click="onScrollDownClick"
-          class="absolute bottom-24 left-5 z-20 w-11 h-11 rounded-full bg-[#233138] border border-[#2a3942] shadow-xl flex items-center justify-center text-[#aebac1] hover:text-white hover:bg-[#2a3942] transition-all"
+          class="absolute bottom-24 left-5 z-20 w-11 h-11 rounded-full bg-[#2c3b44] border border-[#30424c] shadow-xl flex items-center justify-center text-[#aebac1] hover:text-white hover:bg-[#30424c] transition-all"
           title="الذهاب لآخر رسالة"
         >
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 14l-7 7m0 0l-7-7m7 7V3"/></svg>
           <span
             v-if="scrollDownCount"
-            class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#00a884] text-[#111b21] text-[10px] font-black flex items-center justify-center"
+            class="absolute -top-1.5 -right-1.5 min-w-[18px] h-[18px] px-1 rounded-full bg-[#00a884] text-[#18242b] text-[10px] font-black flex items-center justify-center"
           >{{ scrollDownCount }}</span>
         </button>
 
         <!-- Chat Input Area -->
-        <footer class="bg-[#202c33] p-3 border-t border-[#222e35] shrink-0 z-20">
+        <footer class="bg-[#25343d] p-3 border-t border-[#2c3c45] shrink-0 z-20">
           <!-- Locked by another agent — read-only for everyone else -->
           <div
             v-if="lockedByOther"
@@ -904,22 +904,22 @@
 
           <template v-else>
           <!-- Reply preview bar -->
-          <div v-if="replyTarget" class="mb-2 flex items-center gap-2 bg-[#111b21] border-r-2 border-[#00a884] rounded-xl px-3 py-2">
+          <div v-if="replyTarget" class="mb-2 flex items-center gap-2 bg-[#18242b] border-r-2 border-[#00a884] rounded-xl px-3 py-2">
             <div class="flex-1 min-w-0">
               <p class="text-[11px] font-bold text-[#00a884]">
                 رد على {{ replyTarget.direction === 'outgoing' ? 'نفسك' : convTitle(activeConv) }}
               </p>
-              <p class="text-xs text-[#8696a0] truncate">
+              <p class="text-xs text-[#96a4ad] truncate">
                 {{ replyTarget.message || `[${replyTarget.message_type}]` }}
               </p>
             </div>
-            <button @click="replyTarget = null" class="text-[#8696a0] hover:text-white p-1 shrink-0">
+            <button @click="replyTarget = null" class="text-[#96a4ad] hover:text-white p-1 shrink-0">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
             </button>
           </div>
 
           <!-- Voice Recording Bar Mode -->
-          <div v-if="isRecording" class="flex items-center justify-between bg-[#111b21] p-3 rounded-2xl border border-rose-500/30">
+          <div v-if="isRecording" class="flex items-center justify-between bg-[#18242b] p-3 rounded-2xl border border-rose-500/30">
             <div class="flex items-center gap-3">
               <span class="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
               <span class="text-rose-400 font-bold text-sm">جاري تسجيل مقطع صوتي...</span>
@@ -934,7 +934,7 @@
               </button>
               <button
                 @click="stopAndSendRecording"
-                class="px-4 py-1.5 rounded-xl bg-[#00a884] text-[#111b21] font-black text-xs hover:bg-[#02906f] transition-colors"
+                class="px-4 py-1.5 rounded-xl bg-[#00a884] text-[#18242b] font-black text-xs hover:bg-[#02906f] transition-colors"
               >
                 إرسال الصوت
               </button>
@@ -945,12 +945,12 @@
           <div v-else class="flex items-end gap-2">
             <!-- Unified composer: the bordered box IS the input — attach/emoji
                  live inside it so the typing area runs edge to edge -->
-            <div class="flex-1 flex items-end gap-1 bg-[#2a3942] rounded-lg px-2 border border-transparent focus-within:border-[#00a884]/40">
+            <div class="flex-1 flex items-end gap-1 bg-[#30424c] rounded-lg px-2 border border-transparent focus-within:border-[#00a884]/40">
             <!-- Attachment Button & Popup -->
             <div class="relative">
               <button
                 @click="showAttachMenu = !showAttachMenu"
-                class="p-2.5 text-[#8696a0] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors"
+                class="p-2.5 text-[#96a4ad] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
                 title="إرفاق ملف أو وسائط"
               >
                 <svg class="w-6 h-6 rotate-45" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"/></svg>
@@ -959,12 +959,12 @@
               <!-- Attachment Popup -->
               <div
                 v-if="showAttachMenu"
-                class="absolute bottom-14 right-0 w-48 bg-[#202c33] border border-[#2a3942] rounded-2xl p-2 shadow-2xl z-40 space-y-1 text-xs"
+                class="absolute bottom-14 right-0 w-48 bg-[#25343d] border border-[#30424c] rounded-2xl p-2 shadow-2xl z-40 space-y-1 text-xs"
               >
                 <!-- Image attachment -->
                 <button
                   @click="triggerFileInput('image')"
-                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#374248] text-[#d1d7db] transition-colors"
+                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#3d505c] text-[#dfe5e8] transition-colors"
                 >
                   <span class="w-8 h-8 rounded-lg bg-pink-500/20 text-pink-400 flex items-center justify-center font-bold">📷</span>
                   <span class="font-bold">صور (Image)</span>
@@ -972,7 +972,7 @@
                 <!-- Video attachment -->
                 <button
                   @click="triggerFileInput('video')"
-                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#374248] text-[#d1d7db] transition-colors"
+                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#3d505c] text-[#dfe5e8] transition-colors"
                 >
                   <span class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">🎥</span>
                   <span class="font-bold">فيديو (Video)</span>
@@ -980,7 +980,7 @@
                 <!-- Audio attachment -->
                 <button
                   @click="triggerFileInput('audio')"
-                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#374248] text-[#d1d7db] transition-colors"
+                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#3d505c] text-[#dfe5e8] transition-colors"
                 >
                   <span class="w-8 h-8 rounded-lg bg-amber-500/20 text-amber-400 flex items-center justify-center font-bold">🎵</span>
                   <span class="font-bold">ملف صوتي (Audio)</span>
@@ -988,7 +988,7 @@
                 <!-- Document attachment -->
                 <button
                   @click="triggerFileInput('document')"
-                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#374248] text-[#d1d7db] transition-colors"
+                  class="w-full flex items-center gap-3 p-2 rounded-xl hover:bg-[#3d505c] text-[#dfe5e8] transition-colors"
                 >
                   <span class="w-8 h-8 rounded-lg bg-sky-500/20 text-sky-400 flex items-center justify-center font-bold">📄</span>
                   <span class="font-bold">مستند (Document)</span>
@@ -1005,7 +1005,7 @@
             <!-- Emoji Picker Trigger -->
             <button
               @click="showEmojiMenu = !showEmojiMenu"
-              class="p-2.5 text-[#8696a0] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors"
+              class="p-2.5 text-[#96a4ad] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
               title="إيموجي"
             >
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
@@ -1019,7 +1019,7 @@
               @paste="handlePaste"
               placeholder="اكتب رسالة... (Enter للإرسال)"
               rows="1"
-              class="flex-1 min-w-0 bg-transparent py-2.5 px-1 text-sm text-[#d1d7db] placeholder-[#8696a0] focus:outline-none resize-none max-h-32"
+              class="flex-1 min-w-0 bg-transparent py-2.5 px-1 text-sm text-[#dfe5e8] placeholder-[#96a4ad] focus:outline-none resize-none max-h-32"
             ></textarea>
             </div>
 
@@ -1027,7 +1027,7 @@
             <button
               v-if="!messageText.trim()"
               @click="startVoiceRecording"
-              class="p-2.5 text-[#8696a0] hover:text-[#00a884] rounded-full hover:bg-[#374248] transition-colors shrink-0"
+              class="p-2.5 text-[#96a4ad] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors shrink-0"
               title="تسجيل رسالة صوتية"
             >
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z"/></svg>
@@ -1037,10 +1037,10 @@
             <button
               v-else
               @click="sendTextMessage"
-              class="p-2.5 bg-[#00a884] hover:bg-[#02906f] text-[#111b21] rounded-full transition-all shadow-md shrink-0 disabled:opacity-50"
+              class="p-2.5 bg-[#00a884] hover:bg-[#02906f] text-[#18242b] rounded-full transition-all shadow-md shrink-0 disabled:opacity-50"
               title="إرسال"
             >
-              <span v-if="sending" class="wx-spinner w-5 h-5 block" style="border-top-color:#111b21;border-color:rgba(17,27,33,0.3);border-top-color:#111b21"></span>
+              <span v-if="sending" class="wx-spinner w-5 h-5 block" style="border-top-color:#18242b;border-color:rgba(17,27,33,0.3);border-top-color:#18242b"></span>
               <svg v-else class="w-5 h-5 rotate-180" fill="currentColor" viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
             </button>
           </div>
@@ -1048,7 +1048,7 @@
           <!-- Emoji Menu Drawer -->
           <div
             v-if="showEmojiMenu"
-            class="mt-2 p-3 bg-[#111b21] border border-[#2a3942] rounded-2xl grid grid-cols-8 gap-2 text-xl max-h-40 overflow-y-auto"
+            class="mt-2 p-3 bg-[#18242b] border border-[#30424c] rounded-2xl grid grid-cols-8 gap-2 text-xl max-h-40 overflow-y-auto"
           >
             <button
               v-for="e in commonEmojis"
@@ -1070,17 +1070,17 @@
       class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       @click.self="showResolveModal = false"
     >
-      <div class="bg-[#202c33] border border-[#2a3942] rounded-3xl w-full max-w-md p-6 shadow-2xl text-right relative">
+      <div class="bg-[#25343d] border border-[#30424c] rounded-3xl w-full max-w-md p-6 shadow-2xl text-right relative">
         <button
           @click="showResolveModal = false"
-          class="absolute top-5 left-5 text-[#8696a0] hover:text-white p-1"
+          class="absolute top-5 left-5 text-[#96a4ad] hover:text-white p-1"
         >✕</button>
         <h3 class="text-lg font-bold text-white mb-1">إنهاء المحادثة</h3>
-        <p class="text-xs text-[#8696a0] mb-4">
+        <p class="text-xs text-[#96a4ad] mb-4">
           الشات هيتقفل ببادج «مكتمل» وهيتاح لأي موظف يرد عليه تاني. لو العميل بعت رسالة جديدة الشات هيتفتح تلقائياً.
         </p>
 
-        <p class="text-xs font-semibold text-[#d1d7db] mb-2">تقييم العميل (اختياري)</p>
+        <p class="text-xs font-semibold text-[#dfe5e8] mb-2">تقييم العميل (اختياري)</p>
         <div class="flex justify-center gap-1 mb-3" dir="ltr">
           <button
             v-for="s in 5"
@@ -1095,20 +1095,20 @@
           v-model="resolveNote"
           rows="3"
           placeholder="ملاحظة عن العميل — هتظهر جنب رقمه دايماً (اختياري)…"
-          class="w-full bg-[#111b21] border border-[#2a3942] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] resize-none"
+          class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] resize-none"
         ></textarea>
 
         <div class="flex gap-2 mt-4">
           <button
             @click="submitResolve"
             :disabled="resolving"
-            class="flex-1 py-2.5 rounded-xl bg-[#00a884] hover:bg-[#02906f] text-[#111b21] font-black text-sm disabled:opacity-50 transition-colors"
+            class="flex-1 py-2.5 rounded-xl bg-[#00a884] hover:bg-[#02906f] text-[#18242b] font-black text-sm disabled:opacity-50 transition-colors"
           >
             {{ resolving ? 'جاري الإنهاء…' : 'إنهاء الشات' }}
           </button>
           <button
             @click="showResolveModal = false"
-            class="px-5 py-2.5 rounded-xl bg-[#2a3942] text-[#d1d7db] text-sm font-bold hover:bg-[#374248] transition-colors"
+            class="px-5 py-2.5 rounded-xl bg-[#30424c] text-[#dfe5e8] text-sm font-bold hover:bg-[#3d505c] transition-colors"
           >
             إلغاء
           </button>
@@ -1122,13 +1122,13 @@
       class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       @click.self="showTransferModal = false"
     >
-      <div class="bg-[#202c33] border border-[#2a3942] rounded-3xl w-full max-w-md p-6 shadow-2xl text-right relative">
+      <div class="bg-[#25343d] border border-[#30424c] rounded-3xl w-full max-w-md p-6 shadow-2xl text-right relative">
         <button
           @click="showTransferModal = false"
-          class="absolute top-5 left-5 text-[#8696a0] hover:text-white p-1"
+          class="absolute top-5 left-5 text-[#96a4ad] hover:text-white p-1"
         >✕</button>
         <h3 class="text-lg font-bold text-white mb-1">تحويل المحادثة</h3>
-        <p class="text-xs text-[#8696a0] mb-4">
+        <p class="text-xs text-[#96a4ad] mb-4">
           اختار الموظف اللي هيستلم الشات — هيظهرله إشعار إنك حولتهاله وهيتحط في أول قايمته.
         </p>
 
@@ -1138,29 +1138,29 @@
             :key="a.id"
             @click="submitTransfer(a)"
             :disabled="transferring || (a.is_full && !isOwner)"
-            class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-[#111b21] border border-[#2a3942] hover:border-[#00a884] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-[#18242b] border border-[#30424c] hover:border-[#00a884] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
           >
             <span class="flex items-center gap-2.5 min-w-0">
               <span class="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-xs shrink-0">
                 {{ (a.name || '?').charAt(0) }}
               </span>
               <span class="text-right min-w-0">
-                <p class="text-sm font-bold text-[#e9edef] truncate">{{ a.name }}</p>
-                <p class="text-[10px] text-[#8696a0] truncate">{{ a.group_name || 'خدمة العملاء' }}</p>
+                <p class="text-sm font-bold text-[#f0f2f5] truncate">{{ a.name }}</p>
+                <p class="text-[10px] text-[#96a4ad] truncate">{{ a.group_name || 'خدمة العملاء' }}</p>
               </span>
             </span>
             <span class="text-[11px] font-bold whitespace-nowrap" :class="a.is_full ? 'text-rose-400' : 'text-[#00a884]'">
               {{ a.active_chats }}/{{ a.max_active_chats || 5 }}<template v-if="a.is_full"> · ممتلئ</template>
             </span>
           </button>
-          <div v-if="!transferTargets.length" class="text-center text-xs text-[#8696a0] py-6">
+          <div v-if="!transferTargets.length" class="text-center text-xs text-[#96a4ad] py-6">
             {{ loadingTransferTargets ? 'جاري تحميل الموظفين…' : 'مفيش موظفين متاحين للتحويل' }}
           </div>
         </div>
 
         <button
           @click="showTransferModal = false"
-          class="mt-4 w-full py-2.5 rounded-xl bg-[#2a3942] text-[#d1d7db] text-sm font-bold hover:bg-[#374248] transition-colors"
+          class="mt-4 w-full py-2.5 rounded-xl bg-[#30424c] text-[#dfe5e8] text-sm font-bold hover:bg-[#3d505c] transition-colors"
         >
           إلغاء
         </button>
@@ -1171,7 +1171,7 @@
     <Transition name="wx-fade">
       <div
         v-if="transferToast"
-        class="fixed bottom-6 left-6 z-[60] bg-[#233138] border border-violet-500/50 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3 max-w-sm"
+        class="fixed bottom-6 left-6 z-[60] bg-[#2c3b44] border border-violet-500/50 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3 max-w-sm"
       >
         <span class="w-9 h-9 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center shrink-0">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
@@ -1180,7 +1180,7 @@
           <p class="text-sm font-bold text-white">محادثة محولة إليك</p>
           <p class="text-xs text-[#aebac1]">قام {{ transferToast.from }} بتحويل محادثة إليك — هتلاقيها في «محادثاتي»</p>
         </div>
-        <button @click="transferToast = null" class="text-[#8696a0] hover:text-white p-1 shrink-0">✕</button>
+        <button @click="transferToast = null" class="text-[#96a4ad] hover:text-white p-1 shrink-0">✕</button>
       </div>
     </Transition>
 
@@ -1189,44 +1189,44 @@
       v-if="showNewChatModal"
       class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     >
-      <div class="bg-[#202c33] border border-[#2a3942] rounded-3xl w-full max-w-md p-6 shadow-2xl relative text-right">
+      <div class="bg-[#25343d] border border-[#30424c] rounded-3xl w-full max-w-md p-6 shadow-2xl relative text-right">
         <button
           @click="showNewChatModal = false"
-          class="absolute top-5 left-5 text-[#8696a0] hover:text-white p-1"
+          class="absolute top-5 left-5 text-[#96a4ad] hover:text-white p-1"
         >
           ✕
         </button>
         <h3 class="text-lg font-bold text-white mb-1">بدء محادثة واتساب جديدة</h3>
-        <p class="text-xs text-[#8696a0] mb-4">أدخل رقم هاتف العميل بالصيغة الدولية</p>
+        <p class="text-xs text-[#96a4ad] mb-4">أدخل رقم هاتف العميل بالصيغة الدولية</p>
 
         <form @submit.prevent="handleStartChat" class="space-y-4">
           <div>
-            <label class="block text-xs font-semibold text-[#8696a0] mb-1">رقم الهاتف (مع كود الدولة)</label>
+            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">رقم الهاتف (مع كود الدولة)</label>
             <input
               v-model="newChatPhone"
               type="text"
               required
               placeholder="مثال: 201012345678"
               dir="ltr"
-              class="w-full bg-[#111b21] border border-[#2a3942] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
+              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
             />
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-[#8696a0] mb-1">اسم العميل (اختياري)</label>
+            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">اسم العميل (اختياري)</label>
             <input
               v-model="newChatName"
               type="text"
               placeholder="اسم العميل أو النشاط"
-              class="w-full bg-[#111b21] border border-[#2a3942] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
+              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
             />
           </div>
 
           <div>
-            <label class="block text-xs font-semibold text-[#8696a0] mb-1">إرسال عبر الجهاز</label>
+            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">إرسال عبر الجهاز</label>
             <select
               v-model="newChatSessionId"
-              class="w-full bg-[#111b21] border border-[#2a3942] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
+              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
             >
               <option v-for="d in connectedDevices" :key="d.id" :value="d.id">
                 {{ d.device_name }} (+{{ d.phone_number }})
@@ -1237,7 +1237,7 @@
           <button
             type="submit"
             :disabled="creatingChat"
-            class="w-full py-3 bg-[#00a884] hover:bg-[#02906f] text-[#111b21] font-bold text-sm rounded-xl transition-all shadow-lg"
+            class="w-full py-3 bg-[#00a884] hover:bg-[#02906f] text-[#18242b] font-bold text-sm rounded-xl transition-all shadow-lg"
           >
             <span>{{ creatingChat ? 'جاري فتح المحادثة...' : 'فتح الشات' }}</span>
           </button>
@@ -1262,12 +1262,12 @@
       @contextmenu.prevent="ctxMenu.show = false"
     >
       <div
-        class="absolute bg-[#233138] border border-[#2a3942] rounded-xl shadow-2xl py-1.5 w-44 text-sm"
+        class="absolute bg-[#2c3b44] border border-[#30424c] rounded-xl shadow-2xl py-1.5 w-44 text-sm"
         :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
         @click.stop
       >
         <!-- Emoji reaction row -->
-        <div class="flex items-center justify-around px-2 py-1.5 border-b border-[#2a3942]">
+        <div class="flex items-center justify-around px-2 py-1.5 border-b border-[#30424c]">
           <button
             v-for="emoji in popularEmojis"
             :key="emoji"
@@ -1276,21 +1276,21 @@
           >{{ emoji }}</button>
           <button
             @click="activeReactionMessageId = ctxMenu.msg.id; ctxMenu.show = false"
-            class="text-[#8696a0] hover:text-white text-xs p-1"
+            class="text-[#96a4ad] hover:text-white text-xs p-1"
             title="المزيد"
           >+</button>
         </div>
 
         <button
           @click="setReplyTarget(ctxMenu.msg)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#d1d7db] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a5 5 0 015 5v1M3 10l6-6m-6 6l6 6"/></svg>
           رد
         </button>
         <button
           @click="openForwardModal(ctxMenu.msg)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#d1d7db] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
           تحويل
@@ -1298,22 +1298,22 @@
         <button
           v-if="ctxMenu.msg?.message"
           @click="copyMessageText(ctxMenu.msg)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#d1d7db] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
           نسخ النص
         </button>
         <button
           @click="enterSelectMode(ctxMenu.msg)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#d1d7db] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
           تحديد
         </button>
-        <div class="border-t border-[#2a3942] my-1"></div>
+        <div class="border-t border-[#30424c] my-1"></div>
         <button
           @click="deleteMsg(ctxMenu.msg, false)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#f15c6d] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#f15c6d] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           حذف عندي
@@ -1321,14 +1321,14 @@
         <button
           v-if="ctxMenu.msg?.direction === 'outgoing' && !ctxMenu.msg?.revoked_at"
           @click="deleteMsg(ctxMenu.msg, true)"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#f15c6d] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#f15c6d] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
           حذف عند الجميع
         </button>
         <button
           @click="ctxMenu.show = false"
-          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#8696a0] hover:bg-[#182229] transition-colors"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#96a4ad] hover:bg-[#202d35] transition-colors"
         >
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           إغلاق
@@ -1342,12 +1342,12 @@
       class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
       @click.self="showForwardModal = false"
     >
-      <div class="bg-[#202c33] border border-[#2a3942] rounded-3xl w-full max-w-md p-5 shadow-2xl text-right max-h-[80vh] flex flex-col">
+      <div class="bg-[#25343d] border border-[#30424c] rounded-3xl w-full max-w-md p-5 shadow-2xl text-right max-h-[80vh] flex flex-col">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-lg font-bold text-white">تحويل إلى</h3>
-          <button @click="showForwardModal = false" class="text-[#8696a0] hover:text-white p-1">✕</button>
+          <button @click="showForwardModal = false" class="text-[#96a4ad] hover:text-white p-1">✕</button>
         </div>
-        <p class="text-xs text-[#8696a0] mb-3 truncate">
+        <p class="text-xs text-[#96a4ad] mb-3 truncate">
           <template v-if="forwardIds.length > 1">{{ forwardIds.length }} رسالة محددة</template>
           <template v-else>{{ forwardMsg?.message || `[${forwardMsg?.message_type}]` }}</template>
         </p>
@@ -1355,14 +1355,14 @@
           v-model="forwardSearch"
           type="text"
           placeholder="ابحث في المحادثات..."
-          class="w-full bg-[#111b21] border border-[#2a3942] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] mb-3"
+          class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] mb-3"
         />
         <div class="flex-1 overflow-y-auto space-y-1">
           <button
             v-for="c in forwardTargets"
             :key="c.id"
             @click="toggleForwardTarget(c.id)"
-            class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-[#2a3942] transition-colors text-right"
+            class="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-[#30424c] transition-colors text-right"
             :class="{ 'bg-[#00a884]/10 border border-[#00a884]/40': forwardSelected.includes(c.id) }"
           >
             <div class="w-9 h-9 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-xs shrink-0 overflow-hidden relative">
@@ -1370,8 +1370,8 @@
               <span v-else>{{ convInitial(c) }}</span>
             </div>
             <div class="flex-1 min-w-0">
-              <p class="text-sm font-bold text-[#e9edef] truncate">{{ convTitle(c) }}</p>
-              <p class="text-[10px] text-[#8696a0] font-mono" dir="ltr">+{{ c.contact_phone }}</p>
+              <p class="text-sm font-bold text-[#f0f2f5] truncate">{{ convTitle(c) }}</p>
+              <p class="text-[10px] text-[#96a4ad] font-mono" dir="ltr">+{{ c.contact_phone }}</p>
             </div>
             <span v-if="forwardSelected.includes(c.id)" class="text-[#00a884] font-bold">✓</span>
           </button>
@@ -1379,9 +1379,9 @@
         <button
           @click="doForward"
           :disabled="!forwardSelected.length || forwarding"
-          class="mt-4 w-full py-2.5 bg-[#00a884] hover:bg-[#02906f] text-[#111b21] font-bold text-sm rounded-xl disabled:opacity-40 transition-all flex items-center justify-center gap-2"
+          class="mt-4 w-full py-2.5 bg-[#00a884] hover:bg-[#02906f] text-[#18242b] font-bold text-sm rounded-xl disabled:opacity-40 transition-all flex items-center justify-center gap-2"
         >
-          <span v-if="forwarding" class="wx-spinner w-4 h-4 block" style="border-top-color:#111b21;border-color:rgba(17,27,33,0.3);border-top-color:#111b21"></span>
+          <span v-if="forwarding" class="wx-spinner w-4 h-4 block" style="border-top-color:#18242b;border-color:rgba(17,27,33,0.3);border-top-color:#18242b"></span>
           {{ forwarding ? 'جاري التحويل...' : `تحويل${forwardSelected.length ? ' (' + forwardSelected.length + ')' : ''}` }}
         </button>
       </div>
@@ -1391,18 +1391,18 @@
     <Transition name="slide-left">
       <aside
         v-if="showContactInfo && activeConv"
-        class="absolute inset-y-0 left-0 w-full sm:w-[380px] bg-[#111b21] border-r border-[#2a3942] z-40 flex flex-col shadow-2xl"
+        class="absolute inset-y-0 left-0 w-full sm:w-[380px] bg-[#18242b] border-r border-[#30424c] z-40 flex flex-col shadow-2xl"
       >
-        <header class="bg-[#202c33] px-4 py-3 flex items-center gap-4 shrink-0">
+        <header class="bg-[#25343d] px-4 py-3 flex items-center gap-4 shrink-0">
           <button @click="showContactInfo = false" class="text-[#aebac1] hover:text-white p-1">
             <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
-          <h3 class="text-[#e9edef] font-bold text-sm">معلومات جهة الاتصال</h3>
+          <h3 class="text-[#f0f2f5] font-bold text-sm">معلومات جهة الاتصال</h3>
         </header>
 
         <div class="flex-1 overflow-y-auto">
           <!-- Avatar + name -->
-          <div class="p-6 flex flex-col items-center gap-3 border-b border-[#222e35]">
+          <div class="p-6 flex flex-col items-center gap-3 border-b border-[#2c3c45]">
             <div class="w-36 h-36 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-5xl shadow-lg overflow-hidden relative">
               <img
                 v-if="avatarSrc(activeConv)"
@@ -1416,10 +1416,10 @@
 
             <!-- Editable name -->
             <div v-if="!editingContactName" class="flex items-center gap-2">
-              <h2 class="text-lg font-bold text-[#e9edef]">{{ convTitle(activeConv) }}</h2>
+              <h2 class="text-lg font-bold text-[#f0f2f5]">{{ convTitle(activeConv) }}</h2>
               <button
                 @click="startEditContactName"
-                class="text-[#8696a0] hover:text-[#00a884] p-1"
+                class="text-[#96a4ad] hover:text-[#00a884] p-1"
                 title="تعديل الاسم"
               >
                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
@@ -1429,30 +1429,30 @@
               <input
                 v-model="contactNameDraft"
                 type="text"
-                class="flex-1 bg-[#202c33] border border-[#2a3942] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
+                class="flex-1 bg-[#25343d] border border-[#30424c] rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
                 @keydown.enter.prevent="saveContactName"
                 @keydown.esc.prevent="editingContactName = false"
               />
               <button @click="saveContactName" :disabled="savingContactName" class="text-[#00a884] p-1 font-bold text-lg disabled:opacity-40">✓</button>
-              <button @click="editingContactName = false" class="text-[#8696a0] hover:text-white p-1">✕</button>
+              <button @click="editingContactName = false" class="text-[#96a4ad] hover:text-white p-1">✕</button>
             </div>
 
-            <p class="text-[#8696a0] font-mono text-sm" dir="ltr">+{{ activeConv.contact_phone }}<template v-if="activeConv.contact_username && convTitle(activeConv) !== '@' + activeConv.contact_username"> · @{{ activeConv.contact_username }}</template></p>
+            <p class="text-[#96a4ad] font-mono text-sm" dir="ltr">+{{ activeConv.contact_phone }}<template v-if="activeConv.contact_username && convTitle(activeConv) !== '@' + activeConv.contact_username"> · @{{ activeConv.contact_username }}</template></p>
             <span class="px-2.5 py-1 rounded-lg text-[11px] font-bold" :class="getDeviceBadgeClass(activeConv.session_id)">
               عبر: {{ activeConv.session?.device_name || ('ج' + activeConv.session_id) }}
             </span>
           </div>
 
           <!-- Media / links / docs -->
-          <div class="p-4 border-b border-[#222e35]">
+          <div class="p-4 border-b border-[#2c3c45]">
             <div class="flex items-center justify-between mb-3">
-              <h4 class="text-xs font-bold text-[#8696a0]">الوسائط والمستندات</h4>
-              <span class="text-[10px] text-[#8696a0]">{{ contactMedia.length }}</span>
+              <h4 class="text-xs font-bold text-[#96a4ad]">الوسائط والمستندات</h4>
+              <span class="text-[10px] text-[#96a4ad]">{{ contactMedia.length }}</span>
             </div>
             <div v-if="loadingContactMedia" class="flex justify-center py-6">
               <span class="wx-spinner w-5 h-5"></span>
             </div>
-            <div v-else-if="!contactMedia.length" class="text-center text-xs text-[#8696a0] py-6">
+            <div v-else-if="!contactMedia.length" class="text-center text-xs text-[#96a4ad] py-6">
               لا توجد وسائط مشتركة بعد
             </div>
             <div v-else class="grid grid-cols-3 gap-1.5">
@@ -1461,7 +1461,7 @@
                   v-if="['image','sticker'].includes(mm.message_type) && mediaSrc(mm)"
                   :href="mediaSrc(mm)"
                   target="_blank"
-                  class="aspect-square rounded-lg overflow-hidden bg-[#202c33] block"
+                  class="aspect-square rounded-lg overflow-hidden bg-[#25343d] block"
                 >
                   <img :src="mediaSrc(mm)" class="w-full h-full object-cover" loading="lazy" alt="" />
                 </a>
@@ -1469,7 +1469,7 @@
                   v-else
                   :href="mediaSrc(mm) || '#'"
                   target="_blank"
-                  class="aspect-square rounded-lg bg-[#202c33] flex flex-col items-center justify-center gap-1 text-[#8696a0] hover:text-[#00a884] transition-colors"
+                  class="aspect-square rounded-lg bg-[#25343d] flex flex-col items-center justify-center gap-1 text-[#96a4ad] hover:text-[#00a884] transition-colors"
                 >
                   <span class="text-xl">
                     {{ mm.message_type === 'video' ? '🎥' : (mm.message_type === 'document' ? '📄' : '🎵') }}
@@ -1483,16 +1483,16 @@
           <!-- Details -->
           <div class="p-4 space-y-3">
             <div class="flex items-center justify-between text-xs">
-              <span class="text-[#8696a0]">معرّف واتساب</span>
-              <span class="text-[#d1d7db] font-mono" dir="ltr">{{ activeConv.contact_jid }}</span>
+              <span class="text-[#96a4ad]">معرّف واتساب</span>
+              <span class="text-[#dfe5e8] font-mono" dir="ltr">{{ activeConv.contact_jid }}</span>
             </div>
             <div class="flex items-center justify-between text-xs">
-              <span class="text-[#8696a0]">آخر رسالة</span>
-              <span class="text-[#d1d7db]">{{ formatTime(activeConv.last_message_at) }}</span>
+              <span class="text-[#96a4ad]">آخر رسالة</span>
+              <span class="text-[#dfe5e8]">{{ formatTime(activeConv.last_message_at) }}</span>
             </div>
             <div class="flex items-center justify-between text-xs">
-              <span class="text-[#8696a0]">مثبّتة</span>
-              <span class="text-[#d1d7db]">{{ activeConv.is_pinned ? 'نعم' : 'لا' }}</span>
+              <span class="text-[#96a4ad]">مثبّتة</span>
+              <span class="text-[#dfe5e8]">{{ activeConv.is_pinned ? 'نعم' : 'لا' }}</span>
             </div>
           </div>
         </div>
@@ -1775,8 +1775,8 @@ const lastSenderName = (c) => c?.last_outgoing_user?.name || (c?.last_outgoing_u
 const transferredName = (c) => c?.transferred_by_agent?.name || 'موظف';
 
 const chipClass = (f) => selectedFilter.value === f
-  ? 'bg-[#00a884] text-[#111b21] font-bold'
-  : 'bg-[#202c33] text-[#8696a0] hover:text-[#d1d7db]';
+  ? 'bg-[#00a884] text-[#18242b] font-bold'
+  : 'bg-[#25343d] text-[#96a4ad] hover:text-[#dfe5e8]';
 
 // ---- Agent-to-agent handoff ("تحويل") ------------------------------------
 const showTransferModal = ref(false);
@@ -3285,12 +3285,16 @@ const inScope = (c) => {
 
 const mergeConversation = (conv) => {
   const idx = conversations.value.findIndex((c) => c.id === conv.id);
-  if (!inScope(conv)) {
+  // Patch first, then evaluate the tab filter on the merged row — partial
+  // pushes (a message.new echo carrying no assignment fields) can't evict
+  // a row they know nothing about.
+  if (idx !== -1) patchRow(conversations.value[idx], conv);
+  const row = idx !== -1 ? conversations.value[idx] : conv;
+  if (!inScope(row)) {
     if (idx !== -1) conversations.value.splice(idx, 1);
     return;
   }
-  if (idx !== -1) patchRow(conversations.value[idx], conv);
-  else conversations.value.unshift(conv);
+  if (idx === -1) conversations.value.unshift(conv);
   // Match the backend ordering exactly (pinned first, then latest activity) —
   // a different comparator makes the list flip-flop between poll and push.
   const sorted = [...conversations.value].sort(
