@@ -1071,6 +1071,126 @@ class WhatsAppWebhookController extends Controller
     }
 
     /**
+     * The owner's WhatsApp address book, decoded by the engine from app-state
+     * sync — the names the user actually saved on their phone. Rows are
+     * upserted into the CRM contact book (which already wins over pushnames)
+     * and matching conversations are renamed.
+     */
+    public function contactsSync(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'userId' => 'required|string',
+                'contacts' => 'required|array|max:2000',
+                'contacts.*.jid' => 'required|string|max:80',
+                'contacts.*.name' => 'required|string|max:190',
+                'contacts.*.firstName' => 'nullable|string|max:190',
+            ]);
+
+            $session = $this->resolveSession($data['userId']);
+            if (!$session) {
+                Log::warning("WhatsApp contacts sync: no session for {$data['userId']}");
+                return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+            }
+
+            $ownerId = $session->user_id;
+
+            // LID-keyed contacts map to a phone number through the lid→pn
+            // table filled by history-sync and live traffic.
+            $lidJids = collect($data['contacts'])
+                ->pluck('jid')
+                ->filter(fn ($j) => is_string($j) && str_ends_with($j, '@lid'))
+                ->values();
+            $lidToPn = $lidJids->isNotEmpty()
+                ? DB::table('whatsapp_lid_mappings')->whereIn('lid', $lidJids)->pluck('pn', 'lid')
+                : collect();
+
+            $upserts = [];
+            foreach ($data['contacts'] as $c) {
+                $name = trim((string) ($c['name'] ?? ''));
+                if ($name === '' || mb_strlen($name) > 190) {
+                    continue;
+                }
+                $jid = $c['jid'];
+                if (str_ends_with($jid, '@lid')) {
+                    $jid = $lidToPn[$jid] ?? null;
+                    if (!$jid) {
+                        continue; // can't map this contact to a phone number yet
+                    }
+                }
+                $phone = \App\Services\CrmContactBook::normalizePhone(explode('@', $jid)[0]);
+                if (!$phone) {
+                    continue;
+                }
+                $tail = \App\Services\CrmContactBook::tail($phone);
+                $upserts[$tail] = [
+                    'owner_id' => $ownerId,
+                    'name' => $name,
+                    'phone' => $phone,
+                    'phone_tail' => $tail,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+            }
+
+            foreach (array_chunk(array_values($upserts), 500) as $chunk) {
+                \App\Models\CrmContact::upsert(
+                    $chunk,
+                    ['owner_id', 'phone_tail'],
+                    ['name', 'phone', 'updated_at']
+                );
+            }
+
+            // Rename matching conversations — the book name wins. Only rows
+            // whose current name differs get touched (a resync replays the
+            // whole address book on every reconnect).
+            $renamed = 0;
+            $tailToName = collect($upserts)->mapWithKeys(fn ($r) => [$r['phone_tail'] => $r['name']]);
+            if ($tailToName->isNotEmpty()) {
+                $sessionIds = WhatsAppSession::where('user_id', $ownerId)->pluck('id');
+                if ($sessionIds->isNotEmpty()) {
+                    WhatsAppConversation::whereIn('session_id', $sessionIds)
+                        ->whereNotNull('contact_phone')
+                        ->chunkById(500, function ($convs) use ($tailToName, &$renamed) {
+                            foreach ($convs as $conv) {
+                                $digits = preg_replace('/\D/', '', (string) $conv->contact_phone);
+                                $name = $digits ? ($tailToName[substr($digits, -10)] ?? null) : null;
+                                if ($name && $conv->contact_name !== $name) {
+                                    WhatsAppConversation::where('id', $conv->id)
+                                        ->update(['contact_name' => $name]);
+                                    $renamed++;
+                                }
+                            }
+                        });
+                }
+            }
+
+            try {
+                event(new \App\Events\CrmRealtimeEvent($ownerId, 'contacts.synced', [
+                    'contacts' => count($upserts),
+                    'renamed' => $renamed,
+                ]));
+            } catch (\Throwable $e) {
+                Log::debug('CRM broadcast (contacts.synced) failed: ' . $e->getMessage());
+            }
+
+            Log::info(
+                "WhatsApp contacts sync session {$session->id}: " .
+                count($upserts) . " contacts, {$renamed} conversations renamed"
+            );
+
+            return response()->json([
+                'success' => true,
+                'contacts' => count($upserts),
+                'renamed' => $renamed,
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('WhatsApp contacts sync webhook error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Handle incoming message from WhatsApp service.
      */
     public function messageReceived(Request $request)
@@ -1146,8 +1266,11 @@ class WhatsAppWebhookController extends Controller
                 : (str_ends_with($fromJid, '@lid')
                     ? null
                     : preg_replace('/@.*$/', '', $fromJid));
-            $senderName = $data['senderName'] ?? null;
             $fromMe = (bool) ($data['fromMe'] ?? false);
+            // The stanza's notify attr carries the author's pushname — on
+            // fromMe messages (owner replying from the WhatsApp app) that is
+            // OUR name and must never become the customer's contact_name.
+            $senderName = $fromMe ? null : ($data['senderName'] ?? null);
             $body = $data['body'] ?? '';
             $messageType = $data['type'] ?? 'text';
             $messageId = $data['messageId'] ?? null;
