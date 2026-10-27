@@ -30,6 +30,12 @@
             <h2 class="text-sm font-bold text-[#e9edef] leading-tight">{{ user?.name || 'مستخدم CRM' }}</h2>
             <p class="text-[11px] text-[#8696a0]">
               {{ isOwner ? 'مسؤول النظام' : (user?.group_name || 'خدمة العملاء') }}
+              <span
+                v-if="isAgent"
+                class="font-bold"
+                :class="isAtCapacity ? 'text-rose-400' : 'text-[#00a884]'"
+                title="عدد المحادثات المفتوحة اللي معاك دلوقتي"
+              > · شواغلي {{ user?.active_chats ?? 0 }}/{{ user?.max_active_chats || 5 }}</span>
             </p>
           </div>
         </div>
@@ -78,21 +84,32 @@
 
         <!-- Filter Chips & Device Selector -->
         <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-          <button
-            @click="setFilter('all')"
-            class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
-            :class="selectedFilter === 'all' ? 'bg-[#00a884] text-[#111b21] font-bold' : 'bg-[#202c33] text-[#8696a0] hover:text-[#d1d7db]'"
-          >
-            الكل
-          </button>
-
-          <button
-            @click="setFilter('unread')"
-            class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
-            :class="selectedFilter === 'unread' ? 'bg-[#00a884] text-[#111b21] font-bold' : 'bg-[#202c33] text-[#8696a0] hover:text-[#d1d7db]'"
-          >
-            غير مقروءة
-          </button>
+          <!-- Agents work a shared queue: pool → claimed-by-me → done -->
+          <template v-if="isAgent">
+            <button @click="setFilter('available')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('available')">
+              متاحة
+            </button>
+            <button @click="setFilter('mine')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('mine')">
+              محادثاتي
+            </button>
+            <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
+              مكتملة
+            </button>
+          </template>
+          <template v-else>
+            <button @click="setFilter('all')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('all')">
+              الكل
+            </button>
+            <button @click="setFilter('unread')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('unread')">
+              غير مقروءة
+            </button>
+            <button @click="setFilter('available')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('available')">
+              بدون موظف
+            </button>
+            <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
+              مكتملة
+            </button>
+          </template>
 
           <!-- Devices Filter Dropdown -->
           <div class="relative shrink-0">
@@ -229,7 +246,12 @@
               <!-- Assignment / resolution + unread badges -->
               <div class="flex items-center gap-1 shrink-0">
                 <span
-                  v-if="c.assigned_agent_id"
+                  v-if="c.transferred_by && c.assigned_agent_id === user?.id"
+                  class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-500/20 text-violet-300 whitespace-nowrap"
+                  :title="'زميلك حوّل المحادثة دي لك'"
+                >↩ محولة من {{ transferredName(c) }}</span>
+                <span
+                  v-else-if="c.assigned_agent_id"
                   class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 whitespace-nowrap"
                   :title="'المحادثة محجوزة لهذا الموظف'"
                 >مع {{ assignedName(c) }}</span>
@@ -404,7 +426,11 @@
             </button>
             <!-- Who's holding this chat -->
             <span
-              v-if="activeConv.assigned_agent_id"
+              v-if="activeConv.transferred_by && activeConv.assigned_agent_id === user?.id"
+              class="px-2 py-1 rounded-lg bg-violet-500/15 text-violet-300 text-[11px] font-bold whitespace-nowrap"
+            >حوّلها لك {{ transferredName(activeConv) }}</span>
+            <span
+              v-else-if="activeConv.assigned_agent_id"
               class="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[11px] font-bold whitespace-nowrap"
             >مع {{ assignedName(activeConv) }}</span>
             <span
@@ -413,13 +439,33 @@
               :title="'آخر موظف رد على هذه المحادثة'"
             >آخر رد: {{ lastSenderName(activeConv) }}</span>
             <span
-              v-else-if="activeConv.resolved_at"
+              v-if="activeConv.resolved_at"
               class="px-2 py-1 rounded-lg bg-emerald-500/15 text-emerald-300 text-[11px] font-bold whitespace-nowrap"
             >✓ مكتمل</span>
 
+            <!-- Reopen: owner, or the agent who closed it -->
+            <button
+              v-if="canReopen"
+              @click="submitReopen"
+              class="px-3 py-1.5 rounded-lg bg-sky-600/20 text-sky-300 hover:bg-sky-600/40 text-[11px] font-bold transition-colors whitespace-nowrap"
+              title="إرجاع المحادثة لقائمة الشاتات المتاحة"
+            >
+              إعادة فتح
+            </button>
+
+            <!-- Transfer chat to another agent -->
+            <button
+              v-if="canTransfer"
+              @click="openTransferModal"
+              class="px-3 py-1.5 rounded-lg bg-violet-600/20 text-violet-300 hover:bg-violet-600/40 text-[11px] font-bold transition-colors whitespace-nowrap"
+              title="تحويل المحادثة لموظف تاني"
+            >
+              تحويل
+            </button>
+
             <!-- End chat: assigned agent or owner -->
             <button
-              v-if="!lockedByOther"
+              v-if="!lockedByOther && !activeConv.resolved_at"
               @click="openResolveModal"
               class="px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 text-[11px] font-bold transition-colors whitespace-nowrap"
               title="إنهاء المحادثة وإتاحتها لأي موظف"
@@ -481,7 +527,7 @@
         <div
           ref="messagesContainer"
           @scroll.passive="onMessagesScroll"
-          class="flex-1 overflow-y-auto p-4 space-y-3 relative whatsapp-wallpaper"
+          class="flex-1 overflow-y-auto p-4 space-y-2 relative z-10 bg-transparent"
         >
           <!-- Loading spinner while the page of messages resolves -->
           <div v-if="loadingMessages" class="flex flex-col items-center justify-center gap-3 p-12 text-xs text-[#8696a0]">
@@ -518,7 +564,7 @@
             </div>
             <div
               :id="'msg-' + (m.message_id || m.id)"
-              class="flex flex-col group relative"
+              class="flex flex-col group relative mb-1"
               :class="m.direction === 'outgoing' ? 'items-start' : 'items-end'"
               @contextmenu.prevent="openContextMenu(m, $event)"
             >
@@ -530,12 +576,32 @@
                 @click="toggleSelect(m)"
               ></div>
             <div
-              class="max-w-[85%] md:max-w-[70%] lg:max-w-[60%] rounded-2xl p-2.5 shadow-md relative transition-all"
+              class="max-w-[85%] md:max-w-[70%] lg:max-w-[65%] rounded-lg p-1.5 px-2.5 shadow-sm relative transition-all"
               :class="[
-                m.direction === 'outgoing' ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none' : 'bg-[#202c33] text-[#e9edef] rounded-tl-none',
+                m.direction === 'outgoing' ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none ml-2' : 'bg-[#202c33] text-[#e9edef] rounded-tl-none mr-2',
                 selectedIds.includes(m.id) ? 'ring-2 ring-[#00a884] ring-offset-1 ring-offset-[#0b141a]' : '',
               ]"
             >
+              <!-- WhatsApp Bubble Corner Tails -->
+              <svg
+                v-if="m.direction === 'outgoing'"
+                viewBox="0 0 8 13"
+                height="13"
+                width="8"
+                class="absolute top-0 -right-2 text-[#005c4b] fill-current pointer-events-none"
+              >
+                <path d="M5.188 0H0v12.19l6.467-8.622C7.526 1.156 6.958 0 5.188 0z"/>
+              </svg>
+              <svg
+                v-if="m.direction === 'incoming'"
+                viewBox="0 0 8 13"
+                height="13"
+                width="8"
+                class="absolute top-0 -left-2 text-[#202c33] fill-current pointer-events-none"
+              >
+                <path d="M1.533 3.568L8 12.19V0H2.812C1.042 0 .474 1.156 1.533 3.568z"/>
+              </svg>
+
               <!-- Multi-select checkbox — pinned to the bubble's outer edge -->
               <span
                 v-if="selectMode"
@@ -548,7 +614,7 @@
               <!-- Group sender — which participant sent this message -->
               <div
                 v-if="isGroupConv && m.direction === 'incoming'"
-                class="text-[11px] font-bold mb-0.5 select-none"
+                class="text-[12px] font-semibold mb-0.5 select-none"
                 :style="{ color: groupSenderColor(m.from) }"
                 dir="ltr"
               >
@@ -564,7 +630,7 @@
               <!-- Quoted / Reply To Message if any -->
               <div
                 v-if="m.reply_to_id"
-                class="mb-1.5 p-1.5 rounded-lg bg-black/20 border-r-2 border-[#00a884] text-[11px] text-[#8696a0] cursor-pointer"
+                class="mb-1 p-1.5 rounded-md bg-black/20 border-r-4 border-[#00a884] text-[11px] text-[#8696a0] cursor-pointer"
                 @click="scrollToMessage(m.reply_to_id)"
               >
                 <template v-if="quotedPreview(m.reply_to_id)">
@@ -581,53 +647,101 @@
               <!-- Anti-delete badge — the row is kept, only flagged -->
               <div
                 v-if="m.revoked_at"
-                class="mb-1.5 flex items-center gap-1.5 w-fit rounded-lg bg-[#f15c6d]/10 border border-[#f15c6d]/25 px-2 py-1 text-[10px] italic text-[#f15c6d]"
+                class="mb-1 flex items-center gap-1.5 w-fit rounded-lg bg-[#f15c6d]/10 border border-[#f15c6d]/25 px-2 py-1 text-[10px] italic text-[#f15c6d]"
               >
                 <span class="not-italic">🚫</span>
                 <span>{{ m.direction === 'outgoing' ? 'حذفتَ هذه الرسالة لدى الجميع' : 'العميل حذف هذه الرسالة لدى الجميع — المحتوى محفوظ' }}</span>
               </div>
 
               <!-- Media Content: Image / Sticker -->
-              <div v-if="(m.message_type === 'image' || m.message_type === 'sticker') && mediaSrc(m)" class="mb-1.5">
+              <div v-if="(m.message_type === 'image' || m.message_type === 'sticker') && mediaSrc(m)" class="mb-1">
                 <img
                   :src="mediaSrc(m)"
                   alt="WhatsApp Image"
-                  class="rounded-xl max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                  class="rounded-lg max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
                   @click="openLightbox(mediaSrc(m))"
                 />
               </div>
 
               <!-- Media Content: Video -->
-              <div v-else-if="m.message_type === 'video' && mediaSrc(m)" class="mb-1.5">
+              <div v-else-if="m.message_type === 'video' && mediaSrc(m)" class="mb-1">
                 <video
                   :src="mediaSrc(m)"
                   controls
-                  class="rounded-xl max-h-72 w-full bg-black/60"
+                  class="rounded-lg max-h-72 w-full bg-black/60"
                 ></video>
               </div>
 
-              <!-- Media Content: Audio / Voice Note -->
-              <div v-else-if="(m.message_type === 'audio' || m.message_type === 'voice') && (!m.media_mime_type || m.media_mime_type.startsWith('audio/'))" class="mb-1.5">
-                <div class="flex items-center gap-3 p-2 bg-black/20 rounded-xl min-w-[220px]">
-                  <div class="w-9 h-9 rounded-full bg-[#00a884] text-[#111b21] flex items-center justify-center font-bold shrink-0">
-                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/></svg>
+              <!-- Media Content: Audio / Voice Note (Official WhatsApp Web Style) -->
+              <div v-else-if="(m.message_type === 'audio' || m.message_type === 'voice') && (!m.media_mime_type || m.media_mime_type.startsWith('audio/'))" class="mb-1">
+                <div class="flex items-center gap-2.5 p-1 min-w-[260px] max-w-[330px]" dir="ltr">
+                  <!-- Play / Pause Button -->
+                  <button
+                    type="button"
+                    @click.stop="togglePlayAudio(m)"
+                    class="w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-transform active:scale-95"
+                    :class="m.direction === 'outgoing' ? 'text-white hover:text-white/80' : 'text-[#00a884] hover:text-[#00a884]/80'"
+                    :title="activeAudioId === m.id && audioPlaying ? 'إيقاف مؤقت' : 'تشغيل'"
+                  >
+                    <!-- Pause Icon -->
+                    <svg v-if="activeAudioId === m.id && audioPlaying" class="w-7 h-7 fill-current" viewBox="0 0 24 24">
+                      <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>
+                    </svg>
+                    <!-- Play Icon -->
+                    <svg v-else class="w-7 h-7 fill-current ml-0.5" viewBox="0 0 24 24">
+                      <path d="M8 5v14l11-7z"/>
+                    </svg>
+                  </button>
+
+                  <!-- Waveform track -->
+                  <div class="flex-1 flex flex-col justify-center min-w-0">
+                    <div
+                      class="h-7 flex items-center gap-[2.5px] cursor-pointer relative py-1"
+                      @click="seekAudio(m, $event)"
+                    >
+                      <span
+                        v-for="(bh, bi) in getWaveformBars(m.id || m.message_id)"
+                        :key="bi"
+                        class="w-[2.5px] rounded-full transition-colors"
+                        :style="{ height: bh + 'px' }"
+                        :class="activeAudioId === m.id && ((audioCurrentTime / (audioDurations[m.id] || m.media?.seconds || 1)) >= (bi / 28)) ? (m.direction === 'outgoing' ? 'bg-[#53bdeb]' : 'bg-[#00a884]') : 'bg-[#8696a0]/40'"
+                      ></span>
+                    </div>
+                    <!-- Duration -->
+                    <div class="flex items-center justify-between text-[11px] text-[#8696a0] -mt-0.5">
+                      <span>{{ activeAudioId === m.id && audioPlaying ? formatAudioSeconds(audioCurrentTime) : getAudioDuration(m) }}</span>
+                    </div>
                   </div>
-                  <audio v-if="mediaSrc(m)" :src="mediaSrc(m)" controls class="h-8 max-w-[200px] flex-1"></audio>
-                  <span v-else class="flex-1 text-xs text-[#aebac1] flex items-center gap-1.5">
-                    <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"/></svg>
-                    جارٍ تحميل المقطع الصوتي…
-                  </span>
+
+                  <!-- Profile Avatar with Mic Badge -->
+                  <div class="relative shrink-0">
+                    <div class="w-10 h-10 rounded-full overflow-hidden bg-[#2a3942] flex items-center justify-center text-xs font-bold text-[#e9edef]">
+                      <img
+                        v-if="m.direction === 'outgoing' ? user?.avatar : avatarSrc(activeConv)"
+                        :src="m.direction === 'outgoing' ? user?.avatar : avatarSrc(activeConv)"
+                        alt=""
+                        class="w-full h-full object-cover"
+                      />
+                      <span v-else>{{ m.direction === 'outgoing' ? 'U' : convInitial(activeConv) }}</span>
+                    </div>
+                    <!-- Cyan mic badge -->
+                    <span class="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full bg-[#0b141a] flex items-center justify-center shadow-sm">
+                      <svg class="w-2.5 h-2.5 text-[#53bdeb]" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/><path d="M17 11c0 2.76-2.24 5-5 5s-5-2.24-5-5H5c0 3.53 2.61 6.43 6 6.92V21h2v-3.08c3.39-.49 6-3.39 6-6.92h-2z"/>
+                      </svg>
+                    </span>
+                  </div>
                 </div>
               </div>
 
               <!-- Media Content: Document — WhatsApp-style file card -->
-              <div v-else-if="isDocMessage(m)" class="mb-1.5">
+              <div v-else-if="isDocMessage(m)" class="mb-1">
                 <component
                   :is="mediaSrc(m) ? 'a' : 'div'"
                   :href="mediaSrc(m) || undefined"
                   target="_blank"
                   :download="docInfo(m).fileName"
-                  class="flex items-center gap-3 p-2.5 bg-black/20 rounded-xl min-w-[230px] max-w-[320px] hover:bg-black/30 transition-colors"
+                  class="flex items-center gap-3 p-2 bg-black/20 rounded-lg min-w-[230px] max-w-[320px] hover:bg-black/30 transition-colors"
                 >
                   <!-- File icon colored by extension -->
                   <div class="w-11 h-12 rounded-lg flex flex-col items-center justify-center shrink-0 relative overflow-hidden"
@@ -645,27 +759,27 @@
               </div>
 
               <!-- Media Content: Location / Contact -->
-              <div v-else-if="m.message_type === 'location'" class="mb-1.5">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-xl text-xs text-[#d1d7db]">
+              <div v-else-if="m.message_type === 'location'" class="mb-1">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
                   <span class="text-base">📍</span>
                   <span>{{ m.message || 'موقع' }}</span>
                 </div>
               </div>
-              <div v-else-if="m.message_type === 'contact'" class="mb-1.5">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-xl text-xs text-[#d1d7db]">
+              <div v-else-if="m.message_type === 'contact'" class="mb-1">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
                   <span class="text-base">👤</span>
                   <span>{{ m.message || 'جهة اتصال' }}</span>
                 </div>
               </div>
-              <div v-else-if="m.message_type === 'call'" class="mb-1.5">
-                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-xl text-xs text-[#d1d7db]">
+              <div v-else-if="m.message_type === 'call'" class="mb-1">
+                <div class="flex items-center gap-2 p-2 bg-black/20 rounded-lg text-xs text-[#d1d7db]">
                   <span class="text-base">{{ m.direction === 'incoming' ? '📲' : '📞' }}</span>
                   <span>{{ m.message || 'مكالمة صوتية' }}</span>
                 </div>
               </div>
 
               <!-- Text Message Content (caption or plain text; hides [placeholder] labels on media) -->
-              <p v-if="m.message && !['location', 'contact', 'call'].includes(m.message_type) && !isPlaceholderText(m)" class="text-sm whitespace-pre-wrap leading-relaxed break-words px-1">
+              <p v-if="m.message && !['location', 'contact', 'call'].includes(m.message_type) && !isPlaceholderText(m)" class="text-[14.2px] whitespace-pre-wrap leading-[19px] break-words px-0.5 text-[#e9edef]">
                 <template v-for="(part, pi) in msgParts(m)" :key="pi"><a
                     v-if="part.t === 'link'"
                     :href="part.href"
@@ -681,7 +795,7 @@
               </p>
 
               <!-- Footer: Time + Status Ticks -->
-              <div class="flex items-center justify-end gap-1 text-[10px] text-[#8696a0] mt-1 select-none">
+              <div class="flex items-center justify-end gap-1 text-[11px] text-[#8696a0] mt-0.5 select-none pl-1" dir="ltr">
                 <span>{{ formatTime(m.timestamp || m.created_at) }}</span>
                 <span v-if="m.direction === 'outgoing'">
                   <span v-if="m.status === 'sending'" class="text-[#8696a0]">🕐</span>
@@ -831,7 +945,7 @@
           <div v-else class="flex items-end gap-2">
             <!-- Unified composer: the bordered box IS the input — attach/emoji
                  live inside it so the typing area runs edge to edge -->
-            <div class="flex-1 flex items-end gap-1 bg-[#2a3942] rounded-2xl px-1 border border-transparent focus-within:border-[#00a884]/40">
+            <div class="flex-1 flex items-end gap-1 bg-[#2a3942] rounded-lg px-2 border border-transparent focus-within:border-[#00a884]/40">
             <!-- Attachment Button & Popup -->
             <div class="relative">
               <button
@@ -1001,6 +1115,74 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal: Transfer chat to another team member -->
+    <div
+      v-if="showTransferModal"
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+      @click.self="showTransferModal = false"
+    >
+      <div class="bg-[#202c33] border border-[#2a3942] rounded-3xl w-full max-w-md p-6 shadow-2xl text-right relative">
+        <button
+          @click="showTransferModal = false"
+          class="absolute top-5 left-5 text-[#8696a0] hover:text-white p-1"
+        >✕</button>
+        <h3 class="text-lg font-bold text-white mb-1">تحويل المحادثة</h3>
+        <p class="text-xs text-[#8696a0] mb-4">
+          اختار الموظف اللي هيستلم الشات — هيظهرله إشعار إنك حولتهاله وهيتحط في أول قايمته.
+        </p>
+
+        <div class="max-h-72 overflow-y-auto space-y-1.5">
+          <button
+            v-for="a in transferTargets"
+            :key="a.id"
+            @click="submitTransfer(a)"
+            :disabled="transferring || (a.is_full && !isOwner)"
+            class="w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl bg-[#111b21] border border-[#2a3942] hover:border-[#00a884] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <span class="flex items-center gap-2.5 min-w-0">
+              <span class="w-9 h-9 rounded-full bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-xs shrink-0">
+                {{ (a.name || '?').charAt(0) }}
+              </span>
+              <span class="text-right min-w-0">
+                <p class="text-sm font-bold text-[#e9edef] truncate">{{ a.name }}</p>
+                <p class="text-[10px] text-[#8696a0] truncate">{{ a.group_name || 'خدمة العملاء' }}</p>
+              </span>
+            </span>
+            <span class="text-[11px] font-bold whitespace-nowrap" :class="a.is_full ? 'text-rose-400' : 'text-[#00a884]'">
+              {{ a.active_chats }}/{{ a.max_active_chats || 5 }}<template v-if="a.is_full"> · ممتلئ</template>
+            </span>
+          </button>
+          <div v-if="!transferTargets.length" class="text-center text-xs text-[#8696a0] py-6">
+            {{ loadingTransferTargets ? 'جاري تحميل الموظفين…' : 'مفيش موظفين متاحين للتحويل' }}
+          </div>
+        </div>
+
+        <button
+          @click="showTransferModal = false"
+          class="mt-4 w-full py-2.5 rounded-xl bg-[#2a3942] text-[#d1d7db] text-sm font-bold hover:bg-[#374248] transition-colors"
+        >
+          إلغاء
+        </button>
+      </div>
+    </div>
+
+    <!-- Toast: a teammate handed a chat to you -->
+    <Transition name="wx-fade">
+      <div
+        v-if="transferToast"
+        class="fixed bottom-6 left-6 z-[60] bg-[#233138] border border-violet-500/50 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3 max-w-sm"
+      >
+        <span class="w-9 h-9 rounded-full bg-violet-500/20 text-violet-300 flex items-center justify-center shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7 16l-4-4m0 0l4-4m-4 4h18M17 8l4 4m0 0l-4 4m4-4H3"/></svg>
+        </span>
+        <div class="min-w-0">
+          <p class="text-sm font-bold text-white">محادثة محولة إليك</p>
+          <p class="text-xs text-[#aebac1]">قام {{ transferToast.from }} بتحويل محادثة إليك — هتلاقيها في «محادثاتي»</p>
+        </div>
+        <button @click="transferToast = null" class="text-[#8696a0] hover:text-white p-1 shrink-0">✕</button>
+      </div>
+    </Transition>
 
     <!-- Modal: Start New Chat -->
     <div
@@ -1341,6 +1523,7 @@ import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import crm from '@/services/crm';
 import { getEcho, crmChannelName } from '@/services/realtime';
+import { playIncomingMessage } from '@/services/notifySound';
 import { callApi, callAudio, callTones } from '@/services/call';
 import CallPanel from '@/components/crm/CallPanel.vue';
 
@@ -1349,7 +1532,14 @@ const router = useRouter();
 
 const user = ref(crm.getUser());
 const isOwner = computed(() => user.value?.crm_role === 'owner');
+const isAgent = computed(() => user.value?.crm_role === 'agent');
+const isAtCapacity = computed(() =>
+  isAgent.value && (user.value?.active_chats ?? 0) >= (user.value?.max_active_chats || 5)
+);
 const userInitial = computed(() => user.value?.name?.charAt(0)?.toUpperCase() || 'C');
+
+// Refresh the stored profile (role/group/active-chat counter may change).
+const refreshMe = () => crm.me().then(() => { user.value = crm.getUser(); }).catch(() => {});
 
 const devices = ref([]);
 const conversations = ref([]);
@@ -1437,9 +1627,102 @@ const groupSenderLabel = (m) => {
   const n = String(m.sender_phone || m.from || '').split('@')[0];
   return n ? '+' + n : 'مشارك';
 };
+
+// Authentic WhatsApp Web Audio Player State
+const activeAudioId = ref(null);
+const audioPlaying = ref(false);
+const audioCurrentTime = ref(0);
+const audioDurations = ref({});
+let activeAudioEl = null;
+
+const formatAudioSeconds = (sec) => {
+  if (!sec || isNaN(sec)) return '0:00';
+  const mins = Math.floor(sec / 60);
+  const secs = Math.floor(sec % 60);
+  return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+};
+
+const getAudioDuration = (m) => {
+  if (m.media?.seconds) return formatAudioSeconds(m.media.seconds);
+  if (audioDurations.value[m.id]) return formatAudioSeconds(audioDurations.value[m.id]);
+  return '0:00';
+};
+
+const togglePlayAudio = (m) => {
+  const url = mediaSrc(m);
+  if (!url) return;
+
+  if (activeAudioId.value === m.id) {
+    if (audioPlaying.value) {
+      activeAudioEl?.pause();
+      audioPlaying.value = false;
+    } else {
+      activeAudioEl?.play();
+      audioPlaying.value = true;
+    }
+    return;
+  }
+
+  if (activeAudioEl) {
+    activeAudioEl.pause();
+    activeAudioEl = null;
+  }
+
+  activeAudioId.value = m.id;
+  activeAudioEl = new Audio(url);
+  audioPlaying.value = true;
+  activeAudioEl.play().catch(() => {
+    audioPlaying.value = false;
+  });
+
+  activeAudioEl.onloadedmetadata = () => {
+    if (activeAudioEl?.duration) {
+      audioDurations.value[m.id] = activeAudioEl.duration;
+    }
+  };
+
+  activeAudioEl.ontimeupdate = () => {
+    if (activeAudioId.value === m.id) {
+      audioCurrentTime.value = activeAudioEl?.currentTime || 0;
+    }
+  };
+
+  activeAudioEl.onended = () => {
+    audioPlaying.value = false;
+    audioCurrentTime.value = 0;
+  };
+};
+
+const seekAudio = (m, event) => {
+  if (!activeAudioEl || activeAudioId.value !== m.id) {
+    togglePlayAudio(m);
+    return;
+  }
+  const rect = event.currentTarget.getBoundingClientRect();
+  const clickX = event.clientX - rect.left;
+  const ratio = Math.max(0, Math.min(1, clickX / rect.width));
+  if (activeAudioEl.duration) {
+    activeAudioEl.currentTime = ratio * activeAudioEl.duration;
+    audioCurrentTime.value = activeAudioEl.currentTime;
+  }
+};
+
+const getWaveformBars = (msgId) => {
+  const bars = [];
+  let seed = 0;
+  const str = String(msgId || '0');
+  for (let i = 0; i < str.length; i++) seed = (seed * 31 + str.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < 28; i++) {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    const h = 4 + (seed % 19);
+    bars.push(h);
+  }
+  return bars;
+};
 const messageText = ref('');
 const searchQuery = ref('');
-const selectedFilter = ref('all');
+// Agents land on the shared queue ("متاحة"); the owner lands on everything.
+const selectedFilter = ref(isAgent.value ? 'available' : 'all');
 const filterSessionId = ref(null);
 const sendSessionId = ref(null);
 
@@ -1489,6 +1772,92 @@ const lockedByOther = computed(() => {
 });
 const assignedName = (c) => c?.assigned_agent?.name || (c?.assigned_agent_id === user.value?.id ? user.value?.name : 'موظف');
 const lastSenderName = (c) => c?.last_outgoing_user?.name || (c?.last_outgoing_user_id === user.value?.id ? user.value?.name : 'موظف');
+const transferredName = (c) => c?.transferred_by_agent?.name || 'موظف';
+
+const chipClass = (f) => selectedFilter.value === f
+  ? 'bg-[#00a884] text-[#111b21] font-bold'
+  : 'bg-[#202c33] text-[#8696a0] hover:text-[#d1d7db]';
+
+// ---- Agent-to-agent handoff ("تحويل") ------------------------------------
+const showTransferModal = ref(false);
+const transferAgents = ref([]);
+const loadingTransferTargets = ref(false);
+const transferring = ref(false);
+const transferToast = ref(null);
+let transferToastTimer = null;
+
+// Owner may move any chat; an agent may only hand off a chat they hold.
+const canTransfer = computed(() => {
+  const c = activeConv.value;
+  if (!c || lockedByOther.value) return false;
+  if (isOwner.value) return true;
+  return c.assigned_agent_id === user.value?.id;
+});
+
+// Owner reopens anything; an agent may reopen only what they closed.
+const canReopen = computed(() => {
+  const c = activeConv.value;
+  return !!c?.resolved_at && (isOwner.value || c.resolved_by === user.value?.id);
+});
+
+// Colleagues eligible to receive — not me, not the current holder, active.
+const transferTargets = computed(() =>
+  transferAgents.value.filter(
+    (a) => a.id !== user.value?.id
+      && a.id !== activeConv.value?.assigned_agent_id
+      && a.status !== 'inactive'
+  )
+);
+
+const openTransferModal = async () => {
+  showTransferModal.value = true;
+  loadingTransferTargets.value = true;
+  try {
+    const res = await crm.getAgents();
+    transferAgents.value = res.agents || [];
+  } catch {
+    transferAgents.value = [];
+  } finally {
+    loadingTransferTargets.value = false;
+  }
+};
+
+const submitTransfer = async (agent) => {
+  if (!activeConv.value || transferring.value) return;
+  transferring.value = true;
+  try {
+    const res = await crm.transferConversation(activeConv.value.id, agent.id);
+    if (res.success && res.conversation) {
+      mergeConversation(res.conversation);
+      showTransferModal.value = false;
+      refreshMe();
+      // Handed off — it left my queue, so close the thread for agents.
+      if (!isOwner.value) {
+        activeConv.value = null;
+        backToList();
+      } else {
+        Object.assign(activeConv.value, res.conversation);
+      }
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل تحويل المحادثة');
+  } finally {
+    transferring.value = false;
+  }
+};
+
+const submitReopen = async () => {
+  if (!activeConv.value) return;
+  try {
+    const res = await crm.reopenConversation(activeConv.value.id);
+    if (res.success && res.conversation) {
+      mergeConversation(res.conversation);
+      Object.assign(activeConv.value, res.conversation);
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل إعادة فتح المحادثة');
+  }
+};
 
 const openResolveModal = () => {
   resolveRating.value = activeConv.value?.rating || 0;
@@ -1508,6 +1877,7 @@ const submitResolve = async () => {
     if (res.success && res.conversation) {
       mergeConversation(res.conversation);
       Object.assign(activeConv.value, res.conversation);
+      refreshMe(); // freeing the slot lets the agent claim a new chat
     }
     showResolveModal.value = false;
   } catch (err) {
@@ -1742,6 +2112,9 @@ const loadConversations = async () => {
   try {
     const params = {};
     if (selectedFilter.value === 'unread') params.unread_only = 1;
+    else if (['available', 'mine', 'resolved'].includes(selectedFilter.value)) {
+      params.scope = selectedFilter.value;
+    }
     if (filterSessionId.value) params.session_id = filterSessionId.value;
     if (searchQuery.value.trim()) params.search = searchQuery.value.trim();
 
@@ -1787,6 +2160,31 @@ const selectConversation = async (conv) => {
     router.replace({ query: { ...route.query, id: conv.id } });
   }
   await loadMessages(conv.id);
+  // Agents pick the chat up the moment they open it — the atomic backend
+  // claim decides who wins the race; everyone else's list updates via push.
+  if (isAgent.value && !conv.assigned_agent_id && !conv.resolved_at) {
+    claimConversationForAgent(conv.id);
+  }
+};
+
+// Claim on open. A 423 means a colleague won the race — the patched row
+// flips the thread into its locked read-only state by itself.
+const claimConversationForAgent = async (convId) => {
+  try {
+    const res = await crm.claimConversation(convId);
+    if (res.success && res.conversation) {
+      mergeConversation(res.conversation);
+      if (activeConv.value?.id === convId) Object.assign(activeConv.value, res.conversation);
+      refreshMe();
+    }
+  } catch (err) {
+    const d = err.response?.data;
+    if (d?.conversation) {
+      mergeConversation(d.conversation);
+      if (activeConv.value?.id === convId) Object.assign(activeConv.value, d.conversation);
+    }
+    if (d?.code === 'MAX_ACTIVE_CHATS') alert(d.message);
+  }
 };
 
 const backToList = () => {
@@ -2846,6 +3244,17 @@ const handleRealtimeEvent = (evt) => {
     if (activeConv.value && data.conversation.id === activeConv.value.id) {
       Object.assign(activeConv.value, data.conversation);
     }
+  } else if (type === 'conversation.transferred') {
+    // A teammate pushed a chat to me — toast + ding + counter refresh; the
+    // row itself arrives via the conversation.update event that precedes it.
+    if (data.to_agent?.id === user.value?.id) {
+      transferToast.value = { from: data.from_agent?.name || 'زميلك' };
+      try { playIncomingMessage(); } catch {}
+      clearTimeout(transferToastTimer);
+      transferToastTimer = setTimeout(() => (transferToast.value = null), 8000);
+      refreshMe();
+      loadConversations();
+    }
   } else if (type === 'call.event') {
     // incoming-call / state events pushed by the call bridge → show the panel
     if (data.event === 'incoming') {
@@ -2859,8 +3268,27 @@ const handleRealtimeEvent = (evt) => {
   }
 };
 
+// Does a conversation still belong in the list under the current tab?
+// Base rule for agents: the pool + what they hold — a chat a colleague just
+// claimed drops out the moment the update lands. Owners see everything;
+// the tab filters then apply on top.
+const inScope = (c) => {
+  if (!isOwner.value && c.assigned_agent_id && c.assigned_agent_id !== user.value?.id) return false;
+  switch (selectedFilter.value) {
+    case 'available': return !c.assigned_agent_id && !c.resolved_at;
+    case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at;
+    case 'resolved': return !!c.resolved_at;
+    case 'unread': return c.unread_count > 0;
+    default: return true;
+  }
+};
+
 const mergeConversation = (conv) => {
   const idx = conversations.value.findIndex((c) => c.id === conv.id);
+  if (!inScope(conv)) {
+    if (idx !== -1) conversations.value.splice(idx, 1);
+    return;
+  }
   if (idx !== -1) patchRow(conversations.value[idx], conv);
   else conversations.value.unshift(conv);
   // Match the backend ordering exactly (pinned first, then latest activity) —
@@ -3056,15 +3484,20 @@ onUnmounted(() => {
     crmChannel = null;
   }
   Object.values(typingTimers).forEach(clearTimeout);
+  clearTimeout(transferToastTimer);
 });
 </script>
 
 <style scoped>
-/* Classic WhatsApp Web Wallpaper Doodle */
+/* Authentic WhatsApp Web Wallpaper Doodle */
+.whatsapp-doodle-bg {
+  background-image: url('/whatsapp-doodle.png');
+  background-repeat: repeat;
+  background-size: 420px auto;
+}
+
 .whatsapp-wallpaper {
-  background-color: #0b141a;
-  background-image: radial-gradient(#1f2c34 1px, transparent 1px);
-  background-size: 20px 20px;
+  background-color: transparent;
 }
 
 .slide-left-enter-active,
