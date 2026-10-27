@@ -295,7 +295,7 @@ const startLinking = async () => {
       startPolling(res.device.id);
     }
   } catch (err) {
-    alert('فشل في بدء جلسة الربط');
+    alert(err?.response?.data?.message || 'فشل في بدء جلسة الربط');
   } finally {
     initLoading.value = false;
   }

@@ -1313,6 +1313,13 @@ class CrmController extends Controller
             $messages = $asc($rows->take($limit));
         }
 
+        // Group chats: turn the bare sender number/LID stored in `from` into
+        // a display name — the owner's saved contact name wins, then the
+        // synced pushname, then the resolved phone number.
+        if ($messages->isNotEmpty() && str_contains((string) $conversation->contact_jid, '@g.us')) {
+            $this->labelGroupSenders($conversation, $messages);
+        }
+
         return response()->json([
             'success' => true,
             'conversation' => $conversation,
@@ -1320,6 +1327,59 @@ class CrmController extends Controller
             'has_more' => $hasMore,
             'has_newer' => $hasNewer,
         ]);
+    }
+
+    /**
+     * Attach `sender_name`/`sender_phone` to each incoming message of a
+     * group conversation — saved contact book name first, then the stored
+     * pushname, so the bubble never shows a bare LID like +161972259651825.
+     */
+    private function labelGroupSenders(WhatsAppConversation $conversation, \Illuminate\Support\Collection $messages): void
+    {
+        $incoming = $messages
+            ->where('direction', 'incoming')
+            ->filter(fn ($m) => !empty($m->from));
+        if ($incoming->isEmpty()) {
+            return;
+        }
+
+        // LID digits (usually 15+) resolve to a phone number via the lid→pn
+        // table populated by history sync and live traffic.
+        $fromDigits = $incoming->pluck('from')
+            ->map(fn ($f) => preg_replace('/\D/', '', (string) $f))
+            ->filter()
+            ->unique()
+            ->values();
+        $lidKeys = $fromDigits
+            ->filter(fn ($d) => strlen($d) >= 15)
+            ->map(fn ($d) => $d . '@lid')
+            ->all();
+        $lidToPn = $lidKeys
+            ? DB::table('whatsapp_lid_mappings')->whereIn('lid', $lidKeys)->pluck('pn', 'lid')
+            : collect();
+
+        $resolved = $fromDigits->mapWithKeys(function ($d) use ($lidToPn) {
+            $pn = $lidToPn[$d . '@lid'] ?? null;
+            return [$d => $pn ? preg_replace('/\D/', '', (string) $pn) : $d];
+        });
+
+        $tails = $resolved->map(fn ($d) => substr($d, -10))->unique()->values()->all();
+        $book = \App\Models\CrmContact::where('owner_id', $conversation->user_id)
+            ->whereIn('phone_tail', $tails)
+            ->pluck('name', 'phone_tail');
+
+        $pushnames = $incoming
+            ->filter(fn ($m) => !empty($m->sender_name))
+            ->groupBy('from')
+            ->map(fn ($rows) => $rows->first()->sender_name);
+
+        $incoming->each(function ($m) use ($resolved, $book, $pushnames) {
+            $digits = preg_replace('/\D/', '', (string) $m->from);
+            $resolvedPhone = $resolved[$digits] ?? $digits;
+            $bookName = $resolvedPhone ? ($book[substr($resolvedPhone, -10)] ?? null) : null;
+            $m->sender_name = $bookName ?: ($pushnames[$m->from] ?? $m->sender_name);
+            $m->sender_phone = $resolvedPhone ?: null;
+        });
     }
 
     /** Record an auditable CRM action (who did what, on which conversation). */

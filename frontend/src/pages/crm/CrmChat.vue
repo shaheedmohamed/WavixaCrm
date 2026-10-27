@@ -1432,7 +1432,9 @@ const groupSenderColor = (from) => {
   return senderPalette[h % senderPalette.length];
 };
 const groupSenderLabel = (m) => {
-  const n = String(m.from || '').split('@')[0];
+  // Resolved on the backend: saved contact name > pushname > phone.
+  if (m.sender_name) return m.sender_name;
+  const n = String(m.sender_phone || m.from || '').split('@')[0];
   return n ? '+' + n : 'مشارك';
 };
 const messageText = ref('');

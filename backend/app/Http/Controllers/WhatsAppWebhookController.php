@@ -984,6 +984,7 @@ class WhatsAppWebhookController extends Controller
                             'conversation_id' => $conversation->id,
                             'from' => $sender,
                             'to' => $fromMe ? ($m['remoteJid'] ? preg_replace('/\D/', '', explode('@', $m['remoteJid'])[0]) : $phone) : $session->phone_number,
+                            'sender_name' => ($isGroup && !$fromMe) ? ($m['pushName'] ?? null) : null,
                             'message' => $m['body'] ?? '',
                             'media_meta' => $mediaMeta,
                             'media_mime_type' => $m['media']['mimetype'] ?? null,
@@ -1356,6 +1357,9 @@ class WhatsAppWebhookController extends Controller
                     'conversation_id' => $conversation->id,
                     'from' => $fromMe ? $session->phone_number : $senderPhone,
                     'to' => $fromMe ? $contactPhone : $session->phone_number,
+                    // Group sender's pushname — the bubble label prefers the
+                    // owner's saved contact name, resolved at read time.
+                    'sender_name' => ($isGroup && !$fromMe) ? $senderName : null,
                     'message' => $body,
                     'media_mime_type' => $data['mimeType'] ?? null,
                     'message_type' => $messageType,
@@ -1384,6 +1388,24 @@ class WhatsAppWebhookController extends Controller
 
             // Push to the CRM realtime channel so every open agent browser
             // sees the new message instantly — no polling wait.
+            $broadcastMessage = $incomingMessage?->toArray();
+            if ($broadcastMessage && $isGroup && !$fromMe) {
+                // Same sender resolution as getMessages: saved contact book
+                // name wins over the stored pushname; LID digits resolve
+                // through the lid→pn map so a number never shows as-is.
+                $fromDigits = preg_replace('/\D/', '', (string) ($broadcastMessage['from'] ?? ''));
+                $pn = strlen($fromDigits) >= 15
+                    ? DB::table('whatsapp_lid_mappings')->where('lid', $fromDigits . '@lid')->value('pn')
+                    : null;
+                $resolvedPhone = $pn ? preg_replace('/\D/', '', (string) $pn) : $fromDigits;
+                $bookName = $resolvedPhone
+                    ? \App\Services\CrmContactBook::nameFor((int) $session->user_id, $resolvedPhone)
+                    : null;
+                $broadcastMessage['sender_phone'] = $resolvedPhone ?: null;
+                if ($bookName) {
+                    $broadcastMessage['sender_name'] = $bookName;
+                }
+            }
             try {
                 event(new \App\Events\CrmRealtimeEvent($session->user_id, 'message.new', [
                     'session_id' => $session->id,
@@ -1395,7 +1417,7 @@ class WhatsAppWebhookController extends Controller
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                         'rating', 'rating_note',
                     ]),
-                    'message' => $incomingMessage?->toArray(),
+                    'message' => $broadcastMessage,
                 ]));
             } catch (\Throwable $e) {
                 Log::debug('CRM broadcast (message.new) failed: ' . $e->getMessage());
