@@ -98,6 +98,7 @@
 
             <!-- Custom lists -->
             <button v-for="l in chatLists" :key="'list-'+l.id" @click="setFilter('list:'+l.id)"
+              @contextmenu.prevent="listCtx = { show: true, x: $event.clientX, y: $event.clientY, list: l }"
               class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
               :class="chipClass('list:'+l.id)">{{ l.name }}</button>
             <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
@@ -116,6 +117,14 @@
             <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
               مكتملة
             </button>
+
+            <!-- Custom lists (agent view) -->
+            <button v-for="l in chatLists" :key="'list-'+l.id" @click="setFilter('list:'+l.id)"
+              @contextmenu.prevent="listCtx = { show: true, x: $event.clientX, y: $event.clientY, list: l }"
+              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
+              :class="chipClass('list:'+l.id)">{{ l.name }}</button>
+            <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
+              class="px-2 py-1 rounded-full text-xs whitespace-nowrap transition-colors bg-[#25343d] text-[#96a4ad] hover:text-[#00a884]">+</button>
           </template>
 
           <!-- Devices Filter Dropdown -->
@@ -1486,6 +1495,19 @@
     </div>
 
 
+    <!-- List-chip right-click menu -->
+    <div v-if="listCtx.show" class="fixed inset-0 z-40" @click="listCtx.show = false" @contextmenu.prevent="listCtx.show = false"></div>
+    <div v-if="listCtx.show" class="fixed z-50 w-52 rounded-xl bg-[#25343d] border border-[#30424c] shadow-2xl py-1"
+      :style="{ top: listCtx.y + 'px', left: listCtx.x + 'px' }">
+      <div class="px-4 py-2 text-[10px] font-bold text-[#96a4ad] border-b border-[#30424c]">{{ listCtx.list?.name }}</div>
+      <button @click="deleteCtxList" class="w-full text-right px-4 py-2.5 text-sm text-red-400 hover:bg-[#30424c]">حذف القائمة</button>
+      <div class="px-4 py-1.5 text-[10px] text-[#96a4ad]">نقل الأعضاء إلى:</div>
+      <button v-for="t in chatLists.filter(x => x.id !== listCtx.list?.id)" :key="'mv-'+t.id"
+        @click="moveListMembers(t)"
+        class="w-full text-right px-4 py-2 text-sm text-[#dfe5e8] hover:bg-[#30424c] truncate">{{ t.name }}</button>
+      <div v-if="chatLists.length < 2" class="px-4 py-2 text-[11px] text-[#96a4ad]">لا توجد قوائم أخرى</div>
+    </div>
+
     <!-- Conversation right-click menu -->
     <div v-if="convCtx.show" class="fixed inset-0 z-40" @click="convCtx.show = false" @contextmenu.prevent="convCtx.show = false"></div>
     <div v-if="convCtx.show" class="fixed z-50 w-48 rounded-xl bg-[#25343d] border border-[#30424c] shadow-2xl py-1"
@@ -1819,7 +1841,7 @@ const conversations = ref([]);
 // the newest — the list is ordered last_message_at desc.
 const uniqueConversations = computed(() => {
   const seen = new Set();
-  return conversations.value.filter((c) => {
+  return conversations.value.filter(inScope).filter((c) => {
     const digits = String(c.contact_phone || String(c.contact_jid || '').split('@')[0] || '').replace(/\D/g, '');
     const key = digits || c.contact_jid || c.id;
     if (seen.has(key)) return false;
@@ -4014,6 +4036,24 @@ const convSelectMode = ref(false);
 const selectedConvIds = ref(new Set());
 const convCtx = ref({ show: false, x: 0, y: 0, conv: null });
 const listModal = ref({ show: false, name: '', convIds: [] });
+
+const listCtx = ref({ show: false, x: 0, y: 0, list: null });
+
+const moveListMembers = async (target) => {
+  const src = listCtx.value.list;
+  listCtx.value.show = false;
+  if (!src || !target || src.id === target.id) return;
+  // "نقل" = add every member to the target, then empty the source.
+  await crm.saveChatList({ id: target.id, name: target.name, conversation_ids: src.conversation_ids || [] }).catch(() => {});
+  await crm.removeChatListMembers(src.id, src.conversation_ids || []).catch(() => {});
+  await loadChatLists();
+};
+
+const deleteCtxList = async () => {
+  const l = listCtx.value.list;
+  listCtx.value.show = false;
+  if (l) await deleteList(l.id);
+};
 
 const loadChatLists = async () => {
   try {
