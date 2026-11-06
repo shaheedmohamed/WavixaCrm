@@ -266,6 +266,11 @@ class CrmService {
     return resp.data;
   }
 
+  async getGroupMembers(conversationId) {
+    const resp = await this.client().get(`/conversations/${conversationId}/members`);
+    return resp.data;
+  }
+
   async resolveConversation(id, rating = null, note = null) {
     const resp = await this.client().post(`/conversations/${id}/resolve`, { rating, note });
     return resp.data;

@@ -1765,6 +1765,88 @@ export class WaClient extends EventEmitter {
     return out;
   }
 
+  /**
+   * Group metadata via the `w:g2` info-query — same call WhatsApp Web makes
+   * for the group-info drawer. Returns subject/owner plus every current
+   * participant with its admin flag. Participant `jid` may arrive as a
+   * PN JID, a @lid JID, or device-suffixed (`:N`) — callers get the raw
+   * form plus `pn`/`lid` companion attrs the server started including for
+   * migrated members.
+   */
+  public async getGroupMetadata(jid: string): Promise<{
+    id: string;
+    subject?: string;
+    owner?: string;
+    createdAt?: number;
+    participants: Array<{
+      jid: string;
+      lid?: string;
+      pn?: string;
+      admin: boolean;
+      superadmin: boolean;
+    }>;
+  }> {
+    const gid = jid.includes('@')
+      ? jid
+      : jidEncode(jid.replace(/\D/g, ''), 'g.us');
+
+    const result = await this.query(
+      {
+        tag: 'iq',
+        attrs: { to: gid, type: 'get', xmlns: 'w:g2' },
+        content: [{ tag: 'query', attrs: { request: 'interactive' } }],
+      },
+      15_000,
+    );
+
+    const group = getBinaryNodeChild(result, 'group');
+    if (!group) {
+      throw new Error('Group metadata not returned by server');
+    }
+
+    const participants = getBinaryNodeChildren(group, 'participant').map(
+      (p) => {
+        const rawJid = String(p.attrs.jid || '');
+        // Device-qualified jids (`user:device@server`) strip to the account
+        // form; `lid`/`phone_number` attrs carry the companion identity for
+        // LID-migrated members.
+        const bare = rawJid.split(':')[0]!;
+        const lid = p.attrs.lid
+          ? String(p.attrs.lid)
+          : bare.endsWith('@lid')
+            ? bare
+            : undefined;
+        const pn = p.attrs.phone_number
+          ? `${String(p.attrs.phone_number).replace(/\D/g, '')}@s.whatsapp.net`
+          : bare.endsWith('@s.whatsapp.net')
+            ? bare
+            : undefined;
+        const type = String(p.attrs.type || '');
+        return {
+          jid: bare,
+          lid,
+          pn,
+          admin: type === 'admin' || type === 'superadmin',
+          superadmin: type === 'superadmin',
+        };
+      },
+    );
+
+    return {
+      id: gid,
+      subject: group.attrs.subject ? String(group.attrs.subject) : undefined,
+      owner: group.attrs.owner
+        ? String(group.attrs.owner)
+        : group.attrs.creator
+          ? String(group.attrs.creator)
+          : undefined,
+      createdAt: group.attrs.creation
+        ? Number(group.attrs.creation)
+        : undefined,
+      participants,
+    };
+  }
+
   /** Fetch the device list for the given users via a usync query. */
   /** Short-lived device-list cache — a usync roundtrip per send adds ~300-800ms. */
   private deviceListCache = new Map<string, { devices: string[]; expires: number }>();

@@ -17,6 +17,14 @@ use Illuminate\Support\Facades\Log;
 class WhatsAppLidResolver
 {
     /**
+     * SQL matching stored WhatsApp CDN avatar URLs whose signature expired.
+     * pps.whatsapp.net links carry `oe=<hex unix-ts>` — past that second the
+     * URL answers 403 and the avatar renders blank forever unless re-fetched.
+     */
+    public const EXPIRED_AVATAR_SQL =
+        "contact_avatar LIKE '%oe=%' AND CAST(CONV(SUBSTRING_INDEX(SUBSTRING_INDEX(contact_avatar, 'oe=', -1), '&', 1), 16, 10) AS UNSIGNED) <= ?";
+
+    /**
      * Reassign $twin's messages to $keep, prefer the better contact name,
      * fold timestamps/unread counts, then delete the duplicate row.
      */
@@ -165,13 +173,13 @@ class WhatsAppLidResolver
      * Batch-fetch WhatsApp profile picture URLs for conversations that do
      * not have one yet. WhatsApp CDN URLs are signed but long-lived.
      */
-    public function fetchAvatars(WhatsAppSession $session, int $limit = 80): void
+    public function fetchAvatars(WhatsAppSession $session, int $limit = 80, ?array $sessionIds = null): void
     {
         if (!$session->session_token) {
             return;
         }
 
-        $convs = WhatsAppConversation::where('session_id', $session->id)
+        $convs = WhatsAppConversation::whereIn('session_id', $sessionIds ?: [$session->id])
             ->where(function ($q) {
                 $q->whereNull('contact_avatar')
                   ->orWhere(function ($q2) {
@@ -179,6 +187,13 @@ class WhatsAppLidResolver
                       // picture after the first lookup.
                       $q2->where('contact_avatar', '')
                          ->where('updated_at', '<', now()->subDay());
+                  })
+                  ->orWhere(function ($q3) {
+                      // Stored CDN links are signed; once `oe` lapses the
+                      // picture 403s and stays blank — re-queue it, retrying
+                      // at most hourly while it keeps failing.
+                      $q3->whereRaw(self::EXPIRED_AVATAR_SQL, [time()])
+                         ->where('updated_at', '<', now()->subHour());
                   });
             })
             ->whereNotNull('contact_jid')

@@ -36,6 +36,7 @@ class WhatsAppConversation extends Model
         'transferred_by',
         'transferred_at',
         'transfer_count',
+        'group_past_participants',
         'handle_seconds',
     ];
 
@@ -52,6 +53,7 @@ class WhatsAppConversation extends Model
         'transferred_by' => 'integer',
         'transferred_at' => 'datetime',
         'transfer_count' => 'integer',
+        'group_past_participants' => 'array',
         'handle_seconds' => 'integer',
     ];
 

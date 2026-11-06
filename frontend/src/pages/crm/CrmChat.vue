@@ -1262,7 +1262,8 @@
       @contextmenu.prevent="ctxMenu.show = false"
     >
       <div
-        class="absolute bg-[#2c3b44] border border-[#30424c] rounded-xl shadow-2xl py-1.5 w-44 text-sm"
+        ref="ctxMenuEl"
+        class="absolute bg-[#2c3b44] border border-[#30424c] rounded-xl shadow-2xl py-1.5 w-44 text-sm max-h-[calc(100vh-16px)] overflow-y-auto"
         :style="{ top: ctxMenu.y + 'px', left: ctxMenu.x + 'px' }"
         @click.stop
       >
@@ -1477,6 +1478,90 @@
                   <span class="text-[9px] truncate w-full text-center px-1">{{ mm.media_meta?.fileName || mm.message_type }}</span>
                 </a>
               </template>
+            </div>
+          </div>
+
+          <!-- Group members — live roster for @g.us chats -->
+          <div v-if="isGroupConv" class="p-4 border-b border-[#2c3c45]">
+            <div class="flex items-center justify-between mb-3">
+              <h4 class="text-xs font-bold text-[#96a4ad]">أعضاء الجروب</h4>
+              <div class="flex items-center gap-2">
+                <span v-if="groupMembers?.members" class="text-[10px] text-[#96a4ad]">{{ groupMembers.members.length }}</span>
+                <button
+                  v-if="groupMembers"
+                  @click="loadGroupMembers(true)"
+                  class="text-[10px] text-[#00a884] hover:underline"
+                >تحديث</button>
+              </div>
+            </div>
+
+            <div v-if="loadingMembers" class="flex justify-center py-6">
+              <span class="wx-spinner w-5 h-5"></span>
+            </div>
+            <div v-else-if="groupMembers?.error" class="text-center text-xs text-[#f15c6d] py-4">
+              {{ groupMembers.error }}
+            </div>
+            <template v-else-if="groupMembers?.members">
+              <div class="max-h-72 overflow-y-auto space-y-0.5">
+                <div
+                  v-for="m in groupMembers.members"
+                  :key="m.jid"
+                  class="flex items-center gap-2.5 py-1.5"
+                >
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white text-xs font-bold flex items-center justify-center shrink-0">
+                    {{ memberLabel(m)[0] }}
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="text-xs text-[#dfe5e8] truncate">{{ m.name || '—' }}</div>
+                    <div class="text-[10px] text-[#96a4ad] font-mono" dir="ltr">{{ m.phone ? '+' + m.phone : (m.lid ? 'LID ' + m.lid : m.jid) }}</div>
+                  </div>
+                  <span v-if="m.superadmin" class="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 font-bold shrink-0">المالك</span>
+                  <span v-else-if="m.admin" class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-400 font-bold shrink-0">مشرف</span>
+                </div>
+              </div>
+
+              <!-- Past members (history sync, ~60 days) -->
+              <template v-if="groupMembers.past?.length">
+                <button
+                  @click="showPastMembers = !showPastMembers"
+                  class="w-full flex items-center justify-between mt-3 text-[11px] text-[#96a4ad] hover:text-[#dfe5e8] transition-colors"
+                >
+                  <span>الأعضاء السابقين ({{ groupMembers.past.length }})</span>
+                  <span>{{ showPastMembers ? '▲' : '▼' }}</span>
+                </button>
+                <div v-if="showPastMembers" class="max-h-44 overflow-y-auto space-y-0.5 mt-1">
+                  <div
+                    v-for="(p, i) in groupMembers.past"
+                    :key="'past-' + i"
+                    class="flex items-center gap-2.5 py-1.5 opacity-70"
+                  >
+                    <div class="w-8 h-8 rounded-full bg-[#25343d] text-[#96a4ad] text-xs font-bold flex items-center justify-center shrink-0">
+                      {{ memberLabel(p)[0] }}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <div class="text-xs text-[#96a4ad] truncate">{{ p.name || '—' }}</div>
+                      <div class="text-[10px] text-[#96a4ad] font-mono" dir="ltr">{{ p.phone ? '+' + p.phone : (p.lid ? 'LID ' + p.lid : p.jid) }}</div>
+                    </div>
+                    <span class="text-[9px] px-1.5 py-0.5 rounded bg-[#f15c6d]/10 text-[#f15c6d] font-bold shrink-0">
+                      {{ p.leave_reason === 1 ? 'أُزيل' : 'غادر' }}
+                    </span>
+                  </div>
+                </div>
+              </template>
+
+              <div class="flex gap-2 mt-3">
+                <button
+                  @click="exportGroupCsv"
+                  class="flex-1 px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 text-[11px] font-bold transition-colors"
+                >تصدير Excel</button>
+                <button
+                  @click="exportGroupVcf"
+                  class="flex-1 px-3 py-1.5 rounded-lg bg-sky-600/20 text-sky-300 hover:bg-sky-600/40 text-[11px] font-bold transition-colors"
+                >تصدير جهات اتصال</button>
+              </div>
+            </template>
+            <div v-else class="text-center py-3">
+              <button @click="loadGroupMembers()" class="text-xs text-[#00a884] hover:underline">عرض الأعضاء</button>
             </div>
           </div>
 
@@ -2242,6 +2327,7 @@ const selectedMessages = computed(() =>
   messages.value.filter((m) => selectedIds.value.includes(m.id))
 );
 
+const ctxMenuEl = ref(null);
 const openContextMenu = (m, e) => {
   if (selectMode.value) {
     toggleSelect(m);
@@ -2249,10 +2335,19 @@ const openContextMenu = (m, e) => {
   }
   activeReactionMessageId.value = null;
   const menuW = 190;
-  const menuH = 280;
+  // Rough estimate to pre-place the menu; the real height is measured after
+  // render below — items vary per message (copy / delete-for-all are
+  // conditional), so a fixed guess slides the menu under the viewport edge.
+  const menuH = 340;
   const x = Math.min(Math.max(8, e.clientX - menuW / 2), window.innerWidth - menuW - 8);
   const y = Math.min(Math.max(8, e.clientY), window.innerHeight - menuH - 8);
   ctxMenu.value = { show: true, x, y, msg: m };
+  nextTick(() => {
+    const el = ctxMenuEl.value;
+    if (!el || !ctxMenu.value.show) return;
+    const h = el.offsetHeight;
+    ctxMenu.value.y = Math.max(8, Math.min(ctxMenu.value.y, window.innerHeight - h - 8));
+  });
 };
 
 const setReplyTarget = (m) => {
@@ -2474,12 +2569,91 @@ const openContactInfo = async () => {
   editingContactName.value = false;
   loadingContactMedia.value = true;
   contactMedia.value = [];
+  loadGroupMembers();
   try {
     const res = await crm.getConversationMedia(activeConv.value.id);
     if (res.success) contactMedia.value = res.media || [];
   } catch {} finally {
     loadingContactMedia.value = false;
   }
+};
+
+// ---- Group roster (group-info panel) -----------------------------------
+const groupMembers = ref(null);
+const loadingMembers = ref(false);
+const showPastMembers = ref(false);
+
+const loadGroupMembers = async (force = false) => {
+  if (!isGroupConv.value || !activeConv.value) { groupMembers.value = null; return; }
+  if (groupMembers.value && !force) return;
+  loadingMembers.value = true;
+  try {
+    const res = await crm.getGroupMembers(activeConv.value.id);
+    groupMembers.value = res?.success ? res : { error: res?.message || 'تعذر جلب الأعضاء' };
+  } catch (e) {
+    groupMembers.value = { error: e.response?.data?.message || 'تعذر جلب الأعضاء' };
+  } finally {
+    loadingMembers.value = false;
+  }
+};
+
+const memberLabel = (m) => m.name || (m.phone ? '+' + m.phone : (m.lid ? 'ID ' + m.lid : m.jid));
+
+const downloadBlob = (blob, name) => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(a.href);
+};
+
+const exportGroupCsv = () => {
+  const rows = [['الاسم', 'الرقم', 'الدور', 'الحالة']];
+  for (const m of groupMembers.value?.members || []) {
+    rows.push([
+      m.name || '',
+      m.phone ? '+' + m.phone : (m.lid ? 'LID ' + m.lid : m.jid),
+      m.superadmin ? 'مالك' : (m.admin ? 'مشرف' : 'عضو'),
+      'حالي',
+    ]);
+  }
+  for (const p of groupMembers.value?.past || []) {
+    rows.push([
+      p.name || '',
+      p.phone ? '+' + p.phone : (p.lid ? 'LID ' + p.lid : p.jid),
+      '',
+      p.leave_reason === 1 ? 'أُزيل' : 'غادر',
+    ]);
+  }
+  const csv = '\uFEFF' + rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\r\n');
+  downloadBlob(
+    new Blob([csv], { type: 'text/csv;charset=utf-8' }),
+    `group-${activeConv.value.id}-members.csv`,
+  );
+};
+
+const exportGroupVcf = () => {
+  const cards = [];
+  const add = (m, suffix) => {
+    if (!m.phone) return; // vcf needs a dialable number — LID-only members skip
+    const tel = `+${m.phone}`;
+    cards.push([
+      'BEGIN:VCARD',
+      'VERSION:3.0',
+      `FN:${(m.name || tel) + suffix}`,
+      `TEL;TYPE=CELL:${tel}`,
+      'END:VCARD',
+    ].join('\r\n'));
+  };
+  (groupMembers.value?.members || []).forEach((m) => add(m, ''));
+  (groupMembers.value?.past || []).forEach((p) => add(p, ' (سابق)'));
+  if (!cards.length) { alert('مفيش أرقام قابلة للتصدير — الأعضاء بـ LID بس'); return; }
+  downloadBlob(
+    new Blob([cards.join('\r\n')], { type: 'text/vcard;charset=utf-8' }),
+    `group-${activeConv.value.id}-members.vcf`,
+  );
 };
 
 const startEditContactName = () => {

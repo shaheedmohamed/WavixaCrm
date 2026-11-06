@@ -732,6 +732,7 @@ class WhatsAppWebhookController extends Controller
                 'requestId' => 'nullable|string',
                 'pushnames' => 'nullable|array',
                 'lidMappings' => 'nullable|array',
+                'pastParticipants' => 'nullable|array',
                 'conversations' => 'nullable|array',
             ]);
 
@@ -757,6 +758,28 @@ class WhatsAppWebhookController extends Controller
             }
             $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
             $pnToLid = array_flip($lidToPn);
+
+            // Group "past participants" (who left / got removed — WhatsApp's
+            // 60-day history) ships once per sync on the first chunk; store
+            // it on the group conversation so the CRM group-info panel and
+            // the members export can show previous members too.
+            foreach (($data['pastParticipants'] ?? []) as $g) {
+                $gJid = $g['groupJid'] ?? null;
+                $members = collect($g['members'] ?? [])
+                    ->filter(fn ($m) => !empty($m['jid']))
+                    ->map(fn ($m) => [
+                        'jid' => $m['jid'],
+                        'leave_reason' => (int) ($m['leaveReason'] ?? 0),
+                        'leave_ts' => (int) ($m['leaveTs'] ?? 0),
+                    ])
+                    ->values()
+                    ->all();
+                if ($gJid && $members) {
+                    WhatsAppConversation::where('session_id', $session->id)
+                        ->where('contact_jid', $gJid)
+                        ->update(['group_past_participants' => json_encode($members)]);
+                }
+            }
 
             // Pushnames travel in their own PUSH_NAME chunk that races the
             // conversation chunks — whichever lands first must not leave chats

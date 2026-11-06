@@ -1210,13 +1210,31 @@ class CrmController extends Controller
                     ->where(function ($q) {
                         $q->whereHas('conversations', fn ($c) => $c->where('contact_jid', 'like', '%@lid'))
                           ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_avatar'))
-                          ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_username'));
+                          ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_username'))
+                          ->orWhereHas('conversations', fn ($c) => $c->whereRaw(
+                              \App\Services\WhatsAppLidResolver::EXPIRED_AVATAR_SQL, [time()]));
                     })
                     ->get();
                 foreach ($lidSessions as $lidSession) {
                     $resolver->resolveSessionTwins($lidSession);
                     $resolver->fetchAvatars($lidSession);
                     $resolver->fetchUsernames($lidSession);
+                }
+
+                // Chats whose own device is offline can't reach the picture
+                // IQ — let any connected session refresh their missing or
+                // expired avatars instead, or they stay blank forever.
+                $resolverSession = WhatsAppSession::whereIn('id', $allowedSessionIds)
+                    ->where('status', 'connected')
+                    ->whereNotNull('session_token')
+                    ->first();
+                if ($resolverSession) {
+                    $offlineIds = WhatsAppSession::whereIn('id', $allowedSessionIds)
+                        ->where('status', '!=', 'connected')
+                        ->pluck('id')->all();
+                    if ($offlineIds) {
+                        $resolver->fetchAvatars($resolverSession, 80, $offlineIds);
+                    }
                 }
             });
         }
@@ -2646,6 +2664,112 @@ class CrmController extends Controller
         return response()->json([
             'success' => true,
             'conversation' => $conversation,
+        ]);
+    }
+
+    /**
+     * Live group roster for the group-info panel: current participants with
+     * admin flags from the engine's w:g2 metadata query, plus the stored
+     * "past participants" (who left / was removed — history-sync, ~60 days).
+     * Member names resolve against this team's known conversations.
+     */
+    public function getGroupMembers(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds();
+        $conversation = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        if (!str_ends_with((string) $conversation->contact_jid, '@g.us')) {
+            return response()->json(['success' => false, 'message' => 'دي مش محادثة جروب'], 422);
+        }
+
+        $session = $conversation->session;
+        if (!$session || $session->status !== 'connected') {
+            return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
+        }
+
+        $token = $session->session_token ?: (string) $session->id;
+        try {
+            $res = $this->engineClient()->post("{$this->engineUrl}/internal/group/metadata", [
+                'sessionId' => $token,
+                'jid' => $conversation->contact_jid,
+            ]);
+            $meta = $res->json();
+            if (!$res->successful() || !($meta['success'] ?? false)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'تعذر جلب أعضاء الجروب: ' . ($meta['message'] ?? ('HTTP ' . $res->status())),
+                ], 502);
+            }
+        } catch (\Throwable $e) {
+            Log::error("CRM getGroupMembers engine error: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'تعذر جلب أعضاء الجروب: ' . $e->getMessage()], 500);
+        }
+
+        $members = collect($meta['participants'] ?? []);
+
+        // Member names: every known JID form (pn / lid / device-suffixed)
+        // maps to the contact name this team stores on its 1:1 chats.
+        $jids = $members
+            ->flatMap(fn ($m) => [$m['jid'] ?? null, $m['pn'] ?? null, $m['lid'] ?? null])
+            ->merge(collect($conversation->group_past_participants ?? [])->pluck('jid'))
+            ->filter()
+            ->map(fn ($j) => preg_replace('/:\d+@/', '@', (string) $j))
+            ->unique()->values();
+        $names = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->whereIn('contact_jid', $jids)
+            ->pluck('contact_name', 'contact_jid');
+        $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
+        $pnToLid = array_flip($lidToPn);
+
+        $resolveName = function (...$forms) use ($names, $pnToLid, $lidToPn) {
+            foreach (array_filter($forms) as $j) {
+                $j = preg_replace('/:\d+@/', '@', (string) $j);
+                foreach ([$j, $pnToLid[$j] ?? null, $lidToPn[$j] ?? null] as $alt) {
+                    if ($alt && ($n = $names[$alt] ?? null)) {
+                        return $n;
+                    }
+                }
+            }
+            return null;
+        };
+
+        $digits = fn ($jid) => $jid ? preg_replace('/\D/', '', explode('@', (string) $jid)[0]) : null;
+        $members = $members->map(function ($m) use ($resolveName, $digits) {
+            $jid = preg_replace('/:\d+@/', '@', (string) ($m['jid'] ?? ''));
+            $pn = !empty($m['pn']) ? preg_replace('/:\d+@/', '@', (string) $m['pn']) : null;
+            $lid = !empty($m['lid']) ? preg_replace('/:\d+@/', '@', (string) $m['lid']) : null;
+            $pnJid = $pn ?: (str_ends_with($jid, '@s.whatsapp.net') ? $jid : null);
+            return [
+                'jid' => $jid,
+                'phone' => $pnJid ? $digits($pnJid) : null,
+                'lid' => $lid ? $digits($lid) : (str_ends_with($jid, '@lid') ? $digits($jid) : null),
+                'name' => $resolveName($jid, $pn, $lid),
+                'admin' => !empty($m['admin']),
+                'superadmin' => !empty($m['superadmin']),
+            ];
+        })->sortByDesc('admin')->values()->all();
+
+        $past = collect($conversation->group_past_participants ?? [])->map(function ($p) use ($resolveName, $digits) {
+            $jid = preg_replace('/:\d+@/', '@', (string) ($p['jid'] ?? ''));
+            return [
+                'jid' => $jid,
+                'phone' => str_ends_with($jid, '@s.whatsapp.net') ? $digits($jid) : null,
+                'lid' => str_ends_with($jid, '@lid') ? $digits($jid) : null,
+                'name' => $resolveName($jid),
+                'leave_reason' => (int) ($p['leave_reason'] ?? 0), // 0 غادر بنفسه، 1 اتشال
+                'leave_ts' => (int) ($p['leave_ts'] ?? 0),
+            ];
+        })->values()->all();
+
+        return response()->json([
+            'success' => true,
+            'subject' => $meta['subject'] ?? $conversation->contact_name,
+            'owner' => $meta['owner'] ?? null,
+            'created_at' => $meta['createdAt'] ?? null,
+            'members' => $members,
+            'past' => $past,
         ]);
     }
 

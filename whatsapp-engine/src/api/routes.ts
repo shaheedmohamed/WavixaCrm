@@ -888,6 +888,41 @@ export function createRoutes(deps: RouteDependencies): express.Router {
     }
   });
 
+  // Group metadata — subject, owner and the live participant list with
+  // admin flags (w:g2 info query). Used by the CRM group-info panel and the
+  // members export.
+  router.post('/internal/group/metadata', async (req: Request, res: Response) => {
+    const sessionId = String(req.body.sessionId || req.body.userId || '');
+    const jid = String(req.body.jid || '');
+    if (!sessionId || !jid) {
+      res.status(400).json({ success: false, message: 'sessionId and jid are required' });
+      return;
+    }
+    const session = activeSessions.get(sessionId);
+    const sessionState = session?.getState();
+    if (!session || (sessionState !== 'READY' && sessionState !== 'CONNECTED')) {
+      res.status(409).json({
+        success: false,
+        message: `Session is not connected (state: ${sessionState || 'missing'})`,
+      });
+      return;
+    }
+    const client = session.getClient();
+    if (!client) {
+      res.status(409).json({ success: false, message: 'Client not initialized' });
+      return;
+    }
+    try {
+      const meta = await client.getGroupMetadata(jid);
+      res.json({ success: true, ...meta });
+    } catch (err) {
+      res.status(500).json({
+        success: false,
+        message: err instanceof Error ? err.message : 'Group metadata failed',
+      });
+    }
+  });
+
   // Resolve profile picture URLs for a batch of JIDs via usync 'picture'.
   router.post('/internal/picture/resolve', async (req: Request, res: Response) => {
     const sessionId = String(req.body.sessionId || req.body.userId || '');

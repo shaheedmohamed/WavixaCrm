@@ -159,6 +159,9 @@ export class WebhookDispatcher {
           requestId: p.data.requestId ?? null,
           pushnames: p.data.pushnames || [],
           lidMappings: p.data.lidMappings || [],
+          // Group "past participants" ship once with the first chunk — the
+          // list is per-sync, not per-conversation.
+          pastParticipants: i === 0 ? (p.data.pastParticipants || []) : [],
           statusMessages: p.data.statusMessages || [],
           conversations: conversations.slice(i, i + CHUNK),
           chunkIndex: Math.floor(i / CHUNK),

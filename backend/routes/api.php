@@ -196,6 +196,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/conversations/{id}/messages', [\App\Http\Controllers\Api\CrmController::class, 'getMessages']);
         Route::post('/messages/send', [\App\Http\Controllers\Api\CrmController::class, 'sendMessage']);
         Route::post('/messages/send-media', [\App\Http\Controllers\Api\CrmController::class, 'sendMedia']);
+        Route::get('/conversations/{id}/members', [\App\Http\Controllers\Api\CrmController::class, 'getGroupMembers']);
         Route::post('/messages/forward', [\App\Http\Controllers\Api\CrmController::class, 'forwardMessage']);
         Route::post('/messages/delete', [\App\Http\Controllers\Api\CrmController::class, 'deleteMessage']);
         Route::put('/conversations/{id}', [\App\Http\Controllers\Api\CrmController::class, 'renameConversation']);

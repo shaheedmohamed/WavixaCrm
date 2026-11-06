@@ -54,6 +54,11 @@ export interface ParsedHistorySync {
   }>;
   pushnames: Array<{ jid: string; pushname: string }>;
   lidMappings: Array<{ pn: string; lid: string }>;
+  /** Group members who left / were removed (WhatsApp's ~60-day history). */
+  pastParticipants?: Array<{
+    groupJid: string;
+    members: Array<{ jid: string; leaveReason?: number; leaveTs?: number }>;
+  }>;
   /** INITIAL_STATUS_V3 chunks carry raw WebMessageInfo statuses, not conversations. */
   statusMessages?: NormalizedHistoryMessage[];
 }
@@ -317,6 +322,19 @@ async function decodeHistorySync(buf: Buffer): Promise<any> {
           }
           break;
         }
+        case 12: { // repeated PastParticipants — who left each group, and why
+          const len = reader.uint32();
+          const pos = reader.pos;
+          try {
+            const pp = root.lookupType('proto.PastParticipants').decode(reader, len);
+            (out.pastParticipants = out.pastParticipants || []).push(
+              root.lookupType('proto.PastParticipants').toObject(pp, toObj),
+            );
+          } catch {
+            reader.pos = pos + len;
+          }
+          break;
+        }
         case 15: { // repeated PhoneNumberToLIDMapping
           const len = reader.uint32();
           const pos = reader.pos;
@@ -428,6 +446,19 @@ export async function processHistorySyncNotification(
     lidMappings: (history.lidMappings || [])
       .filter((m: any) => m?.lidJid && m?.pnJid)
       .map((m: any) => ({ lid: m.lidJid, pn: m.pnJid })),
+    pastParticipants: (history.pastParticipants || [])
+      .filter((g: any) => g?.groupJid)
+      .map((g: any) => ({
+        groupJid: g.groupJid,
+        members: (g.pastParticipants || [])
+          .filter((p: any) => p?.userJid)
+          .map((p: any) => ({
+            jid: p.userJid,
+            leaveReason: p.leaveReason, // 0 = left, 1 = removed
+            leaveTs: p.leaveTs,
+          })),
+      }))
+      .filter((g: any) => g.members.length),
     statusMessages: (history.statusV3Messages || [])
       .map((w: any) => normalizeWebMessageInfo(w))
       .filter((m: NormalizedHistoryMessage | null): m is NormalizedHistoryMessage => m !== null),
