@@ -26,6 +26,7 @@ class WhatsAppMessage extends Model
         'media_mime_type',
         'media_size',
         'reactions',
+        'mentioned_jids',
         'reply_to_id',
         'is_forwarded',
         'message_id',
@@ -59,6 +60,7 @@ class WhatsAppMessage extends Model
         'read_at' => 'datetime',
         'revoked_at' => 'datetime',
         'reactions' => 'array',
+        'mentioned_jids' => 'array',
         'media_meta' => 'array',
         'is_forwarded' => 'boolean',
     ];

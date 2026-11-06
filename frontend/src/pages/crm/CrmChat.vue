@@ -659,17 +659,28 @@
                   :src="mediaSrc(m)"
                   alt="WhatsApp Image"
                   class="rounded-lg max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                  @click="openLightbox(mediaSrc(m))"
+                  @click="openLightbox(m)"
                 />
               </div>
 
-              <!-- Media Content: Video -->
-              <div v-else-if="m.message_type === 'video' && mediaSrc(m)" class="mb-1">
+              <!-- Media Content: Video — click opens the viewer (like WhatsApp);
+                   the first frame shows via preload=metadata -->
+              <div
+                v-else-if="m.message_type === 'video' && mediaSrc(m)"
+                class="mb-1 relative cursor-pointer group/vid"
+                @click="openLightbox(m)"
+              >
                 <video
                   :src="mediaSrc(m)"
-                  controls
-                  class="rounded-lg max-h-72 w-full bg-black/60"
+                  preload="metadata"
+                  muted
+                  class="rounded-lg max-h-72 w-full bg-black/60 pointer-events-none"
                 ></video>
+                <div class="absolute inset-0 flex items-center justify-center">
+                  <span class="w-12 h-12 rounded-full bg-black/55 flex items-center justify-center transition-transform group-hover/vid:scale-110">
+                    <svg class="w-6 h-6 text-white mr-0.5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                  </span>
+                </div>
               </div>
 
               <!-- Media Content: Audio / Voice Note (Official WhatsApp Web Style) -->
@@ -1011,6 +1022,22 @@
               <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
             </button>
 
+            <!-- @mention member picker (groups only) -->
+            <div v-if="mentionMenu.show" class="absolute bottom-full left-0 mb-1 w-72 max-h-64 overflow-y-auto rounded-xl bg-[#25343d] border border-[#30424c] shadow-2xl z-30">
+              <button
+                v-for="m in mentionMenu.items"
+                :key="m.jid"
+                @mousedown.prevent="pickMention(m)"
+                class="w-full flex items-center gap-2.5 px-3 py-2 hover:bg-[#30424c] text-right transition-colors"
+              >
+                <div class="w-7 h-7 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white text-[10px] font-bold flex items-center justify-center shrink-0">{{ memberLabel(m)[0] }}</div>
+                <div class="min-w-0">
+                  <div class="text-xs text-[#dfe5e8] truncate">{{ m.name || '—' }}</div>
+                  <div class="text-[10px] text-[#96a4ad] font-mono" dir="ltr">{{ m.phone ? '+' + m.phone : (m.lid ? 'LID ' + m.lid : m.jid) }}</div>
+                </div>
+              </button>
+            </div>
+
             <!-- Text Input Area — flush with the composer box edges -->
             <textarea
               v-model="messageText"
@@ -1245,13 +1272,117 @@
       </div>
     </div>
 
-    <!-- Lightbox Modal for Images -->
+    <!-- Media viewer — WhatsApp-style: image/video stage + filmstrip of all chat media -->
     <div
-      v-if="lightboxUrl"
-      @click="lightboxUrl = null"
-      class="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4 cursor-zoom-out"
+      v-if="viewerItem"
+      @click="closeViewer"
+      class="fixed inset-0 bg-black/95 z-50 flex flex-col"
     >
-      <img :src="lightboxUrl" alt="Enlarged" class="max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl" />
+      <!-- Top bar: sender + time + download + close -->
+      <div class="flex items-center justify-between gap-3 px-4 py-3 shrink-0" @click.stop>
+        <div class="min-w-0">
+          <div class="text-sm font-bold text-[#dfe5e8] truncate">{{ viewerItem.sender }}</div>
+          <div class="text-[11px] text-[#96a4ad]">{{ formatChatTime(viewerItem.timestamp) }}</div>
+        </div>
+        <div class="flex items-center gap-1 shrink-0">
+          <a
+            :href="viewerItem.src"
+            target="_blank"
+            download
+            class="p-2 rounded-lg text-[#96a4ad] hover:text-white hover:bg-white/10 transition-colors"
+            title="تحميل"
+            @click.stop
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          </a>
+          <button
+            @click="closeViewer"
+            class="p-2 rounded-lg text-[#96a4ad] hover:text-white hover:bg-white/10 transition-colors"
+            title="إغلاق"
+          >
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Stage: media centered between prev/next arrows -->
+      <div class="flex-1 min-h-0 relative flex items-center justify-center">
+        <button
+          v-if="viewerIndex > 0"
+          @click.stop="viewerPrev"
+          class="absolute right-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-[#dfe5e8] flex items-center justify-center transition-colors"
+          title="السابق"
+        >
+          <svg class="w-6 h-6 rotate-180" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+
+        <img
+          v-if="viewerItem.type === 'image'"
+          :src="viewerItem.src"
+          alt=""
+          class="max-h-full max-w-full object-contain px-14"
+          @click.stop
+        />
+        <video
+          v-else
+          ref="viewerVideoEl"
+          :src="viewerItem.src"
+          controls
+          autoplay
+          class="max-h-full max-w-full px-14"
+          @click.stop
+          @play="pauseActiveAudio"
+        ></video>
+
+        <button
+          v-if="viewerIndex < viewer.items.length - 1"
+          @click.stop="viewerNext"
+          class="absolute left-3 top-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full bg-black/60 hover:bg-black/80 text-[#dfe5e8] flex items-center justify-center transition-colors"
+          title="التالي"
+        >
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+      </div>
+
+      <!-- Caption -->
+      <div
+        v-if="viewerItem.caption"
+        class="shrink-0 text-center text-sm text-[#dfe5e8] px-8 pb-1.5 whitespace-pre-wrap break-words"
+        @click.stop
+      >{{ viewerItem.caption }}</div>
+
+      <!-- Filmstrip: every image/video in this chat, current centered -->
+      <div
+        v-if="viewer.items.length > 1"
+        ref="viewerStripEl"
+        class="shrink-0 flex gap-1.5 px-3 py-2.5 overflow-x-auto"
+        dir="ltr"
+        @click.stop
+      >
+        <button
+          v-for="(it, i) in viewer.items"
+          :key="it.key"
+          :data-current="i === viewerIndex ? '1' : null"
+          @click.stop="viewer.index = i"
+          class="relative w-14 h-14 rounded-lg overflow-hidden shrink-0 border-2 transition-all"
+          :class="i === viewerIndex ? 'border-[#00a884]' : 'border-transparent opacity-55 hover:opacity-100'"
+        >
+          <video
+            v-if="it.type === 'video'"
+            :src="it.src"
+            preload="metadata"
+            muted
+            class="w-full h-full object-cover bg-black pointer-events-none"
+          ></video>
+          <img v-else :src="it.src" alt="" class="w-full h-full object-cover" />
+          <span
+            v-if="it.type === 'video'"
+            class="absolute inset-0 flex items-center justify-center bg-black/25"
+          >
+            <svg class="w-5 h-5 text-white drop-shadow" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+          </span>
+        </button>
+      </div>
     </div>
 
     <!-- Right-click Context Menu (WhatsApp style) -->
@@ -1458,14 +1589,23 @@
             </div>
             <div v-else class="grid grid-cols-3 gap-1.5">
               <template v-for="mm in contactMedia" :key="mm.id">
-                <a
-                  v-if="['image','sticker'].includes(mm.message_type) && mediaSrc(mm)"
-                  :href="mediaSrc(mm)"
-                  target="_blank"
-                  class="aspect-square rounded-lg overflow-hidden bg-[#25343d] block"
+                <button
+                  v-if="['image','sticker','video'].includes(mm.message_type) && mediaSrc(mm)"
+                  @click="openLightbox(mm)"
+                  class="aspect-square rounded-lg overflow-hidden bg-[#25343d] block relative"
                 >
-                  <img :src="mediaSrc(mm)" class="w-full h-full object-cover" loading="lazy" alt="" />
-                </a>
+                  <video
+                    v-if="mm.message_type === 'video'"
+                    :src="mediaSrc(mm)"
+                    preload="metadata"
+                    muted
+                    class="w-full h-full object-cover pointer-events-none"
+                  ></video>
+                  <img v-else :src="mediaSrc(mm)" class="w-full h-full object-cover" loading="lazy" alt="" />
+                  <span v-if="mm.message_type === 'video'" class="absolute inset-0 flex items-center justify-center bg-black/30">
+                    <svg class="w-5 h-5 text-white" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                  </span>
+                </button>
                 <a
                   v-else
                   :href="mediaSrc(mm) || '#'"
@@ -1685,8 +1825,13 @@ const msgParts = (m) => {
   while ((match = MSG_PART_RE.exec(text)) !== null) {
     if (match.index > last) parts.push({ t: 'text', v: text.slice(last, match.index) });
     if (match[1] !== undefined) {
-      const title = phoneNameMap.value.get(match[1]);
-      const label = title && !title.startsWith('+') ? title : match[1];
+      // Backend-resolved mentionedJid list wins (LID→PN + contact names);
+      // fall back to the conversations phone→name map, then raw digits.
+      const hit = (m.mentions || []).find(
+        (x) => String(x.jid || '').split('@')[0] === match[1],
+      );
+      const title = hit?.name || phoneNameMap.value.get(match[1]);
+      const label = hit?.phone && !title ? '+' + hit.phone : (title && !title.startsWith('+') ? title : match[1]);
       parts.push({ t: 'mention', v: '@' + label.replace(/^@/, '') });
     } else {
       const raw = match[2];
@@ -1733,6 +1878,13 @@ const getAudioDuration = (m) => {
   return '0:00';
 };
 
+// One media element at a time — a video starting kills the voice note that
+// was playing, and a voice note starting kills the video in the viewer.
+const pauseActiveAudio = () => {
+  if (activeAudioEl) activeAudioEl.pause();
+  audioPlaying.value = false;
+};
+
 const togglePlayAudio = (m) => {
   const url = mediaSrc(m);
   if (!url) return;
@@ -1742,12 +1894,14 @@ const togglePlayAudio = (m) => {
       activeAudioEl?.pause();
       audioPlaying.value = false;
     } else {
+      viewerVideoEl.value?.pause();
       activeAudioEl?.play();
       audioPlaying.value = true;
     }
     return;
   }
 
+  viewerVideoEl.value?.pause();
   if (activeAudioEl) {
     activeAudioEl.pause();
     activeAudioEl = null;
@@ -1837,7 +1991,12 @@ const creatingChat = ref(false);
 const newChatPhone = ref('');
 const newChatName = ref('');
 const newChatSessionId = ref(null);
-const lightboxUrl = ref(null);
+// WhatsApp-style media viewer: items = every image/video in the open chat,
+// index = the visible one. Opens instantly on the loaded window, then the
+// backend media endpoint back-fills the full filmstrip.
+const viewer = ref({ items: [], index: -1 });
+const viewerStripEl = ref(null);
+const viewerVideoEl = ref(null);
 
 // Reactions
 const activeReactionMessageId = ref(null);
@@ -2086,7 +2245,12 @@ const docInfo = (m) => {
 const brokenAvatars = new Set();
 const avatarSrc = (c) => {
   const url = c?.contact_avatar;
-  return url && !brokenAvatars.has(url) ? url : null;
+  if (!url || brokenAvatars.has(url)) return null;
+  // Locally-stored avatars ride the token-query auth like /crm/media.
+  if (url.startsWith('/api/crm/')) {
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(crm.getToken() || '');
+  }
+  return url;
 };
 const markAvatarBroken = (url) => {
   if (url) brokenAvatars.add(url);
@@ -2681,6 +2845,7 @@ const saveContactName = async () => {
 };
 
 const closeTopLayer = () => {
+  if (viewerIndex.value >= 0) { closeViewer(); return true; }
   if (ctxMenu.value.show) { ctxMenu.value.show = false; return true; }
   if (activeReactionMessageId.value) { activeReactionMessageId.value = null; return true; }
   if (showForwardModal.value) { showForwardModal.value = false; return true; }
@@ -2693,6 +2858,14 @@ const closeTopLayer = () => {
 };
 
 const onGlobalKeydown = (e) => {
+  // Media viewer open → arrows flip through the filmstrip, Esc closes.
+  if (viewerIndex.value >= 0) {
+    if (e.key === 'ArrowLeft') { viewerPrev(); return; }
+    if (e.key === 'ArrowRight') { viewerNext(); return; }
+    if (e.key !== 'Escape') return;
+  } else if (e.key !== 'Escape') {
+    return;
+  }
   if (e.key !== 'Escape') return;
   if (closeTopLayer()) return;
   // Nothing layered — Esc leaves the open chat, like WhatsApp Web's panel collapse.
@@ -2916,10 +3089,18 @@ const sendTextMessage = () => {
   if (dupe) return;
 
   const tempId = 'tmp-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+  // Mentions picked from the @ dropdown whose "@digits" token survived in
+  // the final text — the engine lists their JIDs in contextInfo.
+  const mentionJids = Object.entries(pendingMentions.value)
+    .filter(([digits]) => text.includes('@' + digits))
+    .map(([, jid]) => jid);
   sendQueue.value.push({
     tempId, text, replyToId, conversationId, sessionId,
+    mentions: mentionJids.length ? mentionJids : undefined,
     enqueuedAt: Date.now(), done: false,
   });
+  pendingMentions.value = {};
+  mentionMenu.value.show = false;
   messages.value.push({
     id: tempId,
     direction: 'outgoing',
@@ -2950,6 +3131,7 @@ const drainSendQueue = async () => {
           session_id: item.sessionId,
           message: item.text,
           reply_to_id: item.replyToId || undefined,
+          mentions: item.mentions,
         });
         const idx = messages.value.findIndex((m) => m.id === item.tempId);
         if (res.success && res.message) {
@@ -3241,9 +3423,75 @@ const appendEmoji = (e) => {
   showEmojiMenu.value = false;
 };
 
-const openLightbox = (url) => {
-  lightboxUrl.value = url;
+// ---- WhatsApp-style media viewer ----------------------------------------
+const viewerIndex = computed(() => viewer.value.index);
+const viewerItem = computed(() => viewer.value.items[viewer.value.index] || null);
+
+const VIEWER_TYPES = ['image', 'sticker', 'video'];
+const toViewerItem = (m) => {
+  const src = mediaSrc(m);
+  if (!src) return null;
+  return {
+    key: m.id ?? m.message_id,
+    type: m.message_type === 'video' ? 'video' : 'image',
+    src,
+    caption: isPlaceholderText(m) ? '' : (m.message || ''),
+    timestamp: m.timestamp,
+    direction: m.direction,
+    sender: m.direction === 'outgoing'
+      ? 'أنت'
+      : (isGroupConv.value ? groupSenderLabel(m) : convTitle(activeConv.value)),
+  };
 };
+const viewerItemsFrom = (list) =>
+  (list || [])
+    .filter((m) => VIEWER_TYPES.includes(m.message_type))
+    .map(toViewerItem)
+    .filter(Boolean)
+    .sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+
+const openLightbox = (m) => {
+  const items = viewerItemsFrom(messages.value);
+  const key = m.id ?? m.message_id;
+  let idx = items.findIndex((x) => x.key === key);
+  if (idx === -1) {
+    const self = toViewerItem(m);
+    if (!self) return;
+    items.push(self);
+    idx = items.length - 1;
+  }
+  viewer.value = { items, index: idx };
+  if (activeConv.value) loadViewerGallery(activeConv.value);
+};
+
+// The strip covers the whole conversation, not just the loaded window —
+// the backend ships the last N media rows and the current item is kept.
+const loadViewerGallery = async (conv) => {
+  try {
+    const res = await crm.getConversationMedia(conv.id, { limit: 300 });
+    if (!viewer.value.items.length || activeConv.value?.id !== conv.id) return;
+    const items = viewerItemsFrom(res.media || []);
+    if (!items.length) return;
+    const cur = viewer.value.items[viewer.value.index];
+    const idx = items.findIndex((x) => x.key === cur?.key);
+    viewer.value = { items, index: idx >= 0 ? idx : items.length - 1 };
+  } catch {}
+};
+
+const closeViewer = () => { viewer.value = { items: [], index: -1 }; };
+const viewerPrev = () => { if (viewer.value.index > 0) viewer.value.index--; };
+const viewerNext = () => {
+  if (viewer.value.index < viewer.value.items.length - 1) viewer.value.index++;
+};
+
+// Keep the current thumbnail centered in the filmstrip.
+watch(viewerIndex, () => {
+  nextTick(() => {
+    viewerStripEl.value
+      ?.querySelector('[data-current="1"]')
+      ?.scrollIntoView({ inline: 'center', block: 'nearest', behavior: 'smooth' });
+  });
+});
 
 // Time formatting helpers
 const formatChatTime = (t) => {
@@ -3642,8 +3890,89 @@ const startRealtime = () => {
 };
 
 // Send "composing" while the agent types (throttled server-side too).
+// ---- @mention picker (group composer) -----------------------------------
+const pendingMentions = ref({}); // digits -> jid for tokens picked below
+const mentionMenu = ref({ show: false, items: [], idx: 0, start: -1 });
+const memberCache = {};
+
+const ensureMemberList = async (convId) => {
+  if (memberCache[convId]) return memberCache[convId];
+  let members = [];
+  try {
+    const res = await crm.getGroupMembers(convId);
+    if (res?.success) members = res.members || [];
+  } catch { /* engine metadata unavailable — use fallbacks */ }
+
+  if (!members.length) {
+    // Fallback: senders already seen in this thread + stored past members —
+    // better a partial roster than a dead @ key.
+    const seen = new Map();
+    for (const m of messages.value || []) {
+      const raw = String(m?.from || '');
+      const digits = raw.replace(/\D/g, '');
+      if (digits.length >= 6 && !seen.has(digits)) {
+        seen.set(digits, {
+          jid: raw.includes('@') ? raw : digits + '@s.whatsapp.net',
+          phone: digits.length <= 14 ? digits : null,
+          name: m.sender_name || null,
+        });
+      }
+    }
+    for (const m of activeConv.value?.group_past_participants || []) {
+      const d = String(m.phone || m.jid || '').replace(/\D/g, '');
+      if (d && !seen.has(d)) {
+        seen.set(d, { jid: m.jid || d + '@lid', phone: m.phone || null, name: m.name || null });
+      }
+    }
+    members = [...seen.values()];
+  }
+  memberCache[convId] = members;
+  return members;
+};
+
+const mentionDigits = (m) => m.phone || m.lid || String(m.jid || '').split('@')[0];
+
+const refreshMentionMenu = async () => {
+  const menu = mentionMenu.value;
+  if (!isGroupConv.value || menu.start === -1) { menu.show = false; return; }
+  const tail = messageText.value.slice(menu.start + 1);
+  if (/\s/.test(tail)) { menu.show = false; return; }
+  const q = tail.toLowerCase();
+  const members = await ensureMemberList(activeConv.value.id);
+  menu.items = members
+    .filter((m) => !q || (m.name || '').toLowerCase().includes(q) || mentionDigits(m).startsWith(q))
+    .slice(0, 8);
+  menu.show = menu.items.length > 0;
+  menu.idx = 0;
+};
+
+const pickMention = (m) => {
+  const menu = mentionMenu.value;
+  const digits = mentionDigits(m);
+  const jid = m.jid || (m.phone ? m.phone + '@s.whatsapp.net' : (m.lid ? m.lid + '@lid' : ''));
+  if (digits && jid) pendingMentions.value[digits] = jid;
+  messageText.value =
+    messageText.value.slice(0, menu.start) + '@' + digits + ' ' +
+    messageText.value.slice(menu.start + 1).replace(/^\S*/, '');
+  menu.show = false;
+};
+
 const onTypingInput = () => {
   if (!activeConv.value) return;
+  // Track the last "@" the caret sits after — opens the member picker.
+  const el = document.activeElement;
+  const pos = el && el.selectionStart != null ? el.selectionStart : messageText.value.length;
+  const upto = messageText.value.slice(0, pos);
+  const at = upto.lastIndexOf('@');
+  // Open when the caret sits inside an @token that started at a word
+  // boundary — letters/digits after the @ filter the list, not close it.
+  if (at !== -1 && (at === 0 || /[\s\n]/.test(upto[at - 1])) && !/[\s\n]/.test(upto.slice(at + 1))) {
+    mentionMenu.value.start = at;
+    void refreshMentionMenu();
+  } else {
+    mentionMenu.value.start = -1;
+    mentionMenu.value.show = false;
+  }
   const now = Date.now();
   if (now - lastTypingSentAt < 3000) return;
   lastTypingSentAt = now;

@@ -128,6 +128,7 @@ export class WebhookDispatcher {
         isGroup: p.data.isGroup || false,
         replyToId: p.data.replyToId || null,
         isForwarded: p.data.isForwarded || false,
+        mentionedJids: p.data.mentionedJids || [],
         msgTimestamp: p.data.msgTimestamp || null,
         timestamp: p.timestamp,
       });

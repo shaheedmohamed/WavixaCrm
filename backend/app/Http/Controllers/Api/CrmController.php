@@ -1530,6 +1530,9 @@ class CrmController extends Controller
         if ($messages->isNotEmpty() && str_contains((string) $conversation->contact_jid, '@g.us')) {
             $this->labelGroupSenders($conversation, $messages);
         }
+        if ($messages->isNotEmpty()) {
+            $this->decorateMentions($conversation, $messages);
+        }
 
         return response()->json([
             'success' => true,
@@ -1590,6 +1593,45 @@ class CrmController extends Controller
             $bookName = $resolvedPhone ? ($book[substr($resolvedPhone, -10)] ?? null) : null;
             $m->sender_name = $bookName ?: ($pushnames[$m->from] ?? $m->sender_name);
             $m->sender_phone = $resolvedPhone ?: null;
+        });
+    }
+
+    /**
+     * Attach `mentions` to messages that carry contextInfo.mentionedJid —
+     * the body only has bare "@digits" tokens; here each JID resolves to
+     * {jid, phone, name} so the bubble can render a readable chip.
+     */
+    private function decorateMentions(WhatsAppConversation $conversation, \Illuminate\Support\Collection $messages): void
+    {
+        $withMentions = $messages->filter(fn ($m) => !empty($m->mentioned_jids));
+        if ($withMentions->isEmpty()) {
+            return;
+        }
+        $jids = $withMentions->flatMap(fn ($m) => $m->mentioned_jids)
+            ->map(fn ($j) => preg_replace('/:\d+@/', '@', (string) $j))
+            ->filter()->unique()->values();
+        $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid');
+        $pnToLid = array_flip($lidToPn->toArray());
+        $names = WhatsAppConversation::whereIn('session_id', $this->getAllowedSessionIds())
+            ->whereIn('contact_jid', $jids->flatMap(fn ($j) => [$j, $pnToLid[$j] ?? null, $lidToPn[$j] ?? null])->filter()->unique()->values())
+            ->pluck('contact_name', 'contact_jid');
+        $tails = $jids->map(fn ($j) => substr(preg_replace('/\D/', '', $lidToPn[$j] ?? $j), -10))->filter()->unique()->values();
+        $book = \App\Models\CrmContact::where('owner_id', $conversation->user_id)
+            ->whereIn('phone_tail', $tails)
+            ->pluck('name', 'phone_tail');
+
+        $resolve = function (string $jid) use ($lidToPn, $pnToLid, $names, $book) {
+            $pn = $lidToPn[$jid] ?? (str_ends_with($jid, '@s.whatsapp.net') ? $jid : null);
+            $phone = $pn ? preg_replace('/\D/', '', explode('@', $pn)[0]) : null;
+            $name = $names[$jid] ?? ($pn ? $names[$pn] : null) ?? ($pnToLid[$jid] ?? null ? $names[$pnToLid[$jid]] : null)
+                ?? ($phone ? $book[substr($phone, -10)] ?? null : null);
+            return ['jid' => $jid, 'phone' => $phone, 'name' => $name];
+        };
+
+        $withMentions->each(function ($m) use ($resolve) {
+            $m->mentions = collect($m->mentioned_jids)
+                ->map(fn ($j) => $resolve(preg_replace('/:\d+@/', '@', (string) $j)))
+                ->values();
         });
     }
 
@@ -1885,6 +1927,7 @@ class CrmController extends Controller
                         'direction' => 'outgoing',
                         'status' => 'sent',
                         'reply_to_id' => $request->reply_to_id,
+                        'mentioned_jids' => !empty($payload['mentions']) ? array_values($payload['mentions']) : null,
                         'sent_at' => now(),
                         'timestamp' => now(),
                     ]);
@@ -2717,30 +2760,68 @@ class CrmController extends Controller
             ->filter()
             ->map(fn ($j) => preg_replace('/:\d+@/', '@', (string) $j))
             ->unique()->values();
-        $names = WhatsAppConversation::whereIn('session_id', $allowed)
-            ->whereIn('contact_jid', $jids)
-            ->pluck('contact_name', 'contact_jid');
-        $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
-        $pnToLid = array_flip($lidToPn);
 
-        $resolveName = function (...$forms) use ($names, $pnToLid, $lidToPn) {
-            foreach (array_filter($forms) as $j) {
-                $j = preg_replace('/:\d+@/', '@', (string) $j);
-                foreach ([$j, $pnToLid[$j] ?? null, $lidToPn[$j] ?? null] as $alt) {
-                    if ($alt && ($n = $names[$alt] ?? null)) {
-                        return $n;
+        // LID->PN: stored mappings first, then a live usync resolve for the
+        // rest — a bare "LID xxx" label is useless to the agent.
+        $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
+        $missingLids = $jids
+            ->filter(fn ($j) => str_ends_with($j, '@lid') && !isset($lidToPn[$j]))
+            ->values()->all();
+        if ($missingLids) {
+            try {
+                $lr = $this->engineClient()->post("{$this->engineUrl}/internal/lid/resolve", [
+                    'sessionId' => $token,
+                    'jids' => $missingLids,
+                ]);
+                foreach (($lr->json('mappings') ?: []) as $queried => $counterpart) {
+                    if (str_ends_with($queried, '@lid') && str_ends_with((string) $counterpart, '@s.whatsapp.net')) {
+                        $lidToPn[$queried] = $counterpart;
+                        DB::table('whatsapp_lid_mappings')->updateOrInsert(
+                            ['lid' => $queried],
+                            ['pn' => $counterpart, 'updated_at' => now(), 'created_at' => now()]
+                        );
                     }
                 }
+            } catch (\Throwable $e) { /* best effort */ }
+        }
+        $pnToLid = array_flip($lidToPn);
+        $memberPns = $jids->map(fn ($j) => $lidToPn[$j] ?? (str_ends_with($j, '@s.whatsapp.net') ? $j : null))->filter()->values();
+
+        $names = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->whereIn('contact_jid', $jids->merge($memberPns)->unique()->values())
+            ->pluck('contact_name', 'contact_jid');
+        // The owner's synced address book + pushnames — same precedence the
+        // group-bubble sender label uses.
+        $tails = $memberPns->map(fn ($p) => substr(preg_replace('/\D/', '', $p), -10))->unique()->values();
+        $book = \App\Models\CrmContact::where('owner_id', $conversation->user_id)
+            ->whereIn('phone_tail', $tails)->pluck('name', 'phone_tail');
+        $push = \Illuminate\Support\Facades\Schema::hasTable('whatsapp_pushnames')
+            ? DB::table('whatsapp_pushnames')->whereIn('jid', $memberPns)->pluck('pushname', 'jid')
+            : collect();
+
+        $resolveName = function (...$forms) use ($names, $pnToLid, $lidToPn, $book, $push) {
+            foreach (array_filter($forms) as $j) {
+                $j = preg_replace('/:\d+@/', '@', (string) $j);
+                $pnJ = $lidToPn[$j] ?? (str_ends_with($j, '@s.whatsapp.net') ? $j : null);
+                foreach ([$j, $pnToLid[$j] ?? null, $pnJ] as $alt) {
+                    if ($alt && ($n = $names[$alt] ?? null)) return $n;
+                }
+                if ($pnJ && ($n = $book[substr(preg_replace('/\D/', '', $pnJ), -10)] ?? null)) return $n;
+                if ($pnJ && ($n = $push[$pnJ] ?? null)) return $n;
             }
             return null;
         };
 
         $digits = fn ($jid) => $jid ? preg_replace('/\D/', '', explode('@', (string) $jid)[0]) : null;
-        $members = $members->map(function ($m) use ($resolveName, $digits) {
+        $members = $members->map(function ($m) use ($resolveName, $digits, $lidToPn) {
             $jid = preg_replace('/:\d+@/', '@', (string) ($m['jid'] ?? ''));
             $pn = !empty($m['pn']) ? preg_replace('/:\d+@/', '@', (string) $m['pn']) : null;
             $lid = !empty($m['lid']) ? preg_replace('/:\d+@/', '@', (string) $m['lid']) : null;
-            $pnJid = $pn ?: (str_ends_with($jid, '@s.whatsapp.net') ? $jid : null);
+            $lidJid = $lid ?: (str_ends_with($jid, '@lid') ? $jid : null);
+            // PN attr wins; then the stored/live-resolved LID->PN mapping.
+            $pnJid = $pn
+                ?: (str_ends_with($jid, '@s.whatsapp.net') ? $jid : null)
+                ?: ($lidJid ? ($lidToPn[$lidJid] ?? null) : null);
             return [
                 'jid' => $jid,
                 'phone' => $pnJid ? $digits($pnJid) : null,
@@ -3091,7 +3172,7 @@ class CrmController extends Controller
      * Media, links & docs shared inside a conversation — feeds the
      * contact-info side panel like WhatsApp Web's "Contact info".
      */
-    public function getConversationMedia($id)
+    public function getConversationMedia(Request $request, $id)
     {
         $allowed = $this->getAllowedSessionIds();
         $conversation = WhatsAppConversation::whereIn('session_id', $allowed)
@@ -3101,7 +3182,7 @@ class CrmController extends Controller
         $rows = WhatsAppMessage::where('conversation_id', $conversation->id)
             ->whereIn('message_type', ['image', 'video', 'document', 'audio', 'voice', 'sticker'])
             ->orderBy('timestamp', 'desc')->orderBy('id', 'desc')
-            ->limit(30)
+            ->limit(min(300, max(1, (int) $request->input('limit', 30))))
             ->get(['id', 'message_id', 'message_type', 'message', 'media_url', 'media_mime_type', 'media_size', 'media_meta', 'direction', 'timestamp', 'created_at']);
 
         return response()->json([
@@ -3116,6 +3197,37 @@ class CrmController extends Controller
      * History-synced media is decrypted lazily through the engine on first
      * request, then cached on disk.
      */
+    /**
+     * Serve a locally-stored conversation avatar — the file never expires,
+     * unlike the signed pps.whatsapp.net URL it was downloaded from.
+     */
+    public function streamAvatar(Request $request, $id)
+    {
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));
+        $user = $accessToken?->tokenable;
+        if (!$user instanceof User) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+        $conversation = WhatsAppConversation::findOrFail($id);
+        if ($conversation->session_id
+            && $user->crm_role !== 'admin'
+            && !in_array($conversation->session_id, $this->getAllowedSessionIds($user))) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+        $file = storage_path("app/avatars/{$conversation->id}.jpg");
+        if (is_file($file)) {
+            return response()->file($file, [
+                'Content-Type' => 'image/jpeg',
+                'Cache-Control' => 'private, max-age=86400',
+            ]);
+        }
+        // No local copy — fall back to whatever remote URL is stored.
+        if ($conversation->contact_avatar && str_starts_with($conversation->contact_avatar, 'http')) {
+            return redirect()->away($conversation->contact_avatar);
+        }
+        return response()->json(['success' => false, 'message' => 'No avatar'], 404);
+    }
+
     public function streamMedia(Request $request, $id)
     {
         $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));

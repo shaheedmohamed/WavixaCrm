@@ -110,6 +110,7 @@ import CrmAdminActivity from '@/pages/crm/admin/AdminActivity.vue';
 import CrmChat from '@/pages/crm/CrmChat.vue';
 import CrmStatuses from '@/pages/crm/CrmStatuses.vue';
 import CrmAutoReply from '@/pages/crm/CrmAutoReply.vue';
+import CrmApiKeys from '@/pages/crm/CrmApiKeys.vue';
 import CrmPricing from '@/pages/crm/CrmPricing.vue';
 import crm from '@/services/crm';
 
@@ -647,6 +648,12 @@ const routes = [
         path: 'auto-reply',
         name: 'CrmAutoReply',
         component: CrmAutoReply,
+        meta: { isCrm: true, requiresOwner: true },
+      },
+      {
+        path: 'api-keys',
+        name: 'CrmApiKeys',
+        component: CrmApiKeys,
         meta: { isCrm: true, requiresOwner: true },
       },
       {

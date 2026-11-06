@@ -301,8 +301,8 @@ class CrmService {
     return resp.data;
   }
 
-  async getConversationMedia(id) {
-    const resp = await this.client().get(`/conversations/${id}/media`);
+  async getConversationMedia(id, params = {}) {
+    const resp = await this.client().get(`/conversations/${id}/media`, { params });
     return resp.data;
   }
 
@@ -338,6 +338,64 @@ class CrmService {
       message_tier: messageTier,
     });
     return resp.data;
+  }
+
+  // ---- API keys ----------------------------------------------------------
+  // Platform-level /api-keys endpoints — same sanctum token as the CRM,
+  // just a different URL prefix than /crm.
+  rootClient() {
+    const token = this.getToken();
+    return axios.create({
+      baseURL: API_BASE,
+      headers: {
+        Accept: 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+    });
+  }
+
+  async getApiKeys(params = {}) {
+    const resp = await this.rootClient().get('/api-keys', { params });
+    return resp.data;
+  }
+
+  async createApiKey(data) {
+    const resp = await this.rootClient().post('/api-keys', data);
+    return resp.data;
+  }
+
+  async updateApiKey(id, data) {
+    const resp = await this.rootClient().put(`/api-keys/${id}`, data);
+    return resp.data;
+  }
+
+  async regenerateApiKey(id) {
+    const resp = await this.rootClient().post(`/api-keys/${id}/regenerate`);
+    return resp.data;
+  }
+
+  async deleteApiKey(id) {
+    const resp = await this.rootClient().delete(`/api-keys/${id}`);
+    return resp.data;
+  }
+
+  async getApiKeyLogs(id, params = {}) {
+    const resp = await this.rootClient().get(`/api-keys/${id}/logs`, { params });
+    return resp.data;
+  }
+
+  // Fire a real request against the public API from the docs test console —
+  // goes through the VerifyApiKey middleware like any external client.
+  async publicApiRequest(path, apiKey, payload = {}, method = 'post') {
+    const resp = await axios({
+      method,
+      url: `${API_BASE}/public/${String(path).replace(/^\//, '')}`,
+      data: method === 'get' ? undefined : payload,
+      params: method === 'get' ? payload : undefined,
+      headers: { Accept: 'application/json', 'X-API-Key': apiKey },
+      validateStatus: () => true,
+    });
+    return { status: resp.status, data: resp.data };
   }
 }
 

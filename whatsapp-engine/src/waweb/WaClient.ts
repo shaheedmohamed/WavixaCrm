@@ -86,6 +86,7 @@ export interface WaClientEvents {
     quotedMessageId?: string;
     quotedParticipant?: string;
     isForwarded?: boolean;
+    mentionedJids?: string[];
     raw: unknown;
   }) => void;
   'history.sync': (payload: ParsedHistorySync) => void;
@@ -602,6 +603,7 @@ export class WaClient extends EventEmitter {
               quotedMessageId: norm.quotedMessageId,
               quotedParticipant: norm.quotedParticipant,
               isForwarded: norm.isForwarded,
+              mentionedJids: norm.mentionedJids,
               raw: decoded,
             });
           } catch (decErr) {

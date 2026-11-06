@@ -225,7 +225,10 @@ class WhatsAppLidResolver
             foreach ($convs as $conv) {
                 $url = $pictures[$conv->contact_jid] ?? null;
                 if ($url) {
-                    $conv->update(['contact_avatar' => $url]);
+                    // CDN links expire — download once, serve our own copy
+                    // forever so the avatar can never 403 again.
+                    $local = $this->storeAvatarLocally($conv->id, $url);
+                    $conv->update(['contact_avatar' => $local ?: $url]);
                 } else {
                     // Mark misses so they are not re-queried every request —
                     // a refresh pass can clear the marker later.
@@ -234,6 +237,27 @@ class WhatsAppLidResolver
             }
         } catch (\Throwable $e) {
             Log::warning('Avatar fetch failed: ' . $e->getMessage());
+        }
+    }
+
+    /** Download a signed CDN avatar once into local storage; returns the
+     *  app-relative path to store (null when the download fails). */
+    private function storeAvatarLocally(int $convId, string $url): ?string
+    {
+        try {
+            $img = \Illuminate\Support\Facades\Http::timeout(10)->get($url);
+            if (!$img->successful() || !$img->body()) {
+                return null;
+            }
+            $dir = storage_path('app/avatars');
+            if (!is_dir($dir)) {
+                mkdir($dir, 0755, true);
+            }
+            $file = "{$dir}/{$convId}.jpg";
+            file_put_contents($file, $img->body());
+            return "/api/crm/avatar/{$convId}";
+        } catch (\Throwable $e) {
+            return null;
         }
     }
 

@@ -143,6 +143,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     // CRM media resolver — used by <img>/<audio> tags which cannot send
     // Authorization headers; the sanctum token is validated from ?token=.
     Route::get('/crm/media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamMedia']);
+    Route::get('/crm/avatar/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamAvatar']);
     Route::get('/crm/status-media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamStatusMedia']);
     // Call-bridge pairing QR — ?token= auth like the media routes; the
     // browser cannot send Authorization on a plain <img>/page load.

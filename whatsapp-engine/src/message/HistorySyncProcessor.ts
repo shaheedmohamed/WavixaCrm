@@ -23,6 +23,7 @@ export interface NormalizedMessage {
   media?: NormalizedMedia;
   quotedMessageId?: string;
   quotedParticipant?: string;
+  mentionedJids?: string[];
   isForwarded?: boolean;
   edited?: boolean;
   fromMe?: boolean;
@@ -159,7 +160,21 @@ export function normalizeMessageContent(message: any): NormalizedMessage | null 
   // WhatsApp flags forwarded content via contextInfo.isForwarded — surface it
   // so the CRM can show the same "Forwarded" label as the official client.
   const isForwarded = ctxs.some((c) => c?.isForwarded === true) || undefined;
-  const quoted = { quotedMessageId, quotedParticipant, isForwarded };
+  // @mentions ride in contextInfo.mentionedJid — the text only carries bare
+  // "@<digits>" tokens, so the full JIDs are needed to resolve names.
+  const mentionedJids = [
+    ...new Set(
+      ctxs.flatMap((c: any) =>
+        Array.isArray(c?.mentionedJid) ? c.mentionedJid.map(String) : [],
+      ),
+    ),
+  ];
+  const quoted = {
+    quotedMessageId,
+    quotedParticipant,
+    isForwarded,
+    mentionedJids: mentionedJids.length ? mentionedJids : undefined,
+  };
 
   if (message.reactionMessage) {
     return { type: 'reaction', body: message.reactionMessage.text || '', ...quoted };

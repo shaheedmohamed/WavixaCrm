@@ -153,6 +153,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
             isGroup,
             replyToId: msg.quotedMessageId,
             isForwarded: (msg as any).isForwarded || false,
+            mentionedJids: (msg as any).mentionedJids || [],
             msgTimestamp: msg.timestamp,
           },
         });
@@ -653,6 +654,11 @@ export function createRoutes(deps: RouteDependencies): express.Router {
     if (forwarded) {
       contextInfo.isForwarded = true;
       contextInfo.forwardingScore = 1;
+    }
+    // @mentions — proto.ContextInfo.mentionedJid. The text carries the bare
+    // "@<digits>" token; clients resolve the listed JIDs to display names.
+    if (Array.isArray(req.body.mentions) && req.body.mentions.length) {
+      contextInfo.mentionedJid = req.body.mentions.map(String).slice(0, 50);
     }
     const hasCtx = Object.keys(contextInfo).length > 0;
 

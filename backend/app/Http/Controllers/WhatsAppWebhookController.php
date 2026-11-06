@@ -1073,6 +1073,7 @@ class WhatsAppWebhookController extends Controller
                                 : WhatsAppMessage::STATUS_DELIVERED,
                             'reply_to_id' => $m['quotedMessageId'] ?? null,
                             'is_forwarded' => !empty($m['isForwarded']),
+                            'mentioned_jids' => !empty($m['mentionedJids']) ? array_values($m['mentionedJids']) : null,
                             'sent_at' => $ts,
                             'delivered_at' => $ts,
                             'timestamp' => $ts,
@@ -1344,6 +1345,7 @@ class WhatsAppWebhookController extends Controller
                 'isGroup' => 'nullable|boolean',
                 'replyToId' => 'nullable|string',
                 'isForwarded' => 'nullable|boolean',
+                'mentionedJids' => 'nullable|array',
                 'msgTimestamp' => 'nullable|integer',
                 'timestamp' => 'nullable',
             ]);
@@ -1508,6 +1510,7 @@ class WhatsAppWebhookController extends Controller
                     'status' => WhatsAppMessage::STATUS_DELIVERED,
                     'reply_to_id' => $data['replyToId'] ?? null,
                     'is_forwarded' => !empty($data['isForwarded']),
+                    'mentioned_jids' => !empty($data['mentionedJids']) ? array_values($data['mentionedJids']) : null,
                     'sent_at' => $msgTime,
                     'delivered_at' => $msgTime,
                     'timestamp' => $msgTime,
