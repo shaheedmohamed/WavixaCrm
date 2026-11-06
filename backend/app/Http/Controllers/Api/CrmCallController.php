@@ -52,6 +52,26 @@ class CrmCallController extends Controller
         }
     }
 
+    /**
+     * Current bridge pairing QR as PNG — needed when the bridge's WhatsApp
+     * Web session loses its linked-device auth (state.ready=false and the
+     * bridge emits QR codes). Owner/admin only via ?token= (same pattern as
+     * /crm/media — a plain browser open can't send Bearer headers).
+     */
+    public function pairingQr(Request $request)
+    {
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));
+        $user = $accessToken?->tokenable;
+        if (!$user || ($user->crm_role ?? null) === 'agent') {
+            abort(403);
+        }
+        $png = '/var/www/Wavixa/whatsapp-callbridge/out/qr.png';
+        if (!is_file($png)) {
+            abort(404, 'no qr — bridge is paired or not emitting one');
+        }
+        return response()->file($png, ['Cache-Control' => 'no-store']);
+    }
+
     public function dial(Request $request)
     {
         // Group conversations carry a @g.us JID — keep the suffix so the

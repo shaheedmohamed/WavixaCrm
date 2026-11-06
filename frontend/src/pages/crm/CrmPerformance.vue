@@ -88,7 +88,9 @@
                 <th class="text-center font-bold px-4 py-4">منجزة</th>
                 <th class="text-center font-bold px-4 py-4">مفتوحة (ناقصة)</th>
                 <th class="text-center font-bold px-4 py-4">بانتظار رده</th>
+                <th class="text-center font-bold px-4 py-4">محوّل إليه / منه</th>
                 <th class="text-center font-bold px-4 py-4">متوسط سرعة الرد</th>
+                <th class="text-center font-bold px-4 py-4">زمن المعالجة</th>
                 <th class="text-center font-bold px-4 py-4">التقييم</th>
                 <th class="text-center font-bold px-4 py-4">آخر نشاط</th>
               </tr>
@@ -164,6 +166,13 @@
                   </span>
                 </td>
 
+                <!-- Transfers in/out -->
+                <td class="px-4 py-4 text-center">
+                  <span class="text-sm font-bold text-violet-300" dir="ltr">
+                    {{ m.transfers_in ?? 0 }} / {{ m.transfers_out ?? 0 }}
+                  </span>
+                </td>
+
                 <!-- Avg response -->
                 <td class="px-4 py-4 text-center">
                   <span
@@ -174,6 +183,13 @@
                     {{ formatDuration(m.avg_response_seconds) }}
                   </span>
                   <p v-if="m.response_samples" class="text-[9px] text-slate-500 mt-0.5" dir="ltr">{{ m.response_samples }} رد</p>
+                </td>
+
+                <!-- Avg handle time (claim → resolve) -->
+                <td class="px-4 py-4 text-center">
+                  <span class="text-sm font-bold text-slate-200" dir="ltr">
+                    {{ formatDuration(m.avg_handle_seconds) }}
+                  </span>
                 </td>
 
                 <!-- Rating -->

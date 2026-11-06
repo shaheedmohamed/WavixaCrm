@@ -282,7 +282,16 @@ class WhatsAppLidResolver
      */
     public function applyStoredMappings(WhatsAppSession $session): void
     {
-        $pairs = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid');
+        // Only touch mappings for LIDs this session actually carries — the
+        // table holds every account's pairs (thousands of rows).
+        $lids = WhatsAppConversation::where('session_id', $session->id)
+            ->where('contact_jid', 'like', '%@lid')
+            ->pluck('contact_jid');
+        if ($lids->isEmpty()) {
+            return;
+        }
+
+        $pairs = DB::table('whatsapp_lid_mappings')->whereIn('lid', $lids)->pluck('pn', 'lid');
         foreach ($pairs as $lidJid => $pnJid) {
             if (!is_string($pnJid) || !str_ends_with($pnJid, '@s.whatsapp.net')) {
                 continue;

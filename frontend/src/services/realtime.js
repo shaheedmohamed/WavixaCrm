@@ -22,7 +22,7 @@ export function getEcho() {
     wsHost: window.location.hostname,
     wsPort: window.location.port || (location.protocol === 'https:' ? 443 : 80),
     wssPort: 443,
-    wsPath: '/reverb/app',
+    wsPath: '/reverb',
     forceTLS: location.protocol === 'https:',
     enabledTransports: ['ws', 'wss'],
     disableStats: true,

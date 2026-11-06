@@ -206,7 +206,8 @@ class WhatsAppWebhookController extends Controller
                     'user_id' => $userId,
                     'contact_jid' => $toJid,
                     'contact_phone' => $toDigits,
-                    'contact_name' => '+' . $toDigits,
+                    'contact_name' => DB::table('whatsapp_pushnames')->where('jid', $toJid)->value('pushname')
+                        ?: '+' . $toDigits,
                     'last_message' => $data['message'] ?? '',
                     'last_message_type' => $data['messageType'] ?? 'text',
                     'last_message_direction' => 'outgoing',
@@ -755,11 +756,56 @@ class WhatsAppWebhookController extends Controller
                 }
             }
             $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
+            $pnToLid = array_flip($lidToPn);
 
+            // Pushnames travel in their own PUSH_NAME chunk that races the
+            // conversation chunks — whichever lands first must not leave chats
+            // showing "+number" until unrelated traffic renames them. Persist
+            // every name so later chunks resolve contacts from the table.
             $pushnames = [];
+            $freshPushnames = [];
             foreach (($data['pushnames'] ?? []) as $p) {
                 if (!empty($p['jid']) && !empty($p['pushname'])) {
                     $pushnames[$p['jid']] = $p['pushname'];
+                    $freshPushnames[$p['jid']] = $p['pushname'];
+                }
+            }
+            if ($freshPushnames) {
+                $rows = [];
+                foreach ($freshPushnames as $pj => $pn) {
+                    $rows[] = [
+                        'jid' => $pj,
+                        'pushname' => mb_substr($pn, 0, 190),
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                foreach (array_chunk($rows, 500) as $chunk) {
+                    DB::table('whatsapp_pushnames')->upsert($chunk, ['jid'], ['pushname', 'updated_at']);
+                }
+            }
+
+            // Names stored by earlier chunks still resolve this chunk's
+            // conversations — including through the contact's LID↔PN alias.
+            $lookupJids = collect($data['conversations'] ?? [])
+                ->flatMap(fn ($c) => [$c['jid'] ?? null, $c['lidJid'] ?? null])
+                ->filter()
+                ->flatMap(fn ($j) => [$j, $lidToPn[$j] ?? null, $pnToLid[$j] ?? null])
+                ->filter()
+                ->unique()
+                ->values();
+            if ($lookupJids->isNotEmpty()) {
+                $stored = DB::table('whatsapp_pushnames')
+                    ->whereIn('jid', $lookupJids)
+                    ->pluck('pushname', 'jid');
+                foreach ($stored as $sj => $sn) {
+                    if (!isset($pushnames[$sj])) {
+                        $pushnames[$sj] = $sn;
+                    }
+                    $alt = str_ends_with($sj, '@lid') ? ($lidToPn[$sj] ?? null) : ($pnToLid[$sj] ?? null);
+                    if ($alt && !isset($pushnames[$alt])) {
+                        $pushnames[$alt] = $sn;
+                    }
                 }
             }
 
@@ -839,7 +885,11 @@ class WhatsAppWebhookController extends Controller
                 // so row ids track time within each chunk as far as possible.
                 usort($msgs, fn ($a, $b) => ($a['timestamp'] ?? 0) <=> ($b['timestamp'] ?? 0));
 
-                $name = $conv['name'] ?? $pushnames[$jid] ?? $pushnames[$phoneJid] ?? null;
+                $name = $conv['name']
+                    ?? $pushnames[$jid]
+                    ?? $pushnames[$phoneJid]
+                    ?? (!empty($conv['lidJid']) ? ($pushnames[$conv['lidJid']] ?? null) : null)
+                    ?? null;
                 if (!$name && !$isGroup) {
                     foreach (array_reverse($msgs) as $m) {
                         if (!empty($m['pushName']) && empty($m['fromMe'])) {
@@ -1009,6 +1059,13 @@ class WhatsAppWebhookController extends Controller
                 }
             }
 
+            // The PUSH_NAME chunk often lands after its conversations were
+            // imported — apply fresh names to rows still on a "+number"
+            // placeholder instead of leaving them numeric until a resync.
+            if ($freshPushnames) {
+                $this->applyPushnamesToPlaceholders($session, $freshPushnames, $lidToPn);
+            }
+
             $syncType = (int) ($data['syncType'] ?? -1);
             $requestId = $data['requestId'] ?? null;
 
@@ -1068,6 +1125,57 @@ class WhatsAppWebhookController extends Controller
         } catch (\Throwable $e) {
             Log::error('WhatsApp history sync webhook error: ' . $e->getMessage());
             return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Rename conversations still carrying a "+number" placeholder using
+     * freshly arrived pushnames. Real names (address book, saved contact
+     * name) are never purely numeric, so only placeholders get touched.
+     */
+    private function applyPushnamesToPlaceholders(WhatsAppSession $session, array $pushnames, array $lidToPn): void
+    {
+        // Pushname jids arrive in PN or LID form — resolve LIDs so every
+        // name lands on the phone digits the conversation stores.
+        $tailToName = [];
+        foreach ($pushnames as $jid => $name) {
+            $pnJid = str_ends_with($jid, '@lid') ? ($lidToPn[$jid] ?? null) : $jid;
+            if (!$pnJid || str_ends_with($pnJid, '@lid')) {
+                continue;
+            }
+            $digits = preg_replace('/\D/', '', explode('@', $pnJid)[0]);
+            if (strlen($digits) >= 8) {
+                $tailToName[substr($digits, -10)] = $name;
+            }
+        }
+        if (!$tailToName) {
+            return;
+        }
+
+        $renamed = [];
+        WhatsAppConversation::where('session_id', $session->id)
+            ->whereNotNull('contact_phone')
+            ->where('contact_name', 'REGEXP', '^\\+?[0-9]{5,}$')
+            ->chunkById(500, function ($convs) use ($tailToName, &$renamed) {
+                foreach ($convs as $conv) {
+                    $digits = preg_replace('/\D/', '', (string) $conv->contact_phone);
+                    $name = $digits ? ($tailToName[substr($digits, -10)] ?? null) : null;
+                    if ($name && $conv->contact_name !== $name) {
+                        WhatsAppConversation::where('id', $conv->id)
+                            ->update(['contact_name' => $name]);
+                        $renamed[] = ['id' => $conv->id, 'contact_name' => $name];
+                    }
+                }
+            });
+
+        foreach (array_chunk($renamed, 200) as $items) {
+            try {
+                event(new \App\Events\CrmRealtimeEvent($session->user_id, 'conversations.renamed', [
+                    'items' => $items,
+                ]));
+            } catch (\Throwable $e) {
+                Log::debug('CRM broadcast (conversations.renamed) failed: ' . $e->getMessage());
+            }
         }
     }
 
@@ -1276,6 +1384,16 @@ class WhatsAppWebhookController extends Controller
             $messageType = $data['type'] ?? 'text';
             $messageId = $data['messageId'] ?? null;
             $isGroup = (bool) ($data['isGroup'] ?? false);
+
+            // Live pushnames feed the same table history-sync uses — the next
+            // chunk or fresh conversation resolves the name instead of first
+            // rendering a bare "+number".
+            if (!$fromMe && !$isGroup && $senderName) {
+                DB::table('whatsapp_pushnames')->updateOrInsert(
+                    ['jid' => $fromJid],
+                    ['pushname' => mb_substr($senderName, 0, 190), 'updated_at' => now(), 'created_at' => now()]
+                );
+            }
             $contactPhone = $fromMe
                 ? preg_replace('/\D/', '', explode('@', $fromJid)[0])
                 : ($senderPhone ?: preg_replace('/\D/', '', explode('@', $fromJid)[0]));

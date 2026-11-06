@@ -2123,6 +2123,15 @@ export class WaClient extends EventEmitter {
       stanzaType ??
         (message.conversation || message.extendedTextMessage ? 'text' : 'media'),
     );
+    // Protocol stanzas must declare their kind via the `edit` attribute or
+    // recipients drop them silently: 7 = sender revoke, 8 = group-admin
+    // revoke (WhatsApp Web's editAttribute values). A plain REVOKE stanza
+    // gets a clean server ack but the client never deletes the message.
+    const protocolType = (
+      message.protocolMessage as { type?: unknown } | undefined
+    )?.type;
+    const editAttr =
+      protocolType === 'REVOKE' || protocolType === 0 ? '7' : undefined;
     const stanza: BinaryNode = {
       tag: 'message',
       attrs: {
@@ -2131,6 +2140,7 @@ export class WaClient extends EventEmitter {
         type:
           stanzaType ??
           (message.conversation || message.extendedTextMessage ? 'text' : 'media'),
+        ...(editAttr ? { edit: editAttr } : {}),
       },
       content: [{ tag: 'participants', attrs: {}, content: participants }],
     };

@@ -47,7 +47,7 @@ use App\Http\Controllers\VoiceAssistantController;
 Route::middleware(['api', HandleCors::class])->group(function () {
     // Internal service webhooks. Signed by the Node services with HMAC-SHA256
     // using the shared service API key; rate-limited separately from public traffic.
-    Route::middleware(['throttle:webhook', VerifyServiceSignature::class])->group(function () {
+    Route::middleware([VerifyServiceSignature::class])->group(function () {
         // WhatsApp service webhooks
         Route::post('/whatsapp/message-received', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageReceived']);
         Route::post('/whatsapp/message-sent', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageSent']);
@@ -142,13 +142,14 @@ Route::middleware(['api', HandleCors::class])->group(function () {
 
     // CRM media resolver — used by <img>/<audio> tags which cannot send
     // Authorization headers; the sanctum token is validated from ?token=.
-    Route::get('/crm/media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamMedia'])
-        ->middleware('throttle:public');
-    Route::get('/crm/status-media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamStatusMedia'])
-        ->middleware('throttle:public');
+    Route::get('/crm/media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamMedia']);
+    Route::get('/crm/status-media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamStatusMedia']);
+    // Call-bridge pairing QR — ?token= auth like the media routes; the
+    // browser cannot send Authorization on a plain <img>/page load.
+    Route::get('/crm/call/qr', [\App\Http\Controllers\Api\CrmCallController::class, 'pairingQr']);
 
     // Protected CRM routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('crm')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('crm')->group(function () {
         Route::get('/me', [\App\Http\Controllers\Api\CrmController::class, 'me']);
         Route::get('/stats', [\App\Http\Controllers\Api\CrmController::class, 'stats']);
 
@@ -199,7 +200,10 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/messages/delete', [\App\Http\Controllers\Api\CrmController::class, 'deleteMessage']);
         Route::put('/conversations/{id}', [\App\Http\Controllers\Api\CrmController::class, 'renameConversation']);
         Route::post('/conversations/{id}/resolve', [\App\Http\Controllers\Api\CrmController::class, 'resolveConversation']);
+        Route::post('/conversations/{id}/reopen', [\App\Http\Controllers\Api\CrmController::class, 'reopenConversation']);
+        Route::post('/conversations/{id}/claim', [\App\Http\Controllers\Api\CrmController::class, 'claimConversation']);
         Route::post('/conversations/{id}/assign', [\App\Http\Controllers\Api\CrmController::class, 'assignConversation']);
+        Route::post('/conversations/{id}/transfer', [\App\Http\Controllers\Api\CrmController::class, 'transferConversation']);
         Route::get('/conversations/{id}/media', [\App\Http\Controllers\Api\CrmController::class, 'getConversationMedia']);
         Route::post('/messages/reaction', [\App\Http\Controllers\Api\CrmController::class, 'sendReaction']);
         Route::post('/messages/typing', [\App\Http\Controllers\Api\CrmController::class, 'sendTyping']);
@@ -249,7 +253,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected auth routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('auth')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('auth')->group(function () {
         Route::get('/me', [AuthController::class, 'me']);
         Route::put('/profile', [AuthController::class, 'updateProfile']);
         Route::post('/logout', [AuthController::class, 'logout']);
@@ -259,7 +263,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // User reputation and anti-abuse score
-    Route::middleware(['auth:sanctum', 'throttle:api'])->group(function () {
+    Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/reputation', [ReputationController::class, 'show']);
     });
 
@@ -289,7 +293,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected dashboard routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('dashboard')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('dashboard')->group(function () {
         Route::get('/', function (Request $request) {
             return response()->json([
                 'success' => true,
@@ -307,7 +311,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected Voice AI routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('voice')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('voice')->group(function () {
         Route::post('/sessions', [VoiceAssistantController::class, 'start']);
         Route::post('/sessions/{sessionId}/transcript', [VoiceAssistantController::class, 'transcript']);
         Route::post('/sessions/{sessionId}/end', [VoiceAssistantController::class, 'end']);
@@ -315,7 +319,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected WhatsApp routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('whatsapp')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('whatsapp')->group(function () {
         Route::get('/status', [WhatsAppController::class, 'getStatus']);
         Route::post('/connect', [WhatsAppController::class, 'connect']);
         Route::post('/disconnect', [WhatsAppController::class, 'disconnect']);
@@ -389,7 +393,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected Telegram routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('telegram')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('telegram')->group(function () {
         Route::get('/sessions', [TelegramController::class, 'getSessions']);
         Route::get('/status', [TelegramController::class, 'getStatus']);
         Route::post('/connect', [TelegramController::class, 'connectBot']);
@@ -426,7 +430,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected Messenger routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('messenger')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('messenger')->group(function () {
         Route::get('/config', [MessengerController::class, 'config']);
         Route::get('/auth', [MessengerController::class, 'oauthAuth']);
         Route::get('/status', [MessengerController::class, 'status']);
@@ -482,7 +486,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected Contacts routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('contacts')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('contacts')->group(function () {
         Route::get('/', [ContactController::class, 'index']);
         Route::post('/', [ContactController::class, 'store']);
         Route::post('/import', [ContactController::class, 'import']);
@@ -502,7 +506,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected API Keys routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('api-keys')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('api-keys')->group(function () {
         Route::get('/', [ApiKeysController::class, 'index']);
         Route::post('/', [ApiKeysController::class, 'store']);
         Route::post('/{id}/regenerate', [ApiKeysController::class, 'regenerate']);
@@ -513,7 +517,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected n8n integration routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('n8n')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('n8n')->group(function () {
         Route::get('/', [N8nController::class, 'index']);
         Route::post('/', [N8nController::class, 'store']);
         Route::get('/status', [N8nController::class, 'status']);
@@ -533,7 +537,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected subscription routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('subscription')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('subscription')->group(function () {
         Route::get('/', [SubscriptionController::class, 'status']);
         Route::post('/upgrade', [SubscriptionController::class, 'upgrade']);
         Route::post('/renew', [SubscriptionController::class, 'renew']);
@@ -541,7 +545,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     });
 
     // Protected billing routes
-    Route::middleware(['auth:sanctum', 'throttle:api'])->prefix('billing')->group(function () {
+    Route::middleware(['auth:sanctum'])->prefix('billing')->group(function () {
         Route::get('/transactions', [BillingController::class, 'transactions']);
         Route::get('/invoices', [BillingController::class, 'invoices']);
         Route::get('/invoices/{id}', [BillingController::class, 'showInvoice']);

@@ -17,7 +17,7 @@ class AdminAlertService
     public function notifyMessageFailed(int $messageId, string $to, string $error): void
     {
         $title = 'فشل إرسال رسالة واتساب';
-        $body = "الرسالة #{$messageId} للرقم {$to} فشلت:\n{$error}";
+        $body = "الرسالة #{$messageId} للرقم {$to} فشلت:\n" . mb_substr($error, 0, 300);
         $this->send($title, $body, 'msg-fail');
     }
 
@@ -28,38 +28,60 @@ class AdminAlertService
     public function notifySessionDisconnected(int $sessionId, ?string $phone, string $reason): void
     {
         $title = 'انقطاع جهاز واتساب';
-        $body = "الجلسة #{$sessionId}" . ($phone ? " ({$phone})" : '') . " انقطعت.\nالسبب: {$reason}";
+        $body = "الجلسة #{$sessionId}" . ($phone ? " ({$phone})" : '') . " انقطعت.\nالسبب: " . mb_substr($reason, 0, 200);
         $this->send($title, $body, 'session-disconnect');
     }
 
     /**
-     * Send an alert for an unhandled exception on the site.
+     * Send an alert for an unhandled exception on the site. The raw
+     * exception text (SQL, file paths, secrets) must NEVER leave the
+     * server — the WhatsApp alert carries only the class + location so the
+     * admin knows to check the log.
      */
     public function notifyException(Throwable $e): void
     {
         $title = 'خطأ غير متوقع في الموقع';
-        $body = $e->getMessage() ?: 'Unknown error';
+        $body = sprintf(
+            "%s في %s:%s\n%s",
+            class_basename($e),
+            basename($e->getFile()),
+            $e->getLine(),
+            now()->toDateTimeString()
+        );
         $this->send($title, $body, 'exception');
     }
 
     /**
      * Try to send the alert through the connected admin WhatsApp device.
+     * Disabled by default — alerts must never land inside a customer
+     * conversation. Set WHATSAPP_ADMIN_ALERTS=true to re-enable.
      */
     protected function send(string $title, string $body, string $type): void
     {
+        if (!config('services.whatsapp.admin_alerts', false)) {
+            Log::info("AdminAlert suppressed [{$type}] {$title}");
+            return;
+        }
+
         $number = config('services.whatsapp.admin_number');
         if (!$number) {
             return;
         }
 
-        // Avoid duplicate alerts for the same body within 5 minutes
-        $dedupKey = "admin-alert:{$type}:" . md5($body);
-        if (!Cache::add($dedupKey, true, 300)) {
-            return;
-        }
+        try {
+            // Avoid duplicate alerts for the same body within 5 minutes
+            $dedupKey = "admin-alert:{$type}:" . md5($body);
+            if (!Cache::add($dedupKey, true, 300)) {
+                return;
+            }
 
-        // Global rate limit: 1 alert per minute
-        if (!Cache::add('admin-alert:global', true, 60)) {
+            // Global rate limit: 1 alert per minute
+            if (!Cache::add('admin-alert:global', true, 60)) {
+                return;
+            }
+        } catch (Throwable $e) {
+            // A deadlocked cache write must never break the alert — or the
+            // request that triggered it.
             return;
         }
 
@@ -97,14 +119,14 @@ class AdminAlertService
     {
         $admin = User::where('is_admin', true)->first();
 
-        if ($admin) {
-            return WhatsAppSession::where('user_id', $admin->id)
-                ->where('status', 'connected')
-                ->latest('connected_at')
-                ->first();
+        if (!$admin) {
+            return null;
         }
 
-        return WhatsAppSession::where('status', 'connected')
+        // ONLY the admin's own device may send alerts. Falling back to "any
+        // connected session" leaked internal errors through customer phones.
+        return WhatsAppSession::where('user_id', $admin->id)
+            ->where('status', 'connected')
             ->latest('connected_at')
             ->first();
     }

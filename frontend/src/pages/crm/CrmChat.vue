@@ -1768,6 +1768,7 @@ const lockedByOther = computed(() => {
   const c = activeConv.value;
   if (!c?.assigned_agent_id) return false;
   if (isOwner.value) return false; // admins always keep write access
+  if (isGroupJid(c.contact_jid)) return false; // groups are never locked
   return c.assigned_agent_id !== user.value?.id;
 });
 const assignedName = (c) => c?.assigned_agent?.name || (c?.assigned_agent_id === user.value?.id ? user.value?.name : 'موظف');
@@ -2098,13 +2099,17 @@ const mergeMessagesWindow = (incoming) => {
 
 // WhatsApp history-sync progress — populated by polling /crm/sync-status.
 const syncingDevices = ref([]);
+const activeSyncCount = ref(0);
 const checkSyncStatus = async () => {
   try {
     const res = await crm.getSyncStatus();
     const nowSyncing = (res?.devices || []).filter((d) => d.syncing);
     // Sync just finished → pull the freshly imported conversations once.
-    if (syncingDevices.value.length && !nowSyncing.length) loadConversations();
-    syncingDevices.value = nowSyncing;
+    if (activeSyncCount.value && !nowSyncing.length) loadConversations();
+    activeSyncCount.value = nowSyncing.length;
+    // Show the banner only while the first 100 chats are being pulled; the
+    // long tail keeps importing silently in the background.
+    syncingDevices.value = nowSyncing.filter((d) => (d.synced_conversations || 0) < 100);
   } catch {}
 };
 
@@ -2162,7 +2167,8 @@ const selectConversation = async (conv) => {
   await loadMessages(conv.id);
   // Agents pick the chat up the moment they open it — the atomic backend
   // claim decides who wins the race; everyone else's list updates via push.
-  if (isAgent.value && !conv.assigned_agent_id && !conv.resolved_at) {
+  // Group chats are shared workspaces — never claimed or locked.
+  if (isAgent.value && !conv.assigned_agent_id && !conv.resolved_at && !isGroupJid(conv.contact_jid)) {
     claimConversationForAgent(conv.id);
   }
 };
@@ -2437,7 +2443,17 @@ const doForward = async () => {
     });
     const failed = (res.results || []).filter((r) => !r.success);
     if (failed.length) {
-      alert('فشل التحويل إلى بعض المحادثات');
+      // One reason per failed target conversation — the API returns the
+      // per-target error (locked chat, device offline, not on WhatsApp…).
+      const byConv = new Map();
+      for (const f of failed) {
+        if (!byConv.has(f.conversation_id)) byConv.set(f.conversation_id, f.error || 'خطأ غير معروف');
+      }
+      const lines = [...byConv.entries()].map(([cid, err]) => {
+        const conv = conversations.value.find((c) => c.id === cid);
+        return `• ${conv ? convTitle(conv) : cid}: ${err}`;
+      });
+      alert('فشل التحويل إلى:\n' + lines.join('\n'));
     }
     showForwardModal.value = false;
     await loadConversations();
@@ -3244,6 +3260,16 @@ const handleRealtimeEvent = (evt) => {
     if (activeConv.value && data.conversation.id === activeConv.value.id) {
       Object.assign(activeConv.value, data.conversation);
     }
+  } else if (type === 'conversations.renamed') {
+    // Pushnames landed after the chats imported — swap "+number" titles for
+    // the resolved names in place, without waiting for the next list poll.
+    for (const it of Array.isArray(data.items) ? data.items : []) {
+      const cv = conversations.value.find((c) => c.id === it.id);
+      if (cv && it.contact_name) cv.contact_name = it.contact_name;
+      if (activeConv.value && activeConv.value.id === it.id && it.contact_name) {
+        activeConv.value.contact_name = it.contact_name;
+      }
+    }
   } else if (type === 'conversation.transferred') {
     // A teammate pushed a chat to me — toast + ding + counter refresh; the
     // row itself arrives via the conversation.update event that precedes it.
@@ -3273,9 +3299,14 @@ const handleRealtimeEvent = (evt) => {
 // claimed drops out the moment the update lands. Owners see everything;
 // the tab filters then apply on top.
 const inScope = (c) => {
-  if (!isOwner.value && c.assigned_agent_id && c.assigned_agent_id !== user.value?.id) return false;
+  // Group chats stay visible to every teammate — nobody owns a group.
+  const groupExempt = isGroupJid(c.contact_jid);
+  if (!isOwner.value && !groupExempt && c.assigned_agent_id && c.assigned_agent_id !== user.value?.id) return false;
   switch (selectedFilter.value) {
-    case 'available': return !c.assigned_agent_id && !c.resolved_at;
+    // For agents "متاحة" = the pool + their own open chats + all groups.
+    case 'available': return isOwner.value
+      ? (!c.assigned_agent_id && !c.resolved_at)
+      : (!c.resolved_at && (!c.assigned_agent_id || c.assigned_agent_id === user.value?.id || groupExempt));
     case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at;
     case 'resolved': return !!c.resolved_at;
     case 'unread': return c.unread_count > 0;
@@ -3447,6 +3478,13 @@ const onTypingInput = () => {
 
 onMounted(async () => {
   try {
+    try {
+      await crm.me();
+      user.value = crm.getUser();
+      if (isAgent.value && selectedFilter.value === 'all') {
+        selectedFilter.value = 'available';
+      }
+    } catch {}
     await loadDevices();
     await loadConversations();
   } finally {
@@ -3471,9 +3509,6 @@ onMounted(async () => {
   startRealtime();
   startBackgroundPoller();
   checkSyncStatus();
-
-  // Refresh stored profile (role / group name may have changed)
-  crm.me().then(() => { user.value = crm.getUser(); }).catch(() => {});
 
   document.addEventListener('keydown', onGlobalKeydown);
 });

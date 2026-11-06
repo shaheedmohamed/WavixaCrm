@@ -15,6 +15,7 @@ use App\Services\CrmSubscriptionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -71,10 +72,20 @@ class CrmController extends Controller
         if ($user->crm_role !== 'agent') {
             return null;
         }
+        // Group chats are collaborative by nature — any teammate may reply.
+        if ($this->isGroupConv($conversation)) {
+            return null;
+        }
         if (!$conversation->assigned_agent_id || $conversation->assigned_agent_id === $user->id) {
             return null;
         }
         return User::find($conversation->assigned_agent_id);
+    }
+
+    /** WhatsApp group conversations live under @g.us JIDs. */
+    private function isGroupConv(WhatsAppConversation $conversation): bool
+    {
+        return str_ends_with((string) $conversation->contact_jid, '@g.us');
     }
 
     private function lockedResponse(?User $locker)
@@ -86,26 +97,99 @@ class CrmController extends Controller
         ], 423);
     }
 
-    /**
-     * First reply claims the chat for that agent so nobody else interferes.
-     */
-    private function claimConversation(WhatsAppConversation $conversation, User $user): void
+    /** Max simultaneous open chats a single agent may hold. */
+    private const MAX_ACTIVE_CHATS = 5;
+
+    /** Open (unresolved) conversations currently held by this team member. */
+    private function activeChatsCount(int $userId): int
     {
-        if ($user->crm_role !== 'agent' || $conversation->assigned_agent_id) {
-            return;
+        return WhatsAppConversation::where('assigned_agent_id', $userId)
+            ->whereNull('resolved_at')
+            ->count();
+    }
+
+    private function claimErrorResponse(array $err)
+    {
+        return response()->json([
+            'success' => false,
+            'message' => $err['message'],
+            'code' => $err['code'] ?? null,
+        ], $err['http'] ?? 409);
+    }
+
+    /**
+     * Atomically claim a conversation for an agent. Returns null when the
+     * caller may proceed (owners/admins never hold chats) or the claim
+     * succeeded; an error array when the chat is held by a colleague or the
+     * agent hit the active-chat cap.
+     *
+     * Concurrency: the conversation row is locked FOR UPDATE inside a
+     * transaction so two agents racing the same chat can't both win, while a
+     * named per-agent lock serializes the capacity check so parallel claims
+     * on *different* chats can't both squeeze under the cap.
+     */
+    private function attemptClaim(WhatsAppConversation $conversation, User $user): ?array
+    {
+        if ($user->crm_role !== 'agent') {
+            return null;
         }
-        $conversation->forceFill([
-            'assigned_agent_id' => $user->id,
-            'assigned_at' => now(),
-        ])->save();
-        $this->broadcastConversation($conversation);
+        // Groups are never exclusively claimed — everyone may work in them.
+        if ($this->isGroupConv($conversation)) {
+            return null;
+        }
+        if (!$conversation->resolved_at && $conversation->assigned_agent_id === $user->id) {
+            return null; // already mine — idempotent
+        }
+
+        $capLock = 'crm_cap_' . $user->id;
+        $got = (int) (\DB::select('SELECT GET_LOCK(?, 8) AS l', [$capLock])[0]->l ?? 0);
+        if (!$got) {
+            return ['http' => 409, 'code' => 'CLAIM_BUSY', 'message' => 'جرب استلام المحادثة تاني'];
+        }
+
+        try {
+            $result = \DB::transaction(function () use ($conversation, $user) {
+                $fresh = WhatsAppConversation::whereKey($conversation->id)->lockForUpdate()->first();
+                if (!$fresh) {
+                    return 'gone';
+                }
+                if ($fresh->assigned_agent_id && !$fresh->resolved_at) {
+                    return $fresh->assigned_agent_id === $user->id ? 'mine' : 'taken';
+                }
+                if ($this->activeChatsCount($user->id) >= self::MAX_ACTIVE_CHATS) {
+                    return 'full';
+                }
+                $fresh->forceFill([
+                    'assigned_agent_id' => $user->id,
+                    'assigned_at' => now(),
+                    // Claiming a completed chat reopens it for the new handler.
+                    'resolved_at' => null,
+                    'resolved_by' => null,
+                ])->save();
+                return 'ok';
+            }, 3); // deadlocks on the lock race retry automatically
+        } finally {
+            \DB::select('SELECT RELEASE_LOCK(?)', [$capLock]);
+        }
+
+        if ($result === 'ok' || $result === 'mine') {
+            $conversation->refresh();
+            $this->broadcastConversation($conversation);
+            return null;
+        }
+
+        return match ($result) {
+            'taken' => ['http' => 423, 'code' => 'ALREADY_ASSIGNED', 'message' => 'موظف آخر استلم المحادثة دي'],
+            'full' => ['http' => 409, 'code' => 'MAX_ACTIVE_CHATS', 'message' => 'وصلت للحد الأقصى (' . self::MAX_ACTIVE_CHATS . ' محادثات مفتوحة) — أنهي شات أو حوّله لزميل الأول'],
+            default => ['http' => 404, 'code' => 'NOT_FOUND', 'message' => 'المحادثة غير موجودة'],
+        };
     }
 
     /** Push assignment/resolution changes to every agent on the CRM channel. */
     private function broadcastConversation(WhatsAppConversation $conversation): void
     {
         try {
-            $conversation->loadMissing(['assignedAgent:id,name', 'resolvedBy:id,name', 'lastOutgoingUser:id,name']);
+            $conversation->loadMissing(['assignedAgent:id,name', 'resolvedBy:id,name', 'lastOutgoingUser:id,name', 'transferredBy:id,name']);
             event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'conversation.update', [
                 'conversation' => array_merge(
                     $conversation->only([
@@ -114,6 +198,7 @@ class CrmController extends Controller
                         'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                         'rating', 'rating_note', 'last_outgoing_user_id',
+                        'transferred_by', 'transferred_at', 'transfer_count',
                     ]),
                     [
                         'assigned_agent' => $conversation->assignedAgent ? [
@@ -127,6 +212,10 @@ class CrmController extends Controller
                         'last_outgoing_user' => $conversation->lastOutgoingUser ? [
                             'id' => $conversation->lastOutgoingUser->id,
                             'name' => $conversation->lastOutgoingUser->name,
+                        ] : null,
+                        'transferred_by_agent' => $conversation->transferredBy ? [
+                            'id' => $conversation->transferredBy->id,
+                            'name' => $conversation->transferredBy->name,
                         ] : null,
                     ]
                 ),
@@ -199,6 +288,9 @@ class CrmController extends Controller
             'group_id' => $user->crm_group_id,
             'group_name' => $groupName,
             'limits' => $planLimits,
+            // Live workload counters — the chat UI shows "n/5" to agents.
+            'active_chats' => $user->crm_role === 'agent' ? $this->activeChatsCount($user->id) : null,
+            'max_active_chats' => self::MAX_ACTIVE_CHATS,
         ];
     }
 
@@ -666,9 +758,18 @@ class CrmController extends Controller
             ->orderBy('id', 'desc')
             ->get();
 
+        // Live open-chat load per agent — powers the transfer picker (full
+        // agents are greyed out) and the owner's capacity overview.
+        $activeCounts = WhatsAppConversation::whereIn('assigned_agent_id', $agents->pluck('id'))
+            ->whereNull('resolved_at')
+            ->selectRaw('assigned_agent_id, COUNT(*) AS c')
+            ->groupBy('assigned_agent_id')
+            ->pluck('c', 'assigned_agent_id');
+
         return response()->json([
             'success' => true,
-            'agents' => $agents->map(function ($a) {
+            'agents' => $agents->map(function ($a) use ($activeCounts) {
+                $active = (int) ($activeCounts[$a->id] ?? 0);
                 return [
                     'id' => $a->id,
                     'name' => $a->name,
@@ -677,6 +778,9 @@ class CrmController extends Controller
                     'assigned_sessions' => $a->crm_assigned_sessions ?? [],
                     'group_id' => $a->crm_group_id,
                     'group_name' => $a->crmGroup?->name,
+                    'active_chats' => $active,
+                    'max_active_chats' => self::MAX_ACTIVE_CHATS,
+                    'is_full' => $active >= self::MAX_ACTIVE_CHATS,
                     'created_at' => $a->created_at,
                 ];
             }),
@@ -860,16 +964,31 @@ class CrmController extends Controller
             ->groupBy('actor_id')
             ->pluck('last_at', 'actor_id');
 
-        // Resolved conversations (completed) + ratings
+        // Resolved conversations (completed) + ratings + claim→resolve time
         $resolved = WhatsAppConversation::whereIn('resolved_by', $memberIds)
             ->whereNotNull('resolved_at')
             ->when($from, fn ($q) => $q->where('resolved_at', '>=', $from))
             ->when($to, fn ($q) => $q->where('resolved_at', '<=', $to))
-            ->get(['resolved_by', 'rating']);
+            ->get(['resolved_by', 'rating', 'handle_seconds']);
         $resolvedCounts = $resolved->groupBy('resolved_by')->map->count();
         $avgRatings = $resolved->filter(fn ($c) => $c->rating !== null)
             ->groupBy('resolved_by')
             ->map(fn ($g) => round($g->avg('rating'), 1));
+        $avgHandles = $resolved->filter(fn ($c) => $c->handle_seconds !== null)
+            ->groupBy('resolved_by')
+            ->map(fn ($g) => (int) round($g->avg('handle_seconds')));
+
+        // Handoffs — out = chats the member pushed away, in = pushed to them
+        $transfers = \DB::table('crm_audit_logs')
+            ->where('owner_id', $owner->id)
+            ->where('action', 'conversation.transfer')
+            ->when($from, fn ($q) => $q->where('created_at', '>=', $from))
+            ->when($to, fn ($q) => $q->where('created_at', '<=', $to))
+            ->get(['actor_id', 'meta']);
+        $transfersOut = $transfers->groupBy('actor_id')->map->count();
+        $transfersIn = $transfers
+            ->groupBy(fn ($r) => (int) (json_decode($r->meta, true)['to_agent_id'] ?? 0))
+            ->map->count();
 
         // Open (incomplete) conversations currently held by each member
         $openAssigned = WhatsAppConversation::whereIn('assigned_agent_id', $memberIds)
@@ -925,6 +1044,9 @@ class CrmController extends Controller
                 ? (int) round(array_sum($replyTimes[$m->id]) / count($replyTimes[$m->id]))
                 : null,
             'response_samples' => count($replyTimes[$m->id] ?? []),
+            'avg_handle_seconds' => $avgHandles[$m->id] ?? null,
+            'transfers_in' => (int) ($transfersIn[$m->id] ?? 0),
+            'transfers_out' => (int) ($transfersOut[$m->id] ?? 0),
             'last_activity_at' => $lastActivity[$m->id] ?? null,
         ])->sortByDesc('messages_sent')->values();
 
@@ -936,6 +1058,8 @@ class CrmController extends Controller
                 'conversations_resolved' => $data->sum('conversations_resolved'),
                 'conversations_open' => $data->sum('conversations_open'),
                 'awaiting_reply' => $data->sum('awaiting_reply'),
+                'transfers_in' => $data->sum('transfers_in'),
+                'transfers_out' => $data->sum('transfers_out'),
                 'avg_response_seconds' => ($all = $data->whereNotNull('avg_response_seconds'))->isNotEmpty()
                     ? (int) round($all->avg('avg_response_seconds'))
                     : null,
@@ -1070,30 +1194,73 @@ class CrmController extends Controller
         // Self-heal LID/PN twin conversations: sessions that still hold
         // @lid-keyed conversations get a throttled usync resolution pass so
         // duplicates collapse into their phone-number row as the user browses.
-        if (Cache::add('lid_twin_cron', 1, 120)) {
-            $resolver = app(\App\Services\WhatsAppLidResolver::class);
-            $lidSessions = WhatsAppSession::whereIn('id', $allowedSessionIds)
-                ->where('status', 'connected')
-                ->where(function ($q) {
-                    $q->whereHas('conversations', fn ($c) => $c->where('contact_jid', 'like', '%@lid'))
-                      ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_avatar'))
-                      ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_username'));
-                })
-                ->get();
-            foreach ($lidSessions as $lidSession) {
-                $resolver->resolveSessionTwins($lidSession);
-                $resolver->fetchAvatars($lidSession);
-                $resolver->fetchUsernames($lidSession);
-            }
+        // Runs on the queue — thousands of stored mappings + engine calls can
+        // take tens of seconds and must never sit on the request path.
+        $cronFlag = false;
+        try {
+            $cronFlag = Cache::add('lid_twin_cron', 1, 120);
+        } catch (\Throwable $e) {
+            // A deadlocked cache write must not take the chat list down.
         }
+        if ($cronFlag) {
+            dispatch(function () use ($allowedSessionIds) {
+                $resolver = app(\App\Services\WhatsAppLidResolver::class);
+                $lidSessions = WhatsAppSession::whereIn('id', $allowedSessionIds)
+                    ->where('status', 'connected')
+                    ->where(function ($q) {
+                        $q->whereHas('conversations', fn ($c) => $c->where('contact_jid', 'like', '%@lid'))
+                          ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_avatar'))
+                          ->orWhereHas('conversations', fn ($c) => $c->whereNull('contact_username'));
+                    })
+                    ->get();
+                foreach ($lidSessions as $lidSession) {
+                    $resolver->resolveSessionTwins($lidSession);
+                    $resolver->fetchAvatars($lidSession);
+                    $resolver->fetchUsernames($lidSession);
+                }
+            });
+        }
+
+        /** @var User $user */
+        $user = Auth::user();
 
         $query = WhatsAppConversation::with([
                 'session:id,device_name,phone_number',
                 'assignedAgent:id,name',
                 'resolvedBy:id,name',
                 'lastOutgoingUser:id,name',
+                'transferredBy:id,name',
             ])
             ->whereIn('session_id', $allowedSessionIds);
+
+        // Distribution rule: an agent only sees the shared pool (unclaimed
+        // chats) plus the chats they personally hold — a colleague's locked
+        // chat never shows up in their list. Owners/admins see everything.
+        if ($user->crm_role === 'agent') {
+            // Agents see the pool, their own chats — and every group chat
+            // regardless of who is holding it (groups aren't exclusive).
+            $query->where(function ($q) use ($user) {
+                $q->whereNull('assigned_agent_id')
+                  ->orWhere('assigned_agent_id', $user->id)
+                  ->orWhere('contact_jid', 'like', '%@g.us');
+            });
+        }
+
+        // Queue tabs. For an agent "available" is their whole working queue:
+        // the unclaimed pool + the chats they are holding. For the owner it
+        // means "no one picked this up yet" (بدون موظف).
+        match ($request->input('scope')) {
+            'available' => $user->crm_role === 'agent'
+                ? $query->whereNull('resolved_at')->where(function ($q) use ($user) {
+                    $q->whereNull('assigned_agent_id')
+                      ->orWhere('assigned_agent_id', $user->id)
+                      ->orWhere('contact_jid', 'like', '%@g.us');
+                  })
+                : $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
+            'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),
+            'resolved' => $query->whereNotNull('resolved_at'),
+            default => null,
+        };
 
         if ($request->filled('session_id')) {
             $query->where('session_id', $request->session_id);
@@ -1147,17 +1314,40 @@ class CrmController extends Controller
             $this->sendReadReceipts($conversation);
         }
 
+        // The "محولة من …" badge is acknowledged once the receiving agent
+        // actually opens the chat.
+        if ($conversation->transferred_by
+            && $conversation->assigned_agent_id === $request->user()->id) {
+            $conversation->update(['transferred_by' => null, 'transferred_at' => null]);
+        }
+
         // Wrap the whole scope in ONE group: an ungrouped `A orWhere B` lets
         // later `where id` filters bind only to B (SQL AND before OR), which
         // silently broke before_id/after_id paging for conversation rows.
-        $query = WhatsAppMessage::where(function ($q) use ($conversation) {
+        $selfChat = $conversation->session?->phone_number
+            && preg_replace('/\D/', '', (string) $conversation->contact_phone)
+                === preg_replace('/\D/', '', (string) $conversation->session->phone_number);
+        $query = WhatsAppMessage::where(function ($q) use ($conversation, $selfChat) {
             $q->where('conversation_id', $conversation->id)
-              ->orWhere(function ($sq) use ($conversation) {
-                  $sq->where('session_id', $conversation->session_id)
-                    ->where(function ($sq2) use ($conversation) {
-                        $sq2->where('from', $conversation->contact_phone)
-                           ->orWhere('to', $conversation->contact_phone);
-                    });
+              ->orWhere(function ($sq) use ($conversation, $selfChat) {
+                  $sq->where('session_id', $conversation->session_id);
+                  if ($selfChat) {
+                      // "Message yourself" thread: every session message has
+                      // the owner's number on ONE side, so the plain
+                      // from/to-OR fallback would pull the whole account's
+                      // traffic in here. Only both-sides-self rows belong.
+                      $selfForms = [
+                          $conversation->contact_phone,
+                          $conversation->contact_phone . '@s.whatsapp.net',
+                      ];
+                      $sq->whereIn('from', $selfForms)
+                         ->whereIn('to', $selfForms);
+                  } else {
+                      $sq->where(function ($sq2) use ($conversation) {
+                          $sq2->where('from', $conversation->contact_phone)
+                             ->orWhere('to', $conversation->contact_phone);
+                      });
+                  }
               });
         });
 
@@ -1287,10 +1477,13 @@ class CrmController extends Controller
             // Sparse chat? Ask the phone for its older messages once per day —
             // results stream back through the whatsapp/history-sync webhook.
             $marker = "wa_hist_sync_conv_{$conversation->id}";
-            if (
-                \Illuminate\Support\Facades\Cache::add($marker, true, now()->addDay())
-                && WhatsAppMessage::where('conversation_id', $conversation->id)->count() < 60
-            ) {
+            try {
+                $shouldSync = \Illuminate\Support\Facades\Cache::add($marker, true, now()->addDay())
+                    && WhatsAppMessage::where('conversation_id', $conversation->id)->count() < 60;
+            } catch (\Throwable $e) {
+                $shouldSync = false; // deadlocked flag — try again next load
+            }
+            if ($shouldSync) {
                 \App\Jobs\SyncConversationHistoryJob::dispatch($conversation->id);
             }
 
@@ -1599,6 +1792,12 @@ class CrmController extends Controller
             return $this->lockedResponse($locker);
         }
 
+        // First reply claims the chat — and enforces the per-agent cap —
+        // BEFORE the engine call so a full agent can't sneak in a 6th chat.
+        if ($err = $this->attemptClaim($conversation, $request->user())) {
+            return $this->claimErrorResponse($err);
+        }
+
         $owner = $this->resolveOwner();
         try {
             $this->subscriptionService->assertCanSendMessage($owner);
@@ -1709,8 +1908,6 @@ class CrmController extends Controller
                 Log::debug('CRM broadcast (outgoing) failed: ' . $e->getMessage());
             }
 
-            $this->claimConversation($conversation, $request->user());
-
             // Human handoff: a manual agent reply pauses the AI bot on this
             // conversation for the configured window so they don't fight.
             try {
@@ -1764,8 +1961,12 @@ class CrmController extends Controller
 
         // Throttle: composing stanzas would otherwise fire per keystroke.
         $throttleKey = "crm_typing_{$conversation->id}_{$request->user()->id}";
-        if (!Cache::add($throttleKey, 1, 4)) {
-            return response()->json(['success' => true]);
+        try {
+            if (!Cache::add($throttleKey, 1, 4)) {
+                return response()->json(['success' => true]);
+            }
+        } catch (\Throwable $e) {
+            return response()->json(['success' => true]); // skip quietly
         }
 
         try {
@@ -1804,6 +2005,10 @@ class CrmController extends Controller
 
         if ($locker = $this->conversationLocker($conversation, $request->user())) {
             return $this->lockedResponse($locker);
+        }
+
+        if ($err = $this->attemptClaim($conversation, $request->user())) {
+            return $this->claimErrorResponse($err);
         }
 
         $owner = $this->resolveOwner();
@@ -2019,8 +2224,6 @@ class CrmController extends Controller
                 Log::debug('CRM broadcast (outgoing media) failed: ' . $e->getMessage());
             }
 
-            $this->claimConversation($conversation, $request->user());
-
             return response()->json([
                 'success' => true,
                 'message' => $msgRecord,
@@ -2052,6 +2255,10 @@ class CrmController extends Controller
         $conversation = WhatsAppConversation::whereIn('session_id', $allowedSessionIds)
             ->where('id', $request->conversation_id)
             ->firstOrFail();
+
+        if ($locker = $this->conversationLocker($conversation, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
 
         $session = $conversation->session;
         if (!$session || $session->status !== 'connected') {
@@ -2143,6 +2350,10 @@ class CrmController extends Controller
             ->firstOrFail();
 
         if ($request->boolean('for_everyone')) {
+            // Revoking reaches the customer's phone — same lock as sending.
+            if ($locker = $this->conversationLocker($conversation, $request->user())) {
+                return $this->lockedResponse($locker);
+            }
             if ($message->direction !== 'outgoing' || !$message->message_id) {
                 return response()->json(['success' => false, 'message' => 'الحذف عند الجميع متاح على رسائلك المرسلة بس'], 400);
             }
@@ -2236,9 +2447,21 @@ class CrmController extends Controller
 
         $results = [];
         foreach ($targets as $conv) {
+            // A chat held by a colleague rejects forwarded replies too.
+            if ($locker = $this->conversationLocker($conv, $request->user())) {
+                foreach ($sources as $source) {
+                    $results[] = [
+                        'conversation_id' => $conv->id,
+                        'source_id' => $source->id,
+                        'success' => false,
+                        'error' => 'المحادثة مع ' . ($locker->name ?? 'موظف آخر'),
+                    ];
+                }
+                continue;
+            }
             foreach ($sources as $source) {
                 try {
-                    $msg = $this->forwardToConversation($source, $conv);
+                    $msg = $this->forwardToConversation($source, $conv, $request->user());
                     $results[] = ['conversation_id' => $conv->id, 'source_id' => $source->id, 'success' => true, 'message' => $msg];
                 } catch (\Throwable $e) {
                     $results[] = ['conversation_id' => $conv->id, 'source_id' => $source->id, 'success' => false, 'error' => $e->getMessage()];
@@ -2258,7 +2481,7 @@ class CrmController extends Controller
     /**
      * Re-send a stored message's content to another conversation as a forward.
      */
-    private function forwardToConversation(WhatsAppMessage $source, WhatsAppConversation $conv): WhatsAppMessage
+    private function forwardToConversation(WhatsAppMessage $source, WhatsAppConversation $conv, User $sender): WhatsAppMessage
     {
         $session = $conv->session;
         if (!$session || $session->status !== 'connected') {
@@ -2363,7 +2586,7 @@ class CrmController extends Controller
             'last_message_direction' => 'outgoing',
             'last_message_status' => 'sent',
             'last_message_at' => now(),
-            'last_outgoing_user_id' => $request->user()->id,
+            'last_outgoing_user_id' => $sender->id,
             'unread_count' => 0,
         ]);
 
@@ -2378,7 +2601,7 @@ class CrmController extends Controller
                         'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
                         'last_outgoing_user_id',
                     ]),
-                    ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                    ['last_outgoing_user' => ['id' => $sender->id, 'name' => $sender->name]]
                 ),
                 'message' => $msgRecord->toArray(),
             ]));
@@ -2455,6 +2678,14 @@ class CrmController extends Controller
             'resolved_by' => $user->id,
             'rating' => $request->input('rating'),
             'rating_note' => $request->input('note'),
+            // The pending handoff badge dies with the assignment; the count
+            // stays for the transfers-per-chat stat.
+            'transferred_by' => null,
+            'transferred_at' => null,
+            // claim → resolve duration for the avg handle-time stat.
+            'handle_seconds' => $conversation->assigned_at
+                ? max(0, now()->diffInSeconds($conversation->assigned_at))
+                : null,
         ])->save();
 
         $this->audit('conversation.resolve', [
@@ -2470,8 +2701,196 @@ class CrmController extends Controller
     }
 
     /**
+     * Agent picks up an available conversation ("استلام"). Atomic — two
+     * agents racing the same chat: exactly one wins, everyone else gets the
+     * lock error while the broadcast drops it from their pool.
+     */
+    public function claimConversation(Request $request, $id)
+    {
+        $user = $request->user();
+        $conversation = WhatsAppConversation::whereIn('session_id', $this->getAllowedSessionIds())
+            ->where('id', $id)
+            ->firstOrFail();
+
+        if ($err = $this->attemptClaim($conversation, $user)) {
+            return $this->claimErrorResponse($err);
+        }
+
+        $this->audit('conversation.claim', [], $conversation->id, $conversation->session_id);
+
+        return response()->json([
+            'success' => true,
+            'conversation' => $conversation->fresh([
+                'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+            ]),
+        ]);
+    }
+
+    /**
+     * Hand a conversation to another team member ("تحويل"). The holding
+     * agent may pass their own chat; the owner may move any chat — and may
+     * deliberately overload a teammate (the response flags it). Atomic: the
+     * chat can't be lost mid-handoff and a full colleague rejects the
+     * transfer cleanly instead of half-assigning.
+     */
+    public function transferConversation(Request $request, $id)
+    {
+        $request->validate(['agent_id' => 'required|integer']);
+
+        $user = $request->user();
+        $owner = $this->resolveOwner();
+        $targetId = (int) $request->agent_id;
+
+        // The receiver must be a live member of this team — owner included.
+        $target = $targetId === $owner->id
+            ? $owner
+            : User::where('id', $targetId)->where('crm_parent_id', $owner->id)->first();
+        if (!$target || in_array($target->status, ['inactive', 'suspended'], true)) {
+            return response()->json(['success' => false, 'message' => 'الموظف المطلوب غير متاح'], 422);
+        }
+
+        $allowed = $this->getAllowedSessionIds();
+        $capLock = 'crm_cap_' . $targetId;
+        \DB::select('SELECT GET_LOCK(?, 8)', [$capLock]);
+
+        try {
+            $result = \DB::transaction(function () use ($id, $allowed, $user, $target, $targetId) {
+                $conv = WhatsAppConversation::whereIn('session_id', $allowed)
+                    ->where('id', $id)
+                    ->lockForUpdate()
+                    ->first();
+                if (!$conv) {
+                    return ['http' => 404, 'message' => 'المحادثة غير موجودة'];
+                }
+                if ($conv->assigned_agent_id === $targetId && !$conv->resolved_at) {
+                    return ['http' => 422, 'message' => 'المحادثة مع ' . $target->name . ' بالفعل'];
+                }
+                // An agent may only hand off a chat they personally hold.
+                if ($user->crm_role === 'agent' && $conv->assigned_agent_id !== $user->id) {
+                    return ['http' => 423, 'message' => 'المحادثة دي مش معاك — مش هتقدر تحولها'];
+                }
+                $overCap = $target->crm_role === 'agent'
+                    && $this->activeChatsCount($targetId) >= self::MAX_ACTIVE_CHATS;
+                if ($overCap && $user->crm_role === 'agent') {
+                    return ['http' => 409, 'code' => 'TARGET_FULL',
+                        'message' => $target->name . ' وصل للحد الأقصى (' . self::MAX_ACTIVE_CHATS . ' محادثات) — اختار موظف تاني'];
+                }
+                $conv->forceFill([
+                    'assigned_agent_id' => $targetId,
+                    'assigned_at' => now(),
+                    // A handed-off chat is live work again for the receiver.
+                    'resolved_at' => null,
+                    'resolved_by' => null,
+                    'transferred_by' => $user->id,
+                    'transferred_at' => now(),
+                    'transfer_count' => ($conv->transfer_count ?? 0) + 1,
+                    // Floats to the top of the receiver's queue.
+                    'last_message_at' => now(),
+                ])->save();
+                return ['http' => 200, 'conversation' => $conv, 'over_capacity' => $overCap];
+            }, 3); // deadlocks on the lock race retry automatically
+        } finally {
+            \DB::select('SELECT RELEASE_LOCK(?)', [$capLock]);
+        }
+
+        if (($result['http'] ?? 500) !== 200) {
+            return response()->json([
+                'success' => false,
+                'message' => $result['message'] ?? 'فشل التحويل',
+                'code' => $result['code'] ?? null,
+            ], $result['http'] ?? 500);
+        }
+
+        $conv = $result['conversation'];
+
+        $this->audit('conversation.transfer', [
+            'from_agent_id' => $user->id,
+            'from_agent_name' => $user->name,
+            'to_agent_id' => $target->id,
+            'to_agent_name' => $target->name,
+        ], $conv->id, $conv->session_id);
+
+        $this->broadcastConversation($conv);
+        $this->broadcastTransfer($conv, $user, $target);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'تم تحويل المحادثة إلى ' . $target->name,
+            'conversation' => $conv->fresh([
+                'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+            ]),
+            'over_capacity' => $result['over_capacity'] ?? false,
+        ]);
+    }
+
+    /** Push a "chat was handed to you" ping to the whole team channel. */
+    private function broadcastTransfer(WhatsAppConversation $conversation, User $from, User $to): void
+    {
+        try {
+            event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'conversation.transferred', [
+                'conversation_id' => $conversation->id,
+                'from_agent' => ['id' => $from->id, 'name' => $from->name],
+                'to_agent' => ['id' => $to->id, 'name' => $to->name],
+            ]));
+        } catch (\Throwable $e) {
+            Log::debug('CRM broadcast (transfer) failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Reopen a resolved conversation — it goes back to the shared pool
+     * (unassigned) so any agent can claim it. Owners may reopen anything;
+     * an agent may reopen only a chat they closed themselves. (A fresh
+     * incoming customer message already reopens chats automatically.)
+     */
+    public function reopenConversation(Request $request, $id)
+    {
+        $user = $request->user();
+        $conversation = WhatsAppConversation::whereIn('session_id', $this->getAllowedSessionIds())
+            ->where('id', $id)
+            ->firstOrFail();
+
+        if (!$conversation->resolved_at) {
+            return response()->json([
+                'success' => true,
+                'message' => 'المحادثة مفتوحة بالفعل',
+                'conversation' => $conversation->fresh([
+                    'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+                ]),
+            ]);
+        }
+
+        if ($user->crm_role === 'agent' && $conversation->resolved_by !== $user->id) {
+            return response()->json([
+                'success' => false,
+                'message' => 'غير مسموح — الموظف اللي قفل الشات هو اللي يقدر يفتحه',
+            ], 403);
+        }
+
+        $conversation->forceFill([
+            'assigned_agent_id' => null,
+            'assigned_at' => null,
+            'resolved_at' => null,
+            'resolved_by' => null,
+            'transferred_by' => null,
+            'transferred_at' => null,
+        ])->save();
+
+        $this->audit('conversation.reopen', [], $conversation->id, $conversation->session_id);
+        $this->broadcastConversation($conversation);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'تم إعادة فتح المحادثة — رجعت لقائمة الشاتات المتاحة',
+            'conversation' => $conversation->fresh([
+                'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+            ]),
+        ]);
+    }
+
+    /**
      * Assign a conversation to an agent. Owners may assign anyone (or null to
-     * release); agents may only claim an unassigned chat for themselves.
+     * release back to the pool); agents may only claim for themselves.
      */
     public function assignConversation(Request $request, $id)
     {
@@ -2479,43 +2898,68 @@ class CrmController extends Controller
 
         $user = $request->user();
         $owner = $this->resolveOwner();
+
+        if ($user->crm_role === 'agent') {
+            // Agents can only claim an unassigned chat for themselves.
+            $targetId = $request->filled('agent_id') ? (int) $request->agent_id : $user->id;
+            if ($targetId !== $user->id) {
+                return response()->json(['success' => false, 'message' => 'غير مسموح'], 403);
+            }
+            $conversation = WhatsAppConversation::whereIn('session_id', $this->getAllowedSessionIds())
+                ->where('id', $id)
+                ->firstOrFail();
+            if ($err = $this->attemptClaim($conversation, $user)) {
+                return $this->claimErrorResponse($err);
+            }
+            $this->audit('conversation.claim', ['via' => 'assign'], $conversation->id, $conversation->session_id);
+            return response()->json([
+                'success' => true,
+                'conversation' => $conversation->fresh([
+                    'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+                ]),
+            ]);
+        }
+
+        // Owner: target must be themselves or one of their agents.
+        $targetId = $request->filled('agent_id') ? (int) $request->agent_id : null;
+        if ($targetId
+            && $targetId !== $owner->id
+            && !User::where('id', $targetId)->where('crm_parent_id', $owner->id)->exists()) {
+            return response()->json(['success' => false, 'message' => 'الموظف غير تابع لك'], 403);
+        }
+
         $conversation = WhatsAppConversation::whereIn('session_id', $this->getAllowedSessionIds())
             ->where('id', $id)
             ->firstOrFail();
 
-        $targetId = $request->filled('agent_id') ? (int) $request->agent_id : $user->id;
-
-        if ($user->crm_role === 'agent') {
-            // Agents can only take an unassigned chat for themselves.
-            if ($targetId !== $user->id
-                || ($conversation->assigned_agent_id && $conversation->assigned_agent_id !== $user->id)) {
-                return response()->json(['success' => false, 'message' => 'غير مسموح'], 403);
-            }
-        } else {
-            // Owner: target must be themselves or one of their agents.
-            if ($request->filled('agent_id')
-                && $targetId !== $owner->id
-                && !User::where('id', $targetId)->where('crm_parent_id', $owner->id)->exists()) {
-                return response()->json(['success' => false, 'message' => 'الموظف غير تابع لك'], 403);
-            }
-            if (!$request->filled('agent_id')) {
-                $targetId = null; // owner releasing the lock
-            }
-        }
-
-        $conversation->forceFill([
+        $updates = [
             'assigned_agent_id' => $targetId,
             'assigned_at' => $targetId ? now() : null,
-            // Assigning a handled chat reopens the workflow for the new agent.
-            'resolved_at' => $targetId ? null : $conversation->resolved_at,
-        ])->save();
+        ];
+        if ($targetId) {
+            // Assigning a handled chat reopens the workflow for the holder.
+            $updates['resolved_at'] = null;
+            $updates['resolved_by'] = null;
+            if ($conversation->assigned_agent_id !== $targetId) {
+                $updates['transferred_by'] = $user->id;
+                $updates['transferred_at'] = now();
+                $updates['transfer_count'] = ($conversation->transfer_count ?? 0) + 1;
+                $updates['last_message_at'] = now(); // top of receiver's queue
+            }
+        }
+        $conversation->forceFill($updates)->save();
 
         $this->audit('conversation.assign', ['agent_id' => $targetId], $conversation->id, $conversation->session_id);
         $this->broadcastConversation($conversation);
+        if ($targetId && $targetId !== $user->id) {
+            $this->broadcastTransfer($conversation, $user, User::find($targetId) ?? $owner);
+        }
 
         return response()->json([
             'success' => true,
-            'conversation' => $conversation->fresh(['assignedAgent:id,name', 'resolvedBy:id,name']),
+            'conversation' => $conversation->fresh([
+                'assignedAgent:id,name', 'resolvedBy:id,name', 'transferredBy:id,name',
+            ]),
         ]);
     }
 

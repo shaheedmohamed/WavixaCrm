@@ -33,6 +33,10 @@ class WhatsAppConversation extends Model
         'resolved_by',
         'rating',
         'rating_note',
+        'transferred_by',
+        'transferred_at',
+        'transfer_count',
+        'handle_seconds',
     ];
 
     protected $casts = [
@@ -45,6 +49,10 @@ class WhatsAppConversation extends Model
         'resolved_at' => 'datetime',
         'resolved_by' => 'integer',
         'rating' => 'integer',
+        'transferred_by' => 'integer',
+        'transferred_at' => 'datetime',
+        'transfer_count' => 'integer',
+        'handle_seconds' => 'integer',
     ];
 
     public function user(): BelongsTo
@@ -75,6 +83,11 @@ class WhatsAppConversation extends Model
     public function lastOutgoingUser(): BelongsTo
     {
         return $this->belongsTo(User::class, 'last_outgoing_user_id');
+    }
+
+    public function transferredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'transferred_by');
     }
 
     public function logs(): HasMany

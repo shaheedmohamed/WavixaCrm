@@ -276,6 +276,21 @@ class CrmService {
     return resp.data;
   }
 
+  async claimConversation(id) {
+    const resp = await this.client().post(`/conversations/${id}/claim`);
+    return resp.data;
+  }
+
+  async transferConversation(id, agentId) {
+    const resp = await this.client().post(`/conversations/${id}/transfer`, { agent_id: agentId });
+    return resp.data;
+  }
+
+  async reopenConversation(id) {
+    const resp = await this.client().post(`/conversations/${id}/reopen`);
+    return resp.data;
+  }
+
   async renameConversation(id, name) {
     const resp = await this.client().put(`/conversations/${id}`, { name });
     return resp.data;
