@@ -3427,4 +3427,64 @@ class CrmController extends Controller
             return response()->json(['success' => false, 'message' => 'Media download failed'], 502);
         }
     }
+
+    // ---- Custom chat lists (WhatsApp-style filter lists) ------------------
+
+    /** GET the agent's lists with member conversation ids. */
+    public function getChatLists(Request $request)
+    {
+        $lists = \App\Models\CrmChatList::where('owner_id', $request->user()->id)
+            ->orderBy('id')
+            ->with('items:conversation_id,list_id')
+            ->get()
+            ->map(fn ($l) => [
+                'id' => $l->id,
+                'name' => $l->name,
+                'conversation_ids' => $l->items->pluck('conversation_id')->values(),
+            ]);
+        return response()->json(['success' => true, 'lists' => $lists]);
+    }
+
+    /** Create a list (optionally with members) or add members to an existing one. */
+    public function saveChatList(Request $request)
+    {
+        $data = $request->validate([
+            'id' => 'nullable|integer',
+            'name' => 'required|string|max:100',
+            'conversation_ids' => 'nullable|array|max:500',
+            'conversation_ids.*' => 'integer',
+        ]);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $list = !empty($data['id'])
+            ? \App\Models\CrmChatList::where('owner_id', $request->user()->id)->findOrFail($data['id'])
+            : new \App\Models\CrmChatList(['owner_id' => $request->user()->id]);
+        $list->name = $data['name'];
+        $list->save();
+
+        $convIds = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->whereIn('id', $data['conversation_ids'] ?? [])->pluck('id');
+        foreach ($convIds as $cid) {
+            \App\Models\CrmChatListItem::firstOrCreate(['list_id' => $list->id, 'conversation_id' => $cid]);
+        }
+        return response()->json(['success' => true, 'list' => [
+            'id' => $list->id, 'name' => $list->name,
+            'conversation_ids' => $list->items()->pluck('conversation_id')->values(),
+        ]]);
+    }
+
+    public function deleteChatList(Request $request, $id)
+    {
+        $list = \App\Models\CrmChatList::where('owner_id', $request->user()->id)->findOrFail($id);
+        $list->items()->delete();
+        $list->delete();
+        return response()->json(['success' => true]);
+    }
+
+    public function removeChatListMembers(Request $request, $id)
+    {
+        $data = $request->validate(['conversation_ids' => 'required|array|max:500', 'conversation_ids.*' => 'integer']);
+        $list = \App\Models\CrmChatList::where('owner_id', $request->user()->id)->findOrFail($id);
+        $list->items()->whereIn('conversation_id', $data['conversation_ids'])->delete();
+        return response()->json(['success' => true]);
+    }
 }

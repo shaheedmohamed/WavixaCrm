@@ -234,6 +234,23 @@ class CrmService {
     return resp.data;
   }
 
+  async getChatLists() {
+    const resp = await this.client().get('/chat-lists');
+    return resp.data;
+  }
+  async saveChatList(data) {
+    const resp = await this.client().post('/chat-lists', data);
+    return resp.data;
+  }
+  async deleteChatList(id) {
+    const resp = await this.client().delete('/chat-lists/' + id);
+    return resp.data;
+  }
+  async removeChatListMembers(id, conversationIds) {
+    const resp = await this.client().post('/chat-lists/' + id + '/remove-members', { conversation_ids: conversationIds });
+    return resp.data;
+  }
+
   async sendMedia(formData) {
     const resp = await this.client().post('/messages/send-media', formData, {
       headers: {

@@ -151,6 +151,10 @@ Route::middleware(['api', HandleCors::class])->group(function () {
 
     // Protected CRM routes
     Route::middleware(['auth:sanctum'])->prefix('crm')->group(function () {
+        Route::get('/chat-lists', [\App\Http\Controllers\Api\CrmController::class, 'getChatLists']);
+        Route::post('/chat-lists', [\App\Http\Controllers\Api\CrmController::class, 'saveChatList']);
+        Route::delete('/chat-lists/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteChatList']);
+        Route::post('/chat-lists/{id}/remove-members', [\App\Http\Controllers\Api\CrmController::class, 'removeChatListMembers']);
         Route::get('/me', [\App\Http\Controllers\Api\CrmController::class, 'me']);
         Route::get('/stats', [\App\Http\Controllers\Api\CrmController::class, 'stats']);
 

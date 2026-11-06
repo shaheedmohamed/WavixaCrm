@@ -95,6 +95,13 @@
             <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
               مكتملة
             </button>
+
+            <!-- Custom lists -->
+            <button v-for="l in chatLists" :key="'list-'+l.id" @click="setFilter('list:'+l.id)"
+              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
+              :class="chipClass('list:'+l.id)">{{ l.name }}</button>
+            <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
+              class="px-2 py-1 rounded-full text-xs whitespace-nowrap transition-colors bg-[#25343d] text-[#96a4ad] hover:text-[#00a884]">+</button>
           </template>
           <template v-else>
             <button @click="setFilter('all')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('all')">
@@ -163,10 +170,16 @@
         <button
           v-for="c in uniqueConversations"
           :key="c.id"
-          @click="selectConversation(c)"
+          @click="convSelectMode ? toggleConvSelect(c) : selectConversation(c)"
+          @contextmenu.prevent="onConvContextMenu(c, $event)"
           class="w-full text-right p-3 transition-colors flex items-center gap-3 relative group"
-          :class="activeConv?.id === c.id ? 'bg-[#30424c]' : 'hover:bg-[#25343d]/70'"
+          :class="[activeConv?.id === c.id ? 'bg-[#30424c]' : 'hover:bg-[#25343d]/70', selectedConvIds.has(c.id) ? 'bg-[#1f3d33]' : '']"
         >
+          <!-- multi-select checkbox -->
+          <div v-if="convSelectMode" class="shrink-0 w-5 h-5 rounded-full border-2 flex items-center justify-center"
+            :class="selectedConvIds.has(c.id) ? 'bg-[#00a884] border-[#00a884]' : 'border-[#96a4ad]'">
+            <svg v-if="selectedConvIds.has(c.id)" class="w-3 h-3 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+          </div>
           <!-- Contact Avatar -->
           <div class="w-12 h-12 rounded-full bg-gradient-to-br from-slate-600 to-slate-800 text-white font-bold flex items-center justify-center shrink-0 shadow-inner relative overflow-hidden">
             <img
@@ -177,6 +190,10 @@
               @error="markAvatarBroken(c.contact_avatar)"
             />
             <span v-else class="text-base">{{ convInitial(c) }}</span>
+            <!-- Custom-list membership badges -->
+            <span class="absolute -bottom-1 -right-1 flex gap-0.5 z-10">
+              <span v-for="ln in convListNames(c.id).slice(0,2)" :key="ln" class="px-1 rounded text-[8px] font-bold bg-[#00a884]/90 text-white max-w-[56px] truncate">{{ ln }}</span>
+            </span>
             <!-- Online / connected indicator dot if recent -->
             <span
               v-if="c.unread_count > 0"
@@ -1468,6 +1485,35 @@
       </div>
     </div>
 
+
+    <!-- Conversation right-click menu -->
+    <div v-if="convCtx.show" class="fixed inset-0 z-40" @click="convCtx.show = false" @contextmenu.prevent="convCtx.show = false"></div>
+    <div v-if="convCtx.show" class="fixed z-50 w-48 rounded-xl bg-[#25343d] border border-[#30424c] shadow-2xl py-1"
+      :style="{ top: convCtx.y + 'px', left: (convCtx.x - 190) + 'px' }">
+      <button @click="enterConvSelectMode" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">تحديد</button>
+      <button @click="openListModal(convCtx.conv?.id)" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">إضافة إلى قائمة</button>
+      <button v-if="activeList" @click="removeFromActiveList(convCtx.conv?.id); convCtx.show = false" class="w-full text-right px-4 py-2.5 text-sm text-red-400 hover:bg-[#30424c]">إزالة من القائمة</button>
+    </div>
+
+    <!-- Selection mode action bar -->
+    <div v-if="convSelectMode" class="fixed bottom-20 inset-x-4 md:inset-x-auto md:left-1/2 md:-translate-x-1/2 z-50 flex items-center gap-3 rounded-2xl bg-[#25343d] border border-[#30424c] shadow-2xl px-4 py-3">
+      <span class="text-sm text-[#dfe5e8]">{{ selectedConvIds.size }} محدد</span>
+      <button @click="openListModal()" class="px-4 py-1.5 rounded-lg bg-[#00a884] text-white text-sm font-semibold">إنشاء قائمة</button>
+      <button @click="convSelectMode = false; selectedConvIds = new Set()" class="px-3 py-1.5 rounded-lg text-sm text-[#96a4ad] hover:text-white">إلغاء</button>
+    </div>
+
+    <!-- New-list modal -->
+    <div v-if="listModal.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="listModal.show = false">
+      <div class="w-80 rounded-2xl bg-[#25343d] border border-[#30424c] p-5 shadow-2xl">
+        <h3 class="text-[#dfe5e8] font-bold mb-1">قائمة جديدة</h3>
+        <p class="text-[11px] text-[#96a4ad] mb-3">{{ listModal.convIds.length }} محادثة ستُضاف</p>
+        <input v-model="listModal.name" @keydown.enter="saveList" placeholder="اسم القائمة" class="w-full rounded-lg bg-[#1c2b33] border border-[#30424c] px-3 py-2 text-sm text-[#dfe5e8] focus:outline-none focus:border-[#00a884]" />
+        <div class="flex gap-2 mt-4 justify-end">
+          <button @click="listModal.show = false" class="px-4 py-2 text-sm text-[#96a4ad]">إلغاء</button>
+          <button @click="saveList" :disabled="!listModal.name.trim()" class="px-5 py-2 rounded-lg bg-[#00a884] text-white text-sm font-semibold disabled:opacity-40">إنشاء</button>
+        </div>
+      </div>
+    </div>
     <!-- Forward Modal -->
     <div
       v-if="showForwardModal"
@@ -3732,7 +3778,12 @@ const inScope = (c) => {
     case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at;
     case 'resolved': return !!c.resolved_at;
     case 'unread': return c.unread_count > 0;
-    default: return true;
+    default:
+      if (String(selectedFilter.value).startsWith('list:')) {
+        const l = activeList.value;
+        return !!l?.conversation_ids?.includes(c.id);
+      }
+      return true;
   }
 };
 
@@ -3957,6 +4008,77 @@ const pickMention = (m) => {
   menu.show = false;
 };
 
+// ---- Custom chat lists (WhatsApp Lists) ---------------------------------
+const chatLists = ref([]);
+const convSelectMode = ref(false);
+const selectedConvIds = ref(new Set());
+const convCtx = ref({ show: false, x: 0, y: 0, conv: null });
+const listModal = ref({ show: false, name: '', convIds: [] });
+
+const loadChatLists = async () => {
+  try {
+    const res = await crm.getChatLists();
+    if (res?.success) chatLists.value = res.lists || [];
+  } catch { /* lists are optional UI */ }
+};
+
+const activeList = computed(() => {
+  const f = String(selectedFilter.value);
+  return f.startsWith('list:') ? chatLists.value.find((l) => l.id === +f.slice(5)) : null;
+});
+
+const convListNames = (convId) =>
+  chatLists.value.filter((l) => l.conversation_ids?.includes(convId)).map((l) => l.name);
+
+const onConvContextMenu = (c, e) => {
+  convCtx.value = { show: true, x: e.clientX, y: e.clientY, conv: c };
+};
+
+const enterConvSelectMode = () => {
+  convSelectMode.value = true;
+  selectedConvIds.value = new Set(convCtx.value.conv ? [convCtx.value.conv.id] : []);
+  convCtx.value.show = false;
+};
+
+const toggleConvSelect = (c) => {
+  const set = new Set(selectedConvIds.value);
+  set.has(c.id) ? set.delete(c.id) : set.add(c.id);
+  selectedConvIds.value = set;
+  if (!set.size) convSelectMode.value = false;
+};
+
+const openListModal = (preselected = null) => {
+  const ids = preselected ? [preselected] : [...selectedConvIds.value];
+  listModal.value = { show: true, name: '', convIds: ids };
+  convCtx.value.show = false;
+};
+
+const saveList = async () => {
+  const m = listModal.value;
+  if (!m.name.trim()) return;
+  const res = await crm.saveChatList({ name: m.name.trim(), conversation_ids: m.convIds });
+  if (res?.success) {
+    await loadChatLists();
+    listModal.value.show = false;
+    convSelectMode.value = false;
+    selectedConvIds.value = new Set();
+    setFilter('list:' + res.list.id);
+  }
+};
+
+const deleteList = async (id) => {
+  await crm.deleteChatList(id).catch(() => {});
+  await loadChatLists();
+  if (String(selectedFilter.value) === 'list:' + id) setFilter('all');
+};
+
+const removeFromActiveList = async (convId) => {
+  const l = activeList.value;
+  if (!l) return;
+  await crm.removeChatListMembers(l.id, [convId]).catch(() => {});
+  await loadChatLists();
+};
+
 const onTypingInput = () => {
   if (!activeConv.value) return;
   // Track the last "@" the caret sits after — opens the member picker.
@@ -3984,6 +4106,7 @@ onMounted(async () => {
     try {
       await crm.me();
       user.value = crm.getUser();
+        void loadChatLists();
       if (isAgent.value && selectedFilter.value === 'all') {
         selectedFilter.value = 'available';
       }
