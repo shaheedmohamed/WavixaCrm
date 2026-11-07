@@ -2,8 +2,11 @@
   <div class="h-screen w-screen flex bg-[#131f26] text-[#f0f2f5] overflow-hidden font-sans" dir="rtl">
     <!-- Sidebar -->
     <aside
-      class="w-64 bg-[#18242b] border-l border-[#2c3c45] flex flex-col shrink-0 transition-transform duration-300 z-30 h-full max-md:fixed max-md:inset-y-0 max-md:right-0 md:relative md:translate-x-0"
-      :class="{ 'max-md:translate-x-full': !mobileOpen, 'max-md:translate-x-0': mobileOpen }"
+      class="w-64 bg-[#18242b] border-l border-[#2c3c45] flex flex-col shrink-0 transition-all duration-300 z-30 h-full max-md:fixed max-md:inset-y-0 max-md:right-0 md:relative md:translate-x-0"
+      :class="[
+        { 'max-md:translate-x-full': !mobileOpen, 'max-md:translate-x-0': mobileOpen },
+        collapsed ? 'md:w-0 md:min-w-0 md:overflow-hidden md:border-l-0' : '',
+      ]"
     >
       <!-- Brand Header -->
       <div class="p-4 border-b border-[#2c3c45] flex items-center justify-between bg-[#25343d]">
@@ -16,9 +19,14 @@
             <p class="text-[11px] text-emerald-400 font-medium">إدارة واتساب متعددة</p>
           </div>
         </div>
-        <button @click="mobileOpen = false" class="md:hidden text-[#96a4ad] hover:text-white p-1">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-        </button>
+        <div class="flex items-center gap-1">
+          <button @click="collapsed = true" class="hidden md:block text-[#96a4ad] hover:text-white p-1" title="إخفاء القائمة الجانبية">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/></svg>
+          </button>
+          <button @click="mobileOpen = false" class="md:hidden text-[#96a4ad] hover:text-white p-1">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
       </div>
 
       <!-- Navigation Links -->
@@ -210,6 +218,16 @@
       class="fixed inset-0 bg-black/60 backdrop-blur-sm z-20 md:hidden"
     ></div>
 
+    <!-- Reopen handle — desktop only, floats where the sidebar was -->
+    <button
+      v-if="collapsed"
+      @click="collapsed = false"
+      class="hidden md:flex fixed top-4 right-4 z-40 w-9 h-9 items-center justify-center rounded-xl bg-[#25343d] border border-[#2c3c45] text-[#96a4ad] hover:text-white shadow-lg"
+      title="إظهار القائمة الجانبية"
+    >
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"/></svg>
+    </button>
+
     <!-- Main Content Area -->
     <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
       <!-- Mobile Top Bar -->
@@ -232,7 +250,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import crm from '@/services/crm';
 import { getEcho, crmChannelName } from '@/services/realtime';
@@ -240,6 +258,8 @@ import { initNotifySound, isSoundEnabled, setSoundEnabled, playIncomingMessage }
 
 const router = useRouter();
 const mobileOpen = ref(false);
+const collapsed = ref(localStorage.getItem('crm_sidebar_collapsed') === '1');
+watch(collapsed, (v) => localStorage.setItem('crm_sidebar_collapsed', v ? '1' : '0'));
 const unreadTotal = ref(0);
 const soundEnabled = ref(isSoundEnabled());
 
