@@ -105,6 +105,22 @@
         </div>
 
         <p v-if="error" class="text-red-400 text-xs text-center">{{ error }}</p>
+
+        <!-- Bridge logged out of WhatsApp Web — rescan to re-link the call device -->
+        <div v-if="needsPair" class="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 flex flex-col items-center gap-2">
+          <p class="text-amber-300 text-xs font-bold text-center">جهاز المكالمات مش مربوط — امسح الكود لإعادة الربط</p>
+          <img
+            :src="qrSrc"
+            alt="QR"
+            class="w-44 h-44 rounded-lg bg-white p-1.5"
+            @error="qrBroken = true"
+            v-if="!qrBroken"
+          />
+          <p v-else class="text-[10px] text-[#8696a0] text-center">مفيش QR متاح دلوقتي — حاول كمان شوية</p>
+          <p class="text-[10px] text-[#8696a0] text-center leading-relaxed">
+            من الموبايل: واتساب ← الأجهزة المرتبطة ← ربط جهاز<br/>الكود بيتجدد كل شوية لوحده
+          </p>
+        </div>
       </div>
     </div>
   </Teleport>
@@ -112,6 +128,7 @@
 
 <script setup>
 import { computed, onUnmounted, ref, watch } from 'vue';
+import crm from '@/services/crm';
 
 const props = defineProps({
   state: { type: String, default: 'idle' }, // idle|dialing|ringing|connecting|active|incoming
@@ -128,6 +145,24 @@ defineEmits(['hangup', 'answer', 'reject', 'toggle-mute', 'toggle-cam']);
 
 const visible = ref(false);
 const activeSince = ref(null);
+
+// Re-pair flow: the dial failed because the bridge lost its WA Web login —
+// show the live QR (endpoint serves the freshest out/qr.png, no-store) and
+// keep it refreshed since WhatsApp rotates codes every ~20s.
+const qrTick = ref(Date.now());
+const qrBroken = ref(false);
+let qrTimer = null;
+const needsPair = computed(() => /session not ready|not paired|qr/i.test(props.error || ''));
+const qrSrc = computed(
+  () => `/api/crm/call/qr?token=${encodeURIComponent(crm.getToken() || '')}&t=${qrTick.value}`,
+);
+watch(needsPair, (on) => {
+  qrBroken.value = false;
+  qrTick.value = Date.now();
+  clearInterval(qrTimer);
+  if (on) qrTimer = setInterval(() => { qrTick.value = Date.now(); qrBroken.value = false; }, 12000);
+});
+onUnmounted(() => qrTimer && clearInterval(qrTimer));
 const now = ref(Date.now());
 const rv = ref(null);
 const lv = ref(null);

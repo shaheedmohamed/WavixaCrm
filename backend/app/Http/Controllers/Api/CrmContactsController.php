@@ -298,4 +298,26 @@ class CrmContactsController extends Controller
         }
         return $pairs;
     }
+
+    /** Export every contact to a UTF-8 BOM CSV — opens cleanly in Excel. */
+    public function export(Request $request)
+    {
+        $owner = $request->user();
+        $contacts = CrmContact::where('owner_id', $owner->id)->orderBy('name')->get();
+
+        $fh = fopen('php://temp', 'r+');
+        fwrite($fh, "\uFEFF"); // BOM so Excel reads the Arabic names correctly
+        fputcsv($fh, ['Name', 'Phone']);
+        foreach ($contacts as $c) {
+            fputcsv($fh, [$c->name, $c->phone]);
+        }
+        rewind($fh);
+        $csv = stream_get_contents($fh);
+        fclose($fh);
+
+        return response($csv, 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="contacts.csv"',
+        ]);
+    }
 }

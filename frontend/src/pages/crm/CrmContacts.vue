@@ -12,6 +12,11 @@
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
           <span>{{ importing ? 'جاري الرفع...' : 'رفع ملف جهات الاتصال' }}</span>
         </button>
+        <button @click="exportCsv" :disabled="exporting"
+          class="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 font-bold text-sm border border-emerald-600/40 transition-all disabled:opacity-50">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          <span>{{ exporting ? 'جاري التصدير...' : 'تصدير Excel' }}</span>
+        </button>
       </div>
     </div>
 
@@ -129,9 +134,24 @@ const importOk = ref(true);
 const newName = ref('');
 const newPhone = ref('');
 const adding = ref(false);
+const exporting = ref(false);
 const editingId = ref(null);
 const editName = ref('');
 let debounce = null;
+
+const exportCsv = async () => {
+  exporting.value = true;
+  try {
+    const resp = await crm.client().get('/contacts/export', { responseType: 'blob' });
+    const url = URL.createObjectURL(new Blob([resp.data], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'contacts.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) { console.error(e); }
+  finally { exporting.value = false; }
+};
 
 const load = async (page = 1) => {
   loading.value = true;

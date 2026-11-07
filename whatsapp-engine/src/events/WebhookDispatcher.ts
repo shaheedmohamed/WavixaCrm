@@ -129,10 +129,38 @@ export class WebhookDispatcher {
         replyToId: p.data.replyToId || null,
         isForwarded: p.data.isForwarded || false,
         mentionedJids: p.data.mentionedJids || [],
+        pin: p.data.pin || null,
         msgTimestamp: p.data.msgTimestamp || null,
         timestamp: p.timestamp,
       });
       await this.dispatchUnifiedWebhook(p);
+    });
+
+    bus.on('chat.pinned', async (p) => {
+      await this.notifyLaravel('whatsapp/chat-pinned', {
+        userId: p.session_id,
+        jid: p.from,
+        pinned: p.data?.pinned !== false,
+        timestamp: p.timestamp,
+      });
+    });
+
+    bus.on('chat.archived', async (p) => {
+      await this.notifyLaravel('whatsapp/chat-archived', {
+        userId: p.session_id,
+        jid: p.from,
+        archived: p.data?.archived !== false,
+        timestamp: p.timestamp,
+      });
+    });
+
+    bus.on('chat.read', async (p) => {
+      await this.notifyLaravel('whatsapp/chat-read', {
+        userId: p.session_id,
+        jid: p.from,
+        read: p.data?.read !== false,
+        timestamp: p.timestamp,
+      });
     });
 
     bus.on('history.sync', async (p) => {

@@ -1,7 +1,8 @@
 import crypto from 'crypto';
 import { WaProto } from '../protocol/proto/WaProto.js';
-import { calculateMAC, deriveSecrets, signalDecrypt } from './SignalCrypto.js';
+import { calculateMAC, deriveSecrets, signalDecrypt, signalEncrypt } from './SignalCrypto.js';
 import { SenderKeyStore, type SenderKeyStateData } from './SenderKeyStore.js';
+import { Ed25519 } from '../crypto/Ed25519.js';
 
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
 const MAX_SKIPPED_KEYS = 250;
@@ -31,6 +32,15 @@ const montgomeryToEdwards = (uBytes: Buffer): Buffer => {
   const out = Buffer.from(y.toString(16).padStart(64, '0'), 'hex').reverse();
   out[31]! &= 0x7f; // x sign bit = 0 (XEdDSA "positive" point)
   return out;
+};
+
+/** Edwards→Montgomery: u = (1+y)/(1-y). Used to publish our Ed25519
+ * sender-signing key in the Curve25519 form SKDM recipients expect —
+ * the shared scalar makes the same XEdDSA identity valid on both curves. */
+const edwardsToMontgomery = (edPub: Buffer): Buffer => {
+  const y = BigInt(`0x${Buffer.from(edPub).reverse().toString('hex')}`) & ((1n << 255n) - 1n);
+  const u = (((1n + y) * modPow(((1n - y) % FIELD_P + FIELD_P) % FIELD_P, FIELD_P - 2n)) % FIELD_P + FIELD_P) % FIELD_P;
+  return Buffer.from(u.toString(16).padStart(64, '0'), 'hex').reverse();
 };
 
 /**
@@ -93,6 +103,85 @@ export class SenderKeyCipher {
     const plain = signalDecrypt(keys[0]!, Buffer.from(msg.ciphertext), keys[2]!.subarray(0, 16));
     this.store.store(name, state);
     return plain;
+  }
+
+  /**
+   * Outgoing group encryption — the inverse of `decrypt`. Creates (or
+   * ratchets) our sender key for `groupJid` under `authorJid`, produces:
+   *  - ciphertext: versionByte(0x33) || proto(SenderKeyMessage) || 64B XEdDSA sig
+   *  - skdm: the frozen SenderKeyDistributionMessage blob (iteration-0 chain
+   *    key) to fan out to member devices that don't have our key yet.
+   */
+  public async encryptForGroup(
+    groupJid: string,
+    authorJid: string,
+    plaintext: Buffer,
+  ): Promise<{ ciphertext: Buffer; skdm: Buffer; state: SenderKeyStateData; isNew: boolean }> {
+    const name = SenderKeyStore.name(groupJid, authorJid);
+    let state = this.store.load(name);
+    // v=2 marks Ed25519-signed keys — states from the earlier Curve25519
+    // scheme produce signatures recipients can't verify, so a new key id
+    // is minted and the fresh SKDM fans out to every member device again.
+    const isNew = !state || state.v !== 2;
+
+    if (!state || state.v !== 2) {
+      // The sender signing key is an Ed25519 pair — recipients verify
+      // skmsg sigs under the Edwards point, so the private must be a real
+      // Ed25519 seed. The SKDM publishes the Montgomery form of the same
+      // key (u = (1+y)/(1-y)) — the format the protocol carries.
+      const signing = Ed25519.generateKeyPair();
+      const signingPubMont = edwardsToMontgomery(signing.publicKey);
+      const chainKey = crypto.randomBytes(32);
+      const keyId = (crypto.randomBytes(4).readUInt32BE(0) & 0x7fffffff) || 1;
+      state = {
+        v: 2,
+        keyId,
+        iteration: 0,
+        chainKey: chainKey.toString('base64'),
+        signingKey: signingPubMont.toString('base64'),
+        signingPrivateKey: signing.privateKey.toString('base64'),
+        messageKeys: {},
+        distributedTo: {},
+        // The SKDM is frozen at creation — every member device must start
+        // from the SAME iteration-0 chain key and ratchet forward to catch
+        // up, so the original blob is kept for redistribution to new
+        // devices/members later.
+        skdm: Buffer.concat([
+          Buffer.from([0x33]),
+          await WaProto.encodeSenderKeyDistributionMessage({
+            id: keyId,
+            iteration: 0,
+            chainKey,
+            signingKey: signingPubMont,
+          }),
+        ]).toString('base64'),
+      };
+    }
+
+    // One ratchet step per message: msgKey = HMAC(chain,0x01),
+    // next chain = HMAC(chain,0x02) — same scheme decrypt() walks back.
+    const chainKey = Buffer.from(state.chainKey, 'base64');
+    const msgKey = calculateMAC(chainKey, Buffer.from([0x01]));
+    const iteration = state.iteration;
+    state.chainKey = calculateMAC(chainKey, Buffer.from([0x02])).toString('base64');
+    state.iteration = iteration + 1;
+
+    const secrets = deriveSecrets(msgKey, Buffer.alloc(32), Buffer.from('WhisperGroup'));
+    const inner = signalEncrypt(secrets[0]!, plaintext, secrets[2]!.subarray(0, 16));
+    const skm = await WaProto.encodeSenderKeyMessage({
+      id: state.keyId,
+      iteration,
+      ciphertext: inner,
+    });
+    const wire = Buffer.concat([Buffer.from([0x33]), skm]);
+    const signature = Ed25519.sign(
+      Buffer.from(state.signingPrivateKey!, 'base64'),
+      wire,
+    );
+    const ciphertext = Buffer.concat([wire, signature]);
+
+    this.store.store(name, state);
+    return { ciphertext, skdm: Buffer.from(state.skdm!, 'base64'), state, isNew };
   }
 
   private verifySignature(state: SenderKeyStateData, serialized: Buffer, signature: Buffer): void {

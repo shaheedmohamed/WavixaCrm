@@ -87,8 +87,12 @@ export interface WaClientEvents {
     quotedParticipant?: string;
     isForwarded?: boolean;
     mentionedJids?: string[];
+    pin?: { action: 'pin' | 'unpin'; messageId?: string; remoteJid?: string };
     raw: unknown;
   }) => void;
+  'chat.read': (data: { jid: string; read: boolean }) => void;
+  'chat.archived': (data: { jid: string; archived: boolean }) => void;
+  'chat.pinned': (data: { jid: string; pinned: boolean }) => void;
   'history.sync': (payload: ParsedHistorySync) => void;
   'contacts.sync': (payload: {
     contacts: Array<{ jid: string; name: string; firstName?: string }>;
@@ -427,7 +431,14 @@ export class WaClient extends EventEmitter {
             const encType = encNode.attrs.type;
             const ciphertext = encNode.content as Buffer;
             if (!Buffer.isBuffer(ciphertext)) continue;
-            const from = node.attrs.participant || node.attrs.from!;
+            // LID-era group stanzas carry participant_pn/participant_lid
+            // instead of a plain participant attr — never fall through to
+            // the group JID or the stored `from` becomes the group itself.
+            const from =
+              node.attrs.participant ||
+              node.attrs.participant_pn ||
+              node.attrs.participant_lid ||
+              node.attrs.from!;
             const cipher = new SessionCipher(this.signalStore, from);
             const plaintext =
               encType === 'pkmsg'
@@ -569,6 +580,7 @@ export class WaClient extends EventEmitter {
             // when present, else a usync 'lid' lookup — so one contact stays
             // one conversation instead of splitting across PN/LID twins.
             const senderPnRaw = node.attrs.sender_pn || node.attrs.participant_pn;
+            const senderLidAttr = node.attrs.sender_lid || node.attrs.participant_lid;
             let chatJid = destinationJid || stripDevice(node.attrs.from!)!;
             let lidJid: string | undefined;
             if (chatJid.endsWith('@lid') && !chatJid.includes('@g.us')) {
@@ -590,7 +602,7 @@ export class WaClient extends EventEmitter {
               jid: chatJid,
               sender: stripDevice(from)!,
               senderPn: senderPnRaw,
-              senderLid: lidJid,
+              senderLid: lidJid || stripDevice(senderLidAttr),
               notify: node.attrs.notify,
               id: msgId || '',
               timestamp: +(node.attrs.t || 0) || undefined,
@@ -604,6 +616,7 @@ export class WaClient extends EventEmitter {
               quotedParticipant: norm.quotedParticipant,
               isForwarded: norm.isForwarded,
               mentionedJids: norm.mentionedJids,
+              pin: norm.pin,
               raw: decoded,
             });
           } catch (decErr) {
@@ -1401,6 +1414,17 @@ export class WaClient extends EventEmitter {
       }
     }
 
+    // "Read on another device" patches — keep the CRM unread badge in sync
+    // with the phone instead of only resetting when the chat is opened here.
+    try {
+      const reads = await AppStateProcessor.extractChatReads(records, keyMap);
+      for (const r of reads) this.emit('chat.read', r);
+      const archives = await AppStateProcessor.extractChatArchives(records, keyMap);
+      for (const a of archives) this.emit('chat.archived', a);
+      const pins = await AppStateProcessor.extractChatPins(records, keyMap);
+      for (const p2 of pins) this.emit('chat.pinned', p2);
+    } catch { /* best effort */ }
+
     const { contacts, missingKeyIds } = await AppStateProcessor.extractContacts(records, keyMap);
     if (contacts.length) {
       this.emit('contacts.sync', { contacts });
@@ -1780,6 +1804,12 @@ export class WaClient extends EventEmitter {
     subject?: string;
     owner?: string;
     createdAt?: number;
+    announce?: boolean;
+    restrict?: boolean;
+    addressingMode?: string;
+    ephemeralExpiration?: number;
+    memberAddMode?: string;
+    joinApprovalMode?: boolean;
     participants: Array<{
       jid: string;
       lid?: string;
@@ -1845,8 +1875,171 @@ export class WaClient extends EventEmitter {
       createdAt: group.attrs.creation
         ? Number(group.attrs.creation)
         : undefined,
+      // Current group settings — child markers inside the same group node.
+      announce: !!getBinaryNodeChild(group, 'announcement'),
+      restrict: !!getBinaryNodeChild(group, 'locked'),
+      ephemeralExpiration: getBinaryNodeChild(group, 'ephemeral')?.attrs.expiration
+        ? Number(getBinaryNodeChild(group, 'ephemeral')!.attrs.expiration)
+        : undefined,
+      memberAddMode: getBinaryNodeChild(group, 'member_add_mode')?.content
+        ? String(getBinaryNodeChild(group, 'member_add_mode')!.content)
+        : undefined,
+      joinApprovalMode: !!getBinaryNodeChild(group, 'membership_approval_mode'),
+      // 'lid' for LID-addressed groups — decides which own identity signs
+      // our sender key and lands as `addressing_mode` on the stanza.
+      addressingMode: group.attrs.addressing_mode ? String(group.attrs.addressing_mode) : undefined,
       participants,
     };
+  }
+
+  /** Rename a group — <subject> set-query with the raw utf-8 body. */
+  public async updateGroupSubject(jid: string, subject: string): Promise<void> {
+    await this.query(
+      {
+        tag: 'iq',
+        attrs: { to: jid, type: 'set', xmlns: 'w:g2' },
+        content: [
+          { tag: 'subject', attrs: {}, content: Buffer.from(subject, 'utf-8') },
+        ],
+      },
+      15_000,
+    );
+  }
+
+  /**
+   * Create a WhatsApp group — the same `w:g2` <create> set-query WhatsApp
+   * Web issues from the "New group" panel. `participants` accepts PN JIDs,
+   * LID JIDs, or bare digit strings. The result carries the new group JID
+   * plus per-participant status: '200' added, an error code (403 privacy,
+   * 404 not on WhatsApp…), or `invite` when the server queued an add
+   * request instead of adding them directly.
+   */
+  public async createGroup(
+    subject: string,
+    participants: string[],
+  ): Promise<{
+    id: string;
+    subject?: string;
+    createdAt?: number;
+    participants: Array<{ jid: string; status: string; invited: boolean }>;
+  }> {
+    const content: BinaryNode[] = participants.map((raw) => {
+      const jid = raw.includes('@')
+        ? raw
+        : jidEncode(raw.replace(/\D/g, ''), 's.whatsapp.net');
+      return { tag: 'participant', attrs: { jid } };
+    });
+
+    const result = await this.query(
+      {
+        tag: 'iq',
+        attrs: { to: jidEncode('', 'g.us'), type: 'set', xmlns: 'w:g2' },
+        content: [
+          {
+            tag: 'create',
+            attrs: {
+              subject,
+              key: bytesToCrockford(crypto.randomBytes(10)),
+            },
+            content,
+          },
+        ],
+      },
+      30_000,
+    );
+
+    const group = getBinaryNodeChild(result, 'group');
+    if (!group?.attrs.id) {
+      const errNode = getBinaryNodeChild(result, 'error');
+      throw new Error(
+        `Group create failed${errNode?.attrs.code ? ` (${errNode.attrs.code})` : ''}`,
+      );
+    }
+
+    // Server returns the id as bare digits — append the domain like
+    // extractGroupMetadata does so the jid is usable for follow-up iqs.
+    const rawId = String(group.attrs.id);
+    const id = rawId.includes('@') ? rawId : jidEncode(rawId, 'g.us');
+    return {
+      id,
+      subject: group.attrs.subject ? String(group.attrs.subject) : undefined,
+      createdAt: group.attrs.creation ? Number(group.attrs.creation) : undefined,
+      participants: getBinaryNodeChildren(group, 'participant').map((p) => ({
+        jid: String(p.attrs.jid || '').split(':')[0]!,
+        status: p.attrs.error ? String(p.attrs.error) : '200',
+        invited: !!getBinaryNodeChild(p, 'add_request'),
+      })),
+    };
+  }
+
+  /** Group privacy switches — same tags WhatsApp Web toggles in group settings. */
+  public async updateGroupSetting(
+    jid: string,
+    setting:
+      | 'announcement'
+      | 'not_announcement'
+      | 'locked'
+      | 'unlocked'
+      | 'member_add_mode'
+      | 'membership_approval_mode',
+    value?: string,
+  ): Promise<void> {
+    const child: BinaryNode = { tag: setting, attrs: {} };
+    if (setting === 'member_add_mode' && value) {
+      child.content = value;
+    } else if (setting === 'membership_approval_mode' && value) {
+      child.content = [{ tag: 'group_join', attrs: { state: value } }];
+    }
+    await this.query(
+      {
+        tag: 'iq',
+        attrs: { to: jid, type: 'set', xmlns: 'w:g2' },
+        content: [child],
+      },
+      15_000,
+    );
+  }
+
+  /** Disappearing-messages timer for a group; 0 disables it. */
+  public async updateGroupEphemeral(jid: string, seconds: number): Promise<void> {
+    await this.query(
+      {
+        tag: 'iq',
+        attrs: { to: jid, type: 'set', xmlns: 'w:g2' },
+        content: [
+          seconds > 0
+            ? { tag: 'ephemeral', attrs: { expiration: String(seconds) } }
+            : { tag: 'not_ephemeral', attrs: {} },
+        ],
+      },
+      15_000,
+    );
+  }
+
+  /**
+   * Set a group's profile picture — `w:profile:picture` set-query with the
+   * group JID as `target` and the resized JPEG as raw <picture> content.
+   */
+  public async updateGroupPicture(jid: string, jpeg: Buffer): Promise<void> {
+    await this.query(
+      {
+        tag: 'iq',
+        attrs: {
+          to: S_WHATSAPP_NET,
+          type: 'set',
+          xmlns: 'w:profile:picture',
+          target: jid,
+        },
+        content: [
+          {
+            tag: 'picture',
+            attrs: { type: 'image' },
+            content: jpeg,
+          },
+        ],
+      },
+      30_000,
+    );
   }
 
   /** Fetch the device list for the given users via a usync query. */
@@ -2090,6 +2283,13 @@ export class WaClient extends EventEmitter {
     const destinationJid = jid.includes('@')
       ? jid
       : jidEncode(jid.replace(/\D/g, ''), 's.whatsapp.net');
+
+    // Groups don't send per-device fan-out — they need the sender-key
+    // (skmsg) path with an SKDM distributed to every member device.
+    if (destinationJid.endsWith('@g.us')) {
+      return this.sendGroupMessage(destinationJid, message, stanzaType);
+    }
+
     const meId = this.creds.me.id;
     const meUser = jidDecode(meId)!.user;
 
@@ -2243,6 +2443,135 @@ export class WaClient extends EventEmitter {
 
     // await the server ack for this message id
     await this.query(stanza, 25_000);
+    return { id: msgId };
+  }
+
+  /**
+   * Group message path — one `skmsg` ciphertext for the whole group. The
+   * sender key is created on first send; its SenderKeyDistributionMessage
+   * is fanned out pairwise-encrypted (`to` nodes inside <participants>) to
+   * every member device that hasn't received it, in the same stanza as the
+   * content — exactly how WhatsApp Web sends to groups.
+   */
+  private async sendGroupMessage(
+    gid: string,
+    message: Record<string, unknown>,
+    stanzaType?: 'text' | 'media',
+  ): Promise<{ id: string }> {
+    if (!this.creds.me) {
+      throw new Error('Not authenticated — pair the device first');
+    }
+
+    const meId = this.creds.me.id;
+    const meDevice = jidDecode(meId)?.device ?? 0;
+    const meLid = this.creds.me.lid;
+    const meLidUser = meLid ? jidDecode(meLid)?.user : undefined;
+
+    const meta = await this.getGroupMetadata(gid);
+    const addressingMode = meta.addressingMode === 'lid' ? 'lid' : 'pn';
+    // Sender-key author identity must match the `participant` form the
+    // server stamps on our stanza — LID groups know us by our LID device.
+    const senderIdentity =
+      addressingMode === 'lid' && meLidUser
+        ? jidEncode(meLidUser, 'lid', meDevice)
+        : meId;
+
+    // Member devices — own devices included so they keep a synced copy.
+    const memberJids = meta.participants.map((p) => p.jid).filter(Boolean);
+    const deviceJids = new Set<string>();
+    for (const q of memberJids) {
+      try {
+        for (const d of await this.getDeviceList([q])) deviceJids.add(d);
+      } catch { /* one bad member form must not kill the send */ }
+    }
+    for (const q of [jidEncode(jidDecode(meId)!.user, 's.whatsapp.net'),
+      ...(meLidUser ? [jidEncode(meLidUser, 'lid')] : [])]) {
+      try {
+        for (const d of await this.getDeviceList([q])) deviceJids.add(d);
+      } catch { /* own-device enumeration is best-effort */ }
+    }
+
+    const encoded = await this.encodeWAMessage(message);
+    const { ciphertext, skdm, state } = await this.senderKeyCipher.encryptForGroup(
+      gid,
+      senderIdentity,
+      encoded,
+    );
+
+    // SKDM fan-out — pairwise enc for every device that never got it.
+    const distributedTo = state.distributedTo || {};
+    const targets = [...deviceJids].filter(
+      (d) => !distributedTo[d] && !d.endsWith(':99@s.whatsapp.net'),
+    );
+    const participantNodes: BinaryNode[] = [];
+    let includeDeviceIdentity = false;
+    if (targets.length) {
+      const skdmBytes = await this.encodeWAMessage({
+        senderKeyDistributionMessage: {
+          groupId: gid,
+          axolotlSenderKeyDistributionMessage: skdm,
+        },
+      });
+      await this.assertSessions(targets);
+      for (const deviceJid of targets) {
+        try {
+          const cipher = new SessionCipher(this.signalStore, deviceJid);
+          const { type, body } = await cipher.encrypt(skdmBytes);
+          if (type === 'pkmsg') includeDeviceIdentity = true;
+          participantNodes.push({
+            tag: 'to',
+            attrs: { jid: deviceJid },
+            content: [{ tag: 'enc', attrs: { v: '2', type }, content: body }],
+          });
+          distributedTo[deviceJid] = true;
+        } catch (e) {
+          logger.debug({ deviceJid, err: e }, 'skdm encrypt failed for device');
+        }
+      }
+      state.distributedTo = distributedTo;
+      this.senderKeyStore.store(SenderKeyStore.name(gid, senderIdentity), state);
+    }
+
+    const msgId = this.generateMessageId();
+    this.cacheSentMessage(
+      msgId,
+      gid,
+      message,
+      stanzaType ?? (message.conversation || message.extendedTextMessage ? 'text' : 'media'),
+    );
+
+    const content: BinaryNode[] = [];
+    if (participantNodes.length) {
+      content.push({ tag: 'participants', attrs: {}, content: participantNodes });
+    }
+    content.push({ tag: 'enc', attrs: { v: '2', type: 'skmsg' }, content: ciphertext });
+    if (includeDeviceIdentity && this.creds.account) {
+      const account = { ...(this.creds.account as Record<string, unknown>) };
+      if (!account.accountSignatureKey || !(account.accountSignatureKey as Buffer).length) {
+        account.accountSignatureKey = null;
+      }
+      content.push({
+        tag: 'device-identity',
+        attrs: {},
+        content: await WaProto.encodeADVSignedDeviceIdentity(account),
+      });
+    }
+
+    await this.query(
+      {
+        tag: 'message',
+        attrs: {
+          id: msgId,
+          to: gid,
+          type:
+            stanzaType ??
+            (message.conversation || message.extendedTextMessage ? 'text' : 'media'),
+          addressing_mode: addressingMode,
+        },
+        content,
+      },
+      25_000,
+    );
     return { id: msgId };
   }
 
@@ -2747,6 +3076,91 @@ export class WaClient extends EventEmitter {
       { to: stanzaTo, keyForms: [...keyForms], messageId: opts.messageId },
       'revoke sent',
     );
+    return lastId;
+  }
+
+  /**
+   * Pin / unpin a message inside a chat — proto.pinInChatMessage sent as a
+   * normal stanza, exactly like WhatsApp Web's "Pin message". The duration
+   * itself is a client-side concern; the stanza only carries the key.
+   */
+  public async sendPinMessage(
+    jid: string,
+    opts: {
+      action: 'pin' | 'unpin';
+      messageId: string;
+      fromMe?: boolean;
+      participant?: string;
+    },
+  ): Promise<{ id: string }> {
+    const destinationJid = jid.includes('@')
+      ? jid
+      : jidEncode(jid.replace(/\D/g, ''), 's.whatsapp.net');
+
+    // Same LID rule as sendRevokeMessage: when the chat is LID-migrated the
+    // key's remoteJid must carry the @lid form — a PN key under a LID `to`
+    // gets the stanza bounced (ack 479).
+    let stanzaTo = destinationJid;
+    try {
+      const counterpart = (await this.resolveLidUsers([destinationJid])).get(
+        destinationJid,
+      );
+      if (counterpart && !destinationJid.endsWith('@lid')) {
+        stanzaTo = counterpart;
+      }
+    } catch { /* resolution is best-effort */ }
+
+    // key.participant needs a FULL jid — callers pass bare `from` digits for
+    // group senders; restore the server suffix before wiring it in.
+    let participant: string | undefined;
+    if (opts.participant) {
+      const d = String(opts.participant).replace(/\D/g, '');
+      participant = opts.participant.includes('@')
+        ? String(opts.participant)
+        : jidEncode(d, d.length >= 15 ? 'lid' : 's.whatsapp.net');
+    }
+
+    // The pinned key may be keyed under EITHER the author's PN or LID form
+    // (same lesson as revokes) — try every candidate form; a non-matching
+    // key is silently ignored / errors out, a matching one applies.
+    const jidCandidates = new Set<string>([stanzaTo, destinationJid]);
+    const participantForms: (string | undefined)[] = [participant];
+    if (participant) {
+      try {
+        const cp = (await this.resolveLidUsers([participant])).get(participant);
+        if (cp && cp !== participant) participantForms.push(cp);
+      } catch { /* best effort */ }
+    }
+
+    let lastId = { id: '' };
+    let lastErr: unknown;
+    for (const remoteJid of jidCandidates) {
+      for (const pForm of participantForms) {
+        try {
+          const message = {
+            pinInChatMessage: {
+              key: {
+                remoteJid,
+                fromMe: opts.fromMe ?? true,
+                id: opts.messageId,
+                ...(pForm ? { participant: pForm } : {}),
+              },
+              type: opts.action === 'unpin' ? 2 /* UNPIN_FOR_ALL */ : 1 /* PIN_FOR_ALL */,
+              senderTimestampMs: Date.now(),
+            },
+          };
+          const r = await this.sendWAMessage(stanzaTo, message, 'text');
+          if (r?.id) {
+            logger.info({ to: stanzaTo, remoteJid, participant: pForm, ...opts }, 'pin stanza sent');
+            return r;
+          }
+        } catch (err) {
+          lastErr = err;
+        }
+      }
+    }
+    if (!lastId.id && lastErr) throw lastErr;
+    logger.info({ to: stanzaTo, ...opts }, 'pin stanza sent');
     return lastId;
   }
 

@@ -224,6 +224,18 @@ class CrmService {
     return resp.data;
   }
 
+  // Real WhatsApp group creation — engine sends the w:g2 <create> stanza.
+  async createWhatsAppGroup(data) {
+    const resp = await this.client().post('/conversations/new-group', data);
+    return resp.data;
+  }
+
+  // Real group edits — subject, picture, settings toggles on the live group.
+  async updateWhatsAppGroup(conversationId, data) {
+    const resp = await this.client().post(`/conversations/${conversationId}/group-update`, data);
+    return resp.data;
+  }
+
   async getMessages(conversationId, params = {}) {
     const resp = await this.client().get(`/conversations/${conversationId}/messages`, { params });
     return resp.data;
@@ -244,6 +256,38 @@ class CrmService {
   }
   async deleteChatList(id) {
     const resp = await this.client().delete('/chat-lists/' + id);
+    return resp.data;
+  }
+  async getQuickReplies() {
+    const resp = await this.client().get('/quick-replies');
+    return resp.data;
+  }
+  async saveQuickReply(data) {
+    const resp = await this.client().post('/quick-replies', data);
+    return resp.data;
+  }
+  async deleteQuickReply(id) {
+    const resp = await this.client().delete('/quick-replies/' + id);
+    return resp.data;
+  }
+  async pinConversation(conversationId, pinned) {
+    const resp = await this.client().post('/conversations/' + conversationId + '/pin-chat', { pinned });
+    return resp.data;
+  }
+  async pinMessage(messageId, duration) {
+    const resp = await this.client().post('/messages/' + messageId + '/pin', { duration });
+    return resp.data;
+  }
+  async unpinMessage(conversationId) {
+    const resp = await this.client().post('/conversations/' + conversationId + '/unpin');
+    return resp.data;
+  }
+  async toggleStar(messageId) {
+    const resp = await this.client().post('/messages/' + messageId + '/star');
+    return resp.data;
+  }
+  async getStarred(conversationId) {
+    const resp = await this.client().get('/conversations/' + conversationId + '/starred');
     return resp.data;
   }
   async removeChatListMembers(id, conversationIds) {

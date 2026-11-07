@@ -176,6 +176,128 @@ export class AppStateProcessor {
    * LidContactAction names. Records must be ordered (wire order) so later
    * SET/REPLACE mutations overwrite earlier state and REMOVE deletes it.
    */
+  /** Same decode path as extractContacts but pulls MarkChatAsReadAction
+   *  (index ["markChatAsRead", jid]) — "read on another device" patches. */
+  public static async extractChatReads(
+    records: FlatRecord[],
+    appStateKeys: Map<string, Buffer>,
+  ): Promise<{ jid: string; read: boolean }[]> {
+    const root = await loadWaProto();
+    const dataT = root.lookupType('proto.SyncActionData');
+    const toObj = { bytes: Buffer, longs: Number, defaults: false } as const;
+    const encKeyCache = new Map<string, Buffer>();
+    const out: { jid: string; read: boolean }[] = [];
+
+    for (const rec of records) {
+      const keyIdB64 = rec.keyId ? rec.keyId.toString('base64') : null;
+      const keyData = keyIdB64 ? appStateKeys.get(keyIdB64) : undefined;
+      if (!keyData) continue;
+      let encKey = encKeyCache.get(keyIdB64!);
+      if (!encKey) {
+        encKey = AppStateProcessor.valueEncryptionKey(keyData);
+        encKeyCache.set(keyIdB64!, encKey);
+      }
+      const plain = AppStateProcessor.decryptRecordValue(rec.value!, encKey);
+      if (!plain) continue;
+      let data: any;
+      try {
+        data = dataT.toObject(dataT.decode(plain), toObj);
+      } catch { continue; }
+      const action = data?.value?.markChatAsReadAction;
+      if (!action) continue;
+      let jid: string | undefined;
+      try {
+        const index = JSON.parse(Buffer.from(data.index).toString('utf8'));
+        jid = typeof index?.[1] === 'string' ? index[1] : undefined;
+      } catch { /* malformed */ }
+      if (!jid) continue;
+      if (jid.endsWith('@c.us')) jid = jid.replace(/@c\.us$/, '@s.whatsapp.net');
+      else if (/^\d+$/.test(jid)) jid = `${jid}@s.whatsapp.net`;
+      out.push({ jid, read: action.read !== false });
+    }
+    return out;
+  }
+
+  /** Same decode path for ArchiveChatAction (index ["archiveChat", jid]). */
+  public static async extractChatArchives(
+    records: FlatRecord[],
+    appStateKeys: Map<string, Buffer>,
+  ): Promise<{ jid: string; archived: boolean }[]> {
+    const root = await loadWaProto();
+    const dataT = root.lookupType('proto.SyncActionData');
+    const toObj = { bytes: Buffer, longs: Number, defaults: false } as const;
+    const encKeyCache = new Map<string, Buffer>();
+    const out: { jid: string; archived: boolean }[] = [];
+    for (const rec of records) {
+      const keyIdB64 = rec.keyId ? rec.keyId.toString('base64') : null;
+      const keyData = keyIdB64 ? appStateKeys.get(keyIdB64) : undefined;
+      if (!keyData) continue;
+      let encKey = encKeyCache.get(keyIdB64!);
+      if (!encKey) {
+        encKey = AppStateProcessor.valueEncryptionKey(keyData);
+        encKeyCache.set(keyIdB64!, encKey);
+      }
+      const plain = AppStateProcessor.decryptRecordValue(rec.value!, encKey);
+      if (!plain) continue;
+      let data: any;
+      try {
+        data = dataT.toObject(dataT.decode(plain), toObj);
+      } catch { continue; }
+      const action = data?.value?.archiveChatAction;
+      if (!action) continue;
+      let jid: string | undefined;
+      try {
+        const index = JSON.parse(Buffer.from(data.index).toString('utf8'));
+        jid = typeof index?.[1] === 'string' ? index[1] : undefined;
+      } catch { /* malformed */ }
+      if (!jid) continue;
+      if (jid.endsWith('@c.us')) jid = jid.replace(/@c\.us$/, '@s.whatsapp.net');
+      else if (/^\d+$/.test(jid)) jid = `${jid}@s.whatsapp.net`;
+      out.push({ jid, archived: action.archived !== false });
+    }
+    return out;
+  }
+
+  /** Same decode path for PinChatAction (index ["pin", jid]). */
+  public static async extractChatPins(
+    records: FlatRecord[],
+    appStateKeys: Map<string, Buffer>,
+  ): Promise<{ jid: string; pinned: boolean }[]> {
+    const root = await loadWaProto();
+    const dataT = root.lookupType('proto.SyncActionData');
+    const toObj = { bytes: Buffer, longs: Number, defaults: false } as const;
+    const encKeyCache = new Map<string, Buffer>();
+    const out: { jid: string; pinned: boolean }[] = [];
+    for (const rec of records) {
+      const keyIdB64 = rec.keyId ? rec.keyId.toString('base64') : null;
+      const keyData = keyIdB64 ? appStateKeys.get(keyIdB64) : undefined;
+      if (!keyData) continue;
+      let encKey = encKeyCache.get(keyIdB64!);
+      if (!encKey) {
+        encKey = AppStateProcessor.valueEncryptionKey(keyData);
+        encKeyCache.set(keyIdB64!, encKey);
+      }
+      const plain = AppStateProcessor.decryptRecordValue(rec.value!, encKey);
+      if (!plain) continue;
+      let data: any;
+      try {
+        data = dataT.toObject(dataT.decode(plain), toObj);
+      } catch { continue; }
+      const action = data?.value?.pinAction;
+      if (!action) continue;
+      let jid: string | undefined;
+      try {
+        const index = JSON.parse(Buffer.from(data.index).toString('utf8'));
+        jid = typeof index?.[1] === 'string' ? index[1] : undefined;
+      } catch { /* malformed */ }
+      if (!jid) continue;
+      if (jid.endsWith('@c.us')) jid = jid.replace(/@c\.us$/, '@s.whatsapp.net');
+      else if (/^\d+$/.test(jid)) jid = `${jid}@s.whatsapp.net`;
+      out.push({ jid, pinned: action.pinned !== false });
+    }
+    return out;
+  }
+
   public static async extractContacts(
     records: FlatRecord[],
     appStateKeys: Map<string, Buffer>,

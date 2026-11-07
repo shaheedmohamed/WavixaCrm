@@ -100,6 +100,12 @@ class CrmController extends Controller
     /** Max simultaneous open chats a single agent may hold. */
     private const MAX_ACTIVE_CHATS = 5;
 
+    /** Per-agent override — null column falls back to the default cap. */
+    private function agentChatCap(?User $user): int
+    {
+        return $user?->max_active_chats ?: self::MAX_ACTIVE_CHATS;
+    }
+
     /** Open (unresolved) conversations currently held by this team member. */
     private function activeChatsCount(int $userId): int
     {
@@ -156,7 +162,7 @@ class CrmController extends Controller
                 if ($fresh->assigned_agent_id && !$fresh->resolved_at) {
                     return $fresh->assigned_agent_id === $user->id ? 'mine' : 'taken';
                 }
-                if ($this->activeChatsCount($user->id) >= self::MAX_ACTIVE_CHATS) {
+                if ($this->activeChatsCount($user->id) >= $this->agentChatCap($user)) {
                     return 'full';
                 }
                 $fresh->forceFill([
@@ -180,7 +186,7 @@ class CrmController extends Controller
 
         return match ($result) {
             'taken' => ['http' => 423, 'code' => 'ALREADY_ASSIGNED', 'message' => 'موظف آخر استلم المحادثة دي'],
-            'full' => ['http' => 409, 'code' => 'MAX_ACTIVE_CHATS', 'message' => 'وصلت للحد الأقصى (' . self::MAX_ACTIVE_CHATS . ' محادثات مفتوحة) — أنهي شات أو حوّله لزميل الأول'],
+            'full' => ['http' => 409, 'code' => 'MAX_ACTIVE_CHATS', 'message' => 'وصلت للحد الأقصى (' . $this->agentChatCap($user) . ' محادثات مفتوحة) — أنهي شات أو حوّله لزميل الأول'],
             default => ['http' => 404, 'code' => 'NOT_FOUND', 'message' => 'المحادثة غير موجودة'],
         };
     }
@@ -290,7 +296,7 @@ class CrmController extends Controller
             'limits' => $planLimits,
             // Live workload counters — the chat UI shows "n/5" to agents.
             'active_chats' => $user->crm_role === 'agent' ? $this->activeChatsCount($user->id) : null,
-            'max_active_chats' => self::MAX_ACTIVE_CHATS,
+            'max_active_chats' => $this->agentChatCap($user),
         ];
     }
 
@@ -779,8 +785,8 @@ class CrmController extends Controller
                     'group_id' => $a->crm_group_id,
                     'group_name' => $a->crmGroup?->name,
                     'active_chats' => $active,
-                    'max_active_chats' => self::MAX_ACTIVE_CHATS,
-                    'is_full' => $active >= self::MAX_ACTIVE_CHATS,
+                    'max_active_chats' => $a->max_active_chats ?: self::MAX_ACTIVE_CHATS,
+                    'is_full' => $active >= ($a->max_active_chats ?: self::MAX_ACTIVE_CHATS),
                     'created_at' => $a->created_at,
                 ];
             }),
@@ -820,6 +826,7 @@ class CrmController extends Controller
                 'integer',
                 Rule::exists('crm_groups', 'id')->where('owner_id', $owner->id),
             ],
+            'max_active_chats' => 'nullable|integer|min:1|max:500',
         ]);
 
         $agent = User::create([
@@ -830,6 +837,7 @@ class CrmController extends Controller
             'crm_parent_id' => $owner->id,
             'crm_assigned_sessions' => $request->assigned_sessions ?? [],
             'crm_group_id' => $request->group_id,
+            'max_active_chats' => $request->filled('max_active_chats') ? (int) $request->max_active_chats : null,
             'status' => 'active',
             'email_verified_at' => now(),
             'messages_balance' => 0,
@@ -846,6 +854,7 @@ class CrmController extends Controller
                 'group_id' => $agent->crm_group_id,
                 'group_name' => $agent->crmGroup?->name,
                 'status' => $agent->status,
+                'max_active_chats' => $agent->max_active_chats,
                 'created_at' => $agent->created_at,
             ],
         ]);
@@ -870,6 +879,7 @@ class CrmController extends Controller
                 Rule::exists('crm_groups', 'id')->where('owner_id', $owner->id),
             ],
             'status' => 'nullable|string|in:active,inactive',
+            'max_active_chats' => 'nullable|integer|min:1|max:500',
         ]);
 
         $updateData = [
@@ -878,6 +888,7 @@ class CrmController extends Controller
             'crm_assigned_sessions' => $request->assigned_sessions ?? [],
             'crm_group_id' => $request->group_id,
             'status' => $request->status ?? $agent->status ?? 'active',
+            'max_active_chats' => $request->filled('max_active_chats') ? (int) $request->max_active_chats : null,
         ];
 
         if ($request->filled('password')) {
@@ -897,6 +908,7 @@ class CrmController extends Controller
                 'group_id' => $agent->crm_group_id,
                 'group_name' => $agent->crmGroup?->name,
                 'status' => $agent->status,
+                'max_active_chats' => $agent->max_active_chats,
             ],
         ]);
     }
@@ -1288,6 +1300,16 @@ class CrmController extends Controller
             $query->where('unread_count', '>', 0);
         }
 
+        if ($request->boolean('groups_only')) {
+            $query->where('contact_jid', 'like', '%@g.us');
+        }
+
+        // Archived chats live in their own drawer — hidden from every normal
+        // tab, listed alone under ?archived=1.
+        $conversation->getQuery();
+        $query->when($request->boolean('archived'), fn ($q) => $q->whereNotNull('archived_at'),
+             fn ($q) => $q->whereNull('archived_at'));
+
         if ($request->filled('search')) {
             $search = trim($request->search);
             $query->where(function ($q) use ($search) {
@@ -1537,6 +1559,7 @@ class CrmController extends Controller
         return response()->json([
             'success' => true,
             'conversation' => $conversation,
+            'pinned' => $this->pinnedPreview($conversation),
             'messages' => $messages,
             'has_more' => $hasMore,
             'has_newer' => $hasNewer,
@@ -1559,11 +1582,24 @@ class CrmController extends Controller
 
         // LID digits (usually 15+) resolve to a phone number via the lid→pn
         // table populated by history sync and live traffic.
+        // Never resolve the group's own id — LID-era stanzas without a
+        // participant attr used to land here with from = group JID, which
+        // then "resolved" to a random contact via the lid table.
+        $groupDigits = preg_replace('/\D/', '', (string) $conversation->contact_jid);
         $fromDigits = $incoming->pluck('from')
             ->map(fn ($f) => preg_replace('/\D/', '', (string) $f))
-            ->filter()
+            ->filter(fn ($d) => $d !== $groupDigits)
             ->unique()
             ->values();
+        if ($fromDigits->isEmpty()) {
+            $incoming->each(function ($m) use ($groupDigits) {
+                if (preg_replace('/\D/', '', (string) $m->from) === $groupDigits) {
+                    $m->sender_name = null;
+                    $m->sender_phone = null;
+                }
+            });
+            return;
+        }
         $lidKeys = $fromDigits
             ->filter(fn ($d) => strlen($d) >= 15)
             ->map(fn ($d) => $d . '@lid')
@@ -1774,6 +1810,229 @@ class CrmController extends Controller
         return response()->json([
             'success' => true,
             'conversation' => $conv,
+        ]);
+    }
+
+    /**
+     * Create a real WhatsApp group — mirrors WhatsApp Web's "New group"
+     * flow. The engine issues the w:g2 <create> stanza (participants),
+     * then the follow-up settings stanzas: announcement (admins only send),
+     * locked (admins only edit info), membership approval, disappearing
+     * messages and the group picture.
+     */
+    public function createWhatsAppGroup(Request $request)
+    {
+        $request->validate([
+            'subject' => 'required|string|max:128',
+            'participants' => 'required|array|min:1|max:1024',
+            'participants.*' => 'string|max:60',
+            'session_id' => 'nullable|integer',
+            'ephemeral' => 'nullable|integer|in:0,86400,604800,7776000',
+            'announce_only' => 'nullable|boolean',
+            'info_edit_admins_only' => 'nullable|boolean',
+            'approval_mode' => 'nullable|boolean',
+            'member_add_mode' => 'nullable|string|in:admin_add,all_member_add',
+            'picture' => 'nullable|string|max:4000000',
+        ]);
+
+        $allowedSessionIds = $this->getAllowedSessionIds();
+        $sessionId = $request->session_id;
+
+        if (!$sessionId || !in_array($sessionId, $allowedSessionIds)) {
+            $connected = WhatsAppSession::whereIn('id', $allowedSessionIds)
+                ->where('status', 'connected')
+                ->first();
+            if (!$connected) {
+                return response()->json(['success' => false, 'message' => 'لا يوجد جهاز متصل حالياً لإنشاء الجروب'], 400);
+            }
+            $sessionId = $connected->id;
+        }
+
+        $session = WhatsAppSession::find($sessionId);
+        if (!$session || $session->status !== 'connected') {
+            return response()->json(['success' => false, 'message' => 'الجهاز غير متصل حالياً بالواتساب'], 400);
+        }
+
+        $owner = $this->resolveOwner();
+        $token = $session->session_token ?: (string) $session->id;
+
+        // Normalize members: LID JIDs resolve to PN form when a mapping is
+        // known (group adds work best on phone numbers), PN/digit forms go
+        // through as-is — WhatsApp reports per-member failures anyway.
+        $lidToPn = DB::table('whatsapp_lid_mappings')->pluck('pn', 'lid')->toArray();
+        $participants = collect($request->participants)->map(function ($p) use ($lidToPn) {
+            $p = trim((string) $p);
+            if (str_ends_with($p, '@lid')) {
+                return $lidToPn[$p] ?? $p;
+            }
+            if (str_contains($p, '@')) {
+                return $p;
+            }
+            $digits = preg_replace('/\D/', '', $p);
+            return $digits ? $digits . '@s.whatsapp.net' : null;
+        })->filter()->unique()->values()->all();
+
+        if (!count($participants)) {
+            return response()->json(['success' => false, 'message' => 'أضف عضو واحد على الأقل'], 422);
+        }
+
+        $payload = [
+            'sessionId' => $token,
+            'subject' => trim($request->subject),
+            'participants' => $participants,
+            'ephemeral' => (int) $request->input('ephemeral', 0),
+            'announceOnly' => $request->boolean('announce_only'),
+            'infoEditAdminsOnly' => $request->boolean('info_edit_admins_only'),
+            'approvalMode' => $request->boolean('approval_mode'),
+        ];
+        if ($request->filled('member_add_mode')) {
+            $payload['memberAddMode'] = $request->member_add_mode;
+        }
+        if ($request->filled('picture')) {
+            $payload['picture'] = $request->picture;
+        }
+
+        try {
+            $res = $this->engineClient()->timeout(60)->post("{$this->engineUrl}/internal/group/create", $payload);
+            $data = $res->json();
+            if (!$res->successful() || !($data['success'] ?? false) || empty($data['jid'])) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'فشل إنشاء الجروب: ' . ($data['message'] ?? ('HTTP ' . $res->status())),
+                ], 502);
+            }
+        } catch (\Throwable $e) {
+            Log::error("CRM createWhatsAppGroup engine error: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'فشل إنشاء الجروب: ' . $e->getMessage()], 500);
+        }
+
+        $gid = (string) $data['jid'];
+        // Bare-digit group ids get the domain appended — every group
+        // check downstream (isGroupConv, members panel) keys off @g.us.
+        if (!str_contains($gid, '@')) {
+            $gid .= '@g.us';
+        }
+        $subject = trim($request->subject);
+
+        $conversation = WhatsAppConversation::where('session_id', $sessionId)
+            ->where('contact_jid', $gid)
+            ->first();
+        if (!$conversation) {
+            $conversation = WhatsAppConversation::create([
+                'session_id' => $sessionId,
+                'user_id' => $owner->id,
+                'contact_jid' => $gid,
+                'contact_phone' => preg_replace('/\D/', '', explode('@', $gid)[0]),
+                'contact_name' => $data['group']['subject'] ?? $subject,
+                'last_message_at' => now(),
+            ]);
+        } elseif (!$conversation->contact_name) {
+            $conversation->update(['contact_name' => $subject]);
+        }
+
+        // The create-notification stanza the phone echoes back can take a
+        // moment; pull the avatar + subject once it settles. Best-effort —
+        // the nightly avatar resolver covers anything missed here.
+        try {
+            $pr = $this->engineClient()->post("{$this->engineUrl}/internal/picture/resolve", [
+                'sessionId' => $token,
+                'jids' => [$gid],
+            ]);
+            $pic = $pr->json('pictures.' . $gid);
+            if ($pic && !$conversation->contact_avatar) {
+                $conversation->update(['contact_avatar' => $pic]);
+            }
+        } catch (\Throwable $e) { /* best effort */ }
+
+        $conversation->load('session:id,device_name,phone_number');
+        $this->broadcastConversation($conversation);
+        $this->audit('group.create', ['gid' => $gid, 'subject' => mb_substr($subject, 0, 120)], $conversation->id, $sessionId);
+
+        return response()->json([
+            'success' => true,
+            'conversation' => $conversation,
+            'jid' => $gid,
+            'participants' => $data['group']['participants'] ?? [],
+            'warnings' => $data['warnings'] ?? [],
+        ]);
+    }
+
+    /**
+     * Update an existing WhatsApp group — subject, picture and the
+     * settings toggles (announcement / locked / approval / disappearing).
+     * Mirrors WhatsApp Web's group-info edit actions.
+     */
+    public function updateWhatsAppGroup(Request $request, $id)
+    {
+        $request->validate([
+            'subject' => 'nullable|string|max:128',
+            'ephemeral' => 'nullable|integer|in:0,86400,604800,7776000',
+            'announce_only' => 'nullable|boolean',
+            'info_edit_admins_only' => 'nullable|boolean',
+            'approval_mode' => 'nullable|boolean',
+            'member_add_mode' => 'nullable|string|in:admin_add,all_member_add',
+            'picture' => 'nullable|string|max:4000000',
+        ]);
+
+        $allowed = $this->getAllowedSessionIds();
+        $conversation = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->where('id', $id)
+            ->firstOrFail();
+
+        if (!str_ends_with((string) $conversation->contact_jid, '@g.us')) {
+            return response()->json(['success' => false, 'message' => 'دي مش محادثة جروب'], 422);
+        }
+        $session = $conversation->session;
+        if (!$session || $session->status !== 'connected') {
+            return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
+        }
+
+        $token = $session->session_token ?: (string) $session->id;
+        $payload = ['sessionId' => $token, 'jid' => $conversation->contact_jid];
+        if ($request->filled('subject')) $payload['subject'] = trim($request->subject);
+        if ($request->has('announce_only')) $payload['announceOnly'] = $request->boolean('announce_only');
+        if ($request->has('info_edit_admins_only')) $payload['infoEditAdminsOnly'] = $request->boolean('info_edit_admins_only');
+        if ($request->has('approval_mode')) $payload['approvalMode'] = $request->boolean('approval_mode');
+        if ($request->filled('member_add_mode')) $payload['memberAddMode'] = $request->member_add_mode;
+        if ($request->has('ephemeral')) $payload['ephemeral'] = (int) $request->input('ephemeral');
+        if ($request->filled('picture')) $payload['picture'] = $request->picture;
+
+        try {
+            $res = $this->engineClient()->timeout(60)->post("{$this->engineUrl}/internal/group/update", $payload);
+            $data = $res->json();
+            if (!$res->successful() || !($data['success'] ?? false)) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'فشل تحديث الجروب: ' . ($data['message'] ?? ('HTTP ' . $res->status())),
+                ], 502);
+            }
+        } catch (\Throwable $e) {
+            Log::error("CRM updateWhatsAppGroup engine error: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'فشل تحديث الجروب: ' . $e->getMessage()], 500);
+        }
+
+        if ($request->filled('subject')) {
+            $conversation->update(['contact_name' => trim($request->subject)]);
+        }
+        if ($request->filled('picture')) {
+            try {
+                $pr = $this->engineClient()->post("{$this->engineUrl}/internal/picture/resolve", [
+                    'sessionId' => $token,
+                    'jids' => [$conversation->contact_jid],
+                ]);
+                $pic = $pr->json('pictures.' . $conversation->contact_jid);
+                if ($pic) $conversation->update(['contact_avatar' => $pic]);
+            } catch (\Throwable $e) { /* best effort */ }
+        }
+
+        $this->broadcastConversation($conversation);
+        $this->audit('group.update', ['jid' => $conversation->contact_jid, 'applied' => $data['applied'] ?? []], $conversation->id, $session->id);
+
+        return response()->json([
+            'success' => true,
+            'conversation' => $conversation->fresh('session:id,device_name,phone_number'),
+            'applied' => $data['applied'] ?? [],
+            'warnings' => $data['warnings'] ?? [],
         ]);
     }
 
@@ -2849,6 +3108,11 @@ class CrmController extends Controller
             'subject' => $meta['subject'] ?? $conversation->contact_name,
             'owner' => $meta['owner'] ?? null,
             'created_at' => $meta['createdAt'] ?? null,
+            'announce' => $meta['announce'] ?? null,
+            'restrict' => $meta['restrict'] ?? null,
+            'ephemeral' => $meta['ephemeralExpiration'] ?? null,
+            'member_add_mode' => $meta['memberAddMode'] ?? null,
+            'join_approval' => $meta['joinApprovalMode'] ?? null,
             'members' => $members,
             'past' => $past,
         ]);
@@ -2975,10 +3239,10 @@ class CrmController extends Controller
                     return ['http' => 423, 'message' => 'المحادثة دي مش معاك — مش هتقدر تحولها'];
                 }
                 $overCap = $target->crm_role === 'agent'
-                    && $this->activeChatsCount($targetId) >= self::MAX_ACTIVE_CHATS;
+                    && $this->activeChatsCount($targetId) >= $this->agentChatCap($target);
                 if ($overCap && $user->crm_role === 'agent') {
                     return ['http' => 409, 'code' => 'TARGET_FULL',
-                        'message' => $target->name . ' وصل للحد الأقصى (' . self::MAX_ACTIVE_CHATS . ' محادثات) — اختار موظف تاني'];
+                        'message' => $target->name . ' وصل للحد الأقصى (' . $this->agentChatCap($target) . ' محادثات) — اختار موظف تاني'];
                 }
                 $conv->forceFill([
                     'assigned_agent_id' => $targetId,
@@ -3486,5 +3750,161 @@ class CrmController extends Controller
         $list = \App\Models\CrmChatList::where('owner_id', $request->user()->id)->findOrFail($id);
         $list->items()->whereIn('conversation_id', $data['conversation_ids'])->delete();
         return response()->json(['success' => true]);
+    }
+
+    /** Toggle a message star (CRM-local — not synced back to WhatsApp). */
+    public function toggleMessageStar(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $message = WhatsAppMessage::where('id', $id)->firstOrFail();
+        $conv = WhatsAppConversation::where('id', $message->conversation_id)
+            ->whereIn('session_id', $allowed)->firstOrFail();
+        $message->starred_at = $message->starred_at ? null : now();
+        $message->save();
+        return response()->json(['success' => true, 'starred' => (bool) $message->starred_at]);
+    }
+
+    /** Every starred message in a conversation, oldest-first. */
+    public function getStarredMessages(Request $request, $conversationId)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::where('id', $conversationId)
+            ->whereIn('session_id', $allowed)->firstOrFail();
+        $messages = WhatsAppMessage::where('conversation_id', $conv->id)
+            ->whereNotNull('starred_at')
+            ->orderBy('starred_at', 'desc')->orderBy('id', 'desc')
+            ->limit(500)->get();
+        return response()->json(['success' => true, 'messages' => $messages]);
+    }
+
+    /** The agent's saved quick replies (WhatsApp Business style). */
+    public function getQuickReplies(Request $request)
+    {
+        $replies = \App\Models\CrmQuickReply::where('owner_id', $request->user()->id)
+            ->orderBy('sort_order')->orderBy('id')->get();
+        return response()->json(['success' => true, 'replies' => $replies]);
+    }
+
+    public function saveQuickReply(Request $request)
+    {
+        $data = $request->validate([
+            'id' => 'nullable|integer',
+            'shortcut' => 'nullable|string|max:50',
+            'body' => 'required|string|max:4000',
+        ]);
+        $reply = !empty($data['id'])
+            ? \App\Models\CrmQuickReply::where('owner_id', $request->user()->id)->findOrFail($data['id'])
+            : new \App\Models\CrmQuickReply(['owner_id' => $request->user()->id]);
+        $reply->fill(['shortcut' => $data['shortcut'] ?? null, 'body' => $data['body']]);
+        $reply->save();
+        return response()->json(['success' => true, 'reply' => $reply]);
+    }
+
+    public function deleteQuickReply(Request $request, $id)
+    {
+        \App\Models\CrmQuickReply::where('owner_id', $request->user()->id)->findOrFail($id)->delete();
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Pin a message inside a chat — sends proto.pinInChatMessage through the
+     * engine so the pin lands on real WhatsApp too, then stores the banner
+     * state on the conversation.
+     */
+    public function pinMessage(Request $request, $id)
+    {
+        $data = $request->validate(['duration' => 'nullable|integer|min:60|max:2592000']);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $message = WhatsAppMessage::findOrFail($id);
+        $conv = WhatsAppConversation::where('id', $message->conversation_id)
+            ->whereIn('session_id', $allowed)->firstOrFail();
+        $session = WhatsAppSession::findOrFail($conv->session_id);
+        $token = $session->session_token ?: (string) $session->id;
+
+        $res = $this->engineClient()->post("{$this->engineUrl}/internal/pin", [
+            'sessionId' => $token,
+            'to' => $conv->contact_jid,
+            'messageId' => $message->message_id,
+            'fromMe' => $message->direction === 'outgoing',
+            'participant' => ($message->direction === 'incoming' && str_contains((string) $conv->contact_jid, '@g.us')) ? $message->from : null,
+            'action' => 'pin',
+        ]);
+        $body = $res->json() ?: [];
+        if (!$res->successful() || !($body['success'] ?? false)) {
+            return response()->json(['success' => false, 'message' => $body['message'] ?? $body['error'] ?? 'Engine rejected the pin'], 502);
+        }
+
+        $duration = (int) ($data['duration'] ?? 604800); // 7 days default
+        $conv->update([
+            'pinned_message_id' => $message->id,
+            'pin_expires_at' => now()->addSeconds($duration),
+        ]);
+        return response()->json(['success' => true, 'pinned' => $this->pinnedPreview($conv->fresh())]);
+    }
+
+    public function unpinMessage(Request $request, $conversationId)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::where('id', $conversationId)
+            ->whereIn('session_id', $allowed)->firstOrFail();
+        $session = WhatsAppSession::findOrFail($conv->session_id);
+        $token = $session->session_token ?: (string) $session->id;
+        $message = $conv->pinned_message_id ? WhatsAppMessage::find($conv->pinned_message_id) : null;
+
+        if ($message) {
+            try {
+                $this->engineClient()->post("{$this->engineUrl}/internal/pin", [
+                    'sessionId' => $token,
+                    'to' => $conv->contact_jid,
+                    'messageId' => $message->message_id,
+                    'fromMe' => $message->direction === 'outgoing',
+                    'participant' => ($message->direction === 'incoming' && str_contains((string) $conv->contact_jid, '@g.us')) ? $message->from : null,
+                    'action' => 'unpin',
+                ]);
+            } catch (\Throwable $e) { /* unpin locally anyway */ }
+        }
+        $conv->update(['pinned_message_id' => null, 'pin_expires_at' => null]);
+        return response()->json(['success' => true]);
+    }
+
+    /** Banner payload for the chat header — text excerpt + jump target. */
+    private function pinnedPreview(?WhatsAppConversation $conv): ?array
+    {
+        if (!$conv?->pinned_message_id) {
+            return null;
+        }
+        $m = WhatsAppMessage::find($conv->pinned_message_id);
+        if (!$m) {
+            return null;
+        }
+        return [
+            'id' => $m->id,
+            'message_id' => $m->message_id,
+            'direction' => $m->direction,
+            'message_type' => $m->message_type,
+            'message' => mb_substr((string) $m->message, 0, 200),
+            'sender_name' => $m->sender_name,
+            'expires_at' => $conv->pin_expires_at?->toIso8601String(),
+        ];
+    }
+
+    /** Local archive flag — the WhatsApp-side patch rides app-state, synced
+     *  back through whatsapp/chat-archived when it lands from any device. */
+    public function archiveConversation(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::where('id', $id)->whereIn('session_id', $allowed)->firstOrFail();
+        $conv->update(['archived_at' => $request->boolean('archived', true) ? now() : null]);
+        return response()->json(['success' => true, 'archived' => (bool) $conv->archived_at]);
+    }
+
+    /** Toggle a conversation pin — local flag; the WhatsApp-side pin syncs
+     *  in through whatsapp/chat-pinned when it lands from any device. */
+    public function pinConversation(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::where('id', $id)->whereIn('session_id', $allowed)->firstOrFail();
+        $conv->update(['is_pinned' => $request->boolean('pinned', true)]);
+        return response()->json(['success' => true, 'pinned' => (bool) $conv->is_pinned]);
     }
 }

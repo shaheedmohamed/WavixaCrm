@@ -8,6 +8,7 @@ use App\Models\WhatsAppAutoReplyLog;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessage;
 use App\Models\WhatsAppSession;
+use App\Jobs\SendDelayedAutoReplyJob;
 use App\Jobs\SendWhatsAppMessageJob;
 use App\Services\UserReputationService;
 use App\Services\MetaPixelService;
@@ -630,7 +631,54 @@ class WhatsAppWebhookController extends Controller
      * we only stamp revoked_at and push a realtime badge so agents can see
      * what was deleted and when.
      */
-    public function messageRevoked(Request $request)
+        /** "Read on the phone" app-state patch → sync the CRM unread badge. */
+        /** "Archived on the phone" app-state patch → hide it in the CRM too. */
+        /** "Pinned on the phone" app-state patch → float it in the CRM list too. */
+    public function chatPinned(Request $request)
+    {
+        $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'pinned' => 'nullable|boolean']);
+        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        $conv = WhatsAppConversation::query()
+            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
+            ->where('contact_jid', $jid)->first();
+        if ($conv) {
+            $conv->update(['is_pinned' => (bool) ($data['pinned'] ?? true)]);
+        }
+        return response()->json(['success' => true]);
+    }
+
+public function chatArchived(Request $request)
+    {
+        $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'archived' => 'nullable|boolean']);
+        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        $conv = WhatsAppConversation::query()
+            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
+            ->where('contact_jid', $jid)->first();
+        if ($conv) {
+            $conv->update(['archived_at' => ($data['archived'] ?? true) ? now() : null]);
+        }
+        return response()->json(['success' => true]);
+    }
+
+public function chatRead(Request $request)
+    {
+        $data = $request->validate([
+            'userId' => 'nullable',
+            'jid' => 'required|string',
+            'read' => 'nullable|boolean',
+        ]);
+        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        $conv = WhatsAppConversation::query()
+            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
+            ->whereIn('contact_jid', [$jid, preg_replace('/\D/', '', explode('@', $jid)[0]) . '@s.whatsapp.net'])
+            ->first();
+        if ($conv) {
+            $conv->update(['unread_count' => ($data['read'] ?? true) ? 0 : max(1, (int) $conv->unread_count)]);
+        }
+        return response()->json(['success' => true]);
+    }
+
+public function messageRevoked(Request $request)
     {
         try {
             $data = $request->validate([
@@ -1011,6 +1059,12 @@ class WhatsAppWebhookController extends Controller
                         || (int) $newestTs >= $conversation->last_message_at->getTimestamp();
                     if ($syncUnread > $storedUnread || ($syncUnread < $storedUnread && $chunkIsFresh)) {
                         $convUpdates['unread_count'] = $syncUnread;
+                        if (isset($convData['archived'])) {
+                            $convUpdates['archived_at'] = $convData['archived'] ? now() : null;
+                        }
+                        if (isset($convData['pinned'])) {
+                            $convUpdates['is_pinned'] = (bool) $convData['pinned'];
+                        }
                     }
                 }
                 if ($convUpdates) {
@@ -1328,6 +1382,30 @@ class WhatsAppWebhookController extends Controller
      */
     public function messageReceived(Request $request)
     {
+        // A pin/unpin action rides in data.pin — flag the conversation and
+        // skip the bubble entirely.
+        $pinInfo = $request->input('pin');
+        if (is_array($pinInfo) && !empty($pinInfo['action'])) {
+            $pJid = (string) ($request->input('from') ?? '');
+            if ($pJid) {
+                $pConv = WhatsAppConversation::where('session_id', $request->input('userId'))
+                    ->where('contact_jid', $pJid)->first();
+                if ($pConv) {
+                    if (($pinInfo['action'] ?? '') === 'unpin') {
+                        $pConv->update(['pinned_message_id' => null, 'pin_expires_at' => null]);
+                    } else {
+                        $pMsg = !empty($pinInfo['messageId'])
+                            ? WhatsAppMessage::where('conversation_id', $pConv->id)->where('message_id', $pinInfo['messageId'])->first()
+                            : null;
+                        if ($pMsg) {
+                            $pConv->update(['pinned_message_id' => $pMsg->id, 'pin_expires_at' => now()->addDays(7)]);
+                        }
+                    }
+                }
+            }
+            return response()->json(['success' => true, 'pin' => true]);
+        }
+
         try {
             $data = $request->validate([
                 'userId' => 'required|string',
@@ -1345,6 +1423,7 @@ class WhatsAppWebhookController extends Controller
                 'isGroup' => 'nullable|boolean',
                 'replyToId' => 'nullable|string',
                 'isForwarded' => 'nullable|boolean',
+                'pin' => 'nullable|array',
                 'mentionedJids' => 'nullable|array',
                 'msgTimestamp' => 'nullable|integer',
                 'timestamp' => 'nullable',
@@ -1613,6 +1692,38 @@ class WhatsAppWebhookController extends Controller
                 return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'disabled_or_empty']);
             }
 
+            // Trigger gating — when the reply fires, not what it says.
+            $trigger = $autoReply->trigger_mode ?: 'all';
+
+            if ($trigger === 'new_customer') {
+                // Only the first-ever incoming message in a conversation.
+                $incomingCount = WhatsAppMessage::where('conversation_id', $conversation->id)
+                    ->where('direction', 'incoming')
+                    ->count();
+                if ($incomingCount > 1) {
+                    return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'not_new_customer']);
+                }
+            } elseif ($trigger === 'outside_hours') {
+                $whFrom = $autoReply->work_hours_from ? substr((string) $autoReply->work_hours_from, 0, 5) : null;
+                $whTo = $autoReply->work_hours_to ? substr((string) $autoReply->work_hours_to, 0, 5) : null;
+                if (!$whFrom || !$whTo || $this->isWithinWorkHours($whFrom, $whTo)) {
+                    return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'within_working_hours']);
+                }
+            } elseif ($trigger === 'delayed') {
+                // Defer: the reply goes out only if no agent answers within
+                // response_delay_minutes. One pending check per conversation.
+                $minutes = max(1, (int) ($autoReply->response_delay_minutes ?? 5));
+                if (Cache::add("auto_reply_delayed:{$conversation->id}", true, ($minutes + 5) * 60)) {
+                    SendDelayedAutoReplyJob::dispatch(
+                        $autoReply->id,
+                        $conversation->id,
+                        $session->id,
+                        $incomingMessage?->id,
+                    )->delay(now()->addMinutes($minutes));
+                }
+                return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'delayed_scheduled']);
+            }
+
             // Duplicate / already processed protection
             $dedupKey = "wa_incoming:{$session->id}:{$messageId}";
             if ($messageId && !Cache::add($dedupKey, true, 300)) {
@@ -1874,6 +1985,19 @@ class WhatsAppWebhookController extends Controller
         }
 
         return $status;
+    }
+
+    /**
+     * Is "now" inside the configured working-hours window? Handles
+     * overnight ranges (18:00 → 09:00) as well as normal ones.
+     */
+    private function isWithinWorkHours(string $from, string $to): bool
+    {
+        $now = now()->format('H:i');
+        if ($from <= $to) {
+            return $now >= $from && $now < $to;
+        }
+        return $now >= $from || $now < $to;
     }
 
     private function setTyping(?WhatsAppSession $session, string $contactJid, bool $composing): void

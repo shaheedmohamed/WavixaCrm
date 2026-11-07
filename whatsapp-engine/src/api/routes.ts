@@ -154,8 +154,43 @@ export function createRoutes(deps: RouteDependencies): express.Router {
             replyToId: msg.quotedMessageId,
             isForwarded: (msg as any).isForwarded || false,
             mentionedJids: (msg as any).mentionedJids || [],
+            pin: (msg as any).pin || null,
             msgTimestamp: msg.timestamp,
           },
+        });
+      });
+
+      session.getClient()?.on?.('chat.pinned', (r: any) => {
+        eventBus.emit('chat.pinned', {
+          event: 'chat.pinned',
+          session_id: sessionId,
+          message_id: '',
+          from: r.jid,
+          timestamp: Math.floor(Date.now() / 1000),
+          data: { pinned: r.pinned !== false },
+        });
+      });
+
+      session.getClient()?.on?.('chat.archived', (r: any) => {
+        eventBus.emit('chat.archived', {
+          event: 'chat.archived',
+          session_id: sessionId,
+          message_id: '',
+          from: r.jid,
+          timestamp: Math.floor(Date.now() / 1000),
+          data: { archived: r.archived !== false },
+        });
+      });
+
+      // "Read on the phone" (app-state markChatAsRead) → zero the unread badge.
+      session.getClient()?.on?.('chat.read', (r: any) => {
+        eventBus.emit('chat.read', {
+          event: 'chat.read',
+          session_id: sessionId,
+          message_id: '',
+          from: r.jid,
+          timestamp: Math.floor(Date.now() / 1000),
+          data: { read: r.read !== false },
         });
       });
 
@@ -811,7 +846,33 @@ export function createRoutes(deps: RouteDependencies): express.Router {
    * lazily resolve media for history-synced messages — the mediaKey arrives
    * base64-encoded.
    */
-  router.post('/internal/media/download', async (req: Request, res: Response) => {
+  router.post('/internal/pin', async (req: Request, res: Response) => {
+    const { sessionId: reqSessionId, userId, to, messageId, fromMe, participant, action } = req.body || {};
+    const sessionId = String(reqSessionId || userId || '');
+    if (!sessionId || !to || !messageId) {
+      res.status(400).json({ success: false, message: 'sessionId, to, and messageId are required' });
+      return;
+    }
+    const session = activeSessions.get(sessionId);
+    const sessionState = session?.getState();
+    if (!session || !session.getClient() || (sessionState !== 'READY' && sessionState !== 'CONNECTED')) {
+      res.status(409).json({ success: false, message: 'Session is not connected to WhatsApp' });
+      return;
+    }
+    try {
+      const r = await session.getClient()!.sendPinMessage(String(to), {
+        action: action === 'unpin' ? 'unpin' : 'pin',
+        messageId: String(messageId),
+        fromMe: fromMe !== false,
+        participant: participant ? String(participant) : undefined,
+      });
+      res.json({ success: true, id: r?.id });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err instanceof Error ? err.message : 'Pin failed' });
+    }
+  });
+
+    router.post('/internal/media/download', async (req: Request, res: Response) => {
     const { mediaKey, directPath, url, type, mimetype } = req.body || {};
     if (!mediaKey || (!directPath && !url)) {
       res.status(400).json({ success: false, message: 'mediaKey and directPath/url are required' });
@@ -927,6 +988,180 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         message: err instanceof Error ? err.message : 'Group metadata failed',
       });
     }
+  });
+
+  // Group creation — the real w:g2 <create> set-query WhatsApp Web sends
+  // from its "New group" flow, plus the same follow-up settings stanzas
+  // (announcement/locked/ephemeral/approval mode) and the profile-picture
+  // upload. Returns the new group JID plus per-participant add results so
+  // the CRM can flag numbers WhatsApp refused (privacy / not registered).
+  router.post(['/internal/group/create', '/api/whatsapp/create-group'], async (req: Request, res: Response) => {
+    const sessionId = String(req.body.sessionId || req.body.userId || '');
+    const subject = String(req.body.subject || '').trim().slice(0, 128);
+    const participants: string[] = Array.isArray(req.body.participants)
+      ? req.body.participants.map(String)
+      : [];
+
+    if (!sessionId || !subject || !participants.length) {
+      res.status(400).json({
+        success: false,
+        message: 'sessionId, subject and participants are required',
+      });
+      return;
+    }
+
+    const session = activeSessions.get(sessionId);
+    const sessionState = session?.getState();
+    if (!session || (sessionState !== 'READY' && sessionState !== 'CONNECTED')) {
+      res.status(409).json({
+        success: false,
+        message: `Session is not connected (state: ${sessionState || 'missing'})`,
+      });
+      return;
+    }
+    const client = session.getClient();
+    if (!client) {
+      res.status(409).json({ success: false, message: 'Client not initialized' });
+      return;
+    }
+
+    try {
+      const meta = await client.createGroup(subject, participants.slice(0, 1024));
+      const gid = meta.id;
+      const warnings: string[] = [];
+
+      // Optional follow-up settings — same iq stanzas WhatsApp Web sends
+      // when you flip the toggles on the group-info screen. Failures are
+      // reported as warnings; the group itself is already created.
+      const tryStep = async (label: string, fn: () => Promise<void>) => {
+        try {
+          await fn();
+        } catch (err) {
+          warnings.push(`${label}: ${err instanceof Error ? err.message : 'failed'}`);
+        }
+      };
+
+      if (req.body.announceOnly) {
+        await tryStep('announcement', () => client.updateGroupSetting(gid, 'announcement'));
+      }
+      if (req.body.infoEditAdminsOnly) {
+        await tryStep('locked', () => client.updateGroupSetting(gid, 'locked'));
+      }
+      if (req.body.approvalMode) {
+        await tryStep('membership_approval', () =>
+          client.updateGroupSetting(gid, 'membership_approval_mode', 'on'),
+        );
+      }
+      if (req.body.memberAddMode === 'admin_add' || req.body.memberAddMode === 'all_member_add') {
+        await tryStep('member_add_mode', () =>
+          client.updateGroupSetting(gid, 'member_add_mode', String(req.body.memberAddMode)),
+        );
+      }
+      const ephemeral = Number(req.body.ephemeral ?? 0);
+      if (Number.isFinite(ephemeral) && ephemeral > 0) {
+        await tryStep('ephemeral', () => client.updateGroupEphemeral(gid, ephemeral));
+      }
+      if (typeof req.body.picture === 'string' && req.body.picture.length > 0) {
+        try {
+          const jpeg = Buffer.from(req.body.picture.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+          if (jpeg.length > 0 && jpeg.length <= 5 * 1024 * 1024) {
+            await tryStep('picture', () => client.updateGroupPicture(gid, jpeg));
+          }
+        } catch {
+          warnings.push('picture: invalid image data');
+        }
+      }
+
+      res.json({
+        success: true,
+        group: meta,
+        jid: gid,
+        warnings,
+      });
+    } catch (err) {
+      res.status(500).json({
+        success: false,
+        message: err instanceof Error ? err.message : 'Group create failed',
+      });
+    }
+  });
+
+  // Update an existing group — subject, picture and the same settings
+  // toggles WhatsApp Web exposes on the group-info screen.
+  router.post('/internal/group/update', async (req: Request, res: Response) => {
+    const sessionId = String(req.body.sessionId || req.body.userId || '');
+    const jid = String(req.body.jid || '');
+    if (!sessionId || !jid.endsWith('@g.us')) {
+      res.status(400).json({ success: false, message: 'sessionId and a @g.us jid are required' });
+      return;
+    }
+    const session = activeSessions.get(sessionId);
+    const sessionState = session?.getState();
+    if (!session || (sessionState !== 'READY' && sessionState !== 'CONNECTED')) {
+      res.status(409).json({
+        success: false,
+        message: `Session is not connected (state: ${sessionState || 'missing'})`,
+      });
+      return;
+    }
+    const client = session.getClient();
+    if (!client) {
+      res.status(409).json({ success: false, message: 'Client not initialized' });
+      return;
+    }
+
+    const warnings: string[] = [];
+    const applied: string[] = [];
+    const tryStep = async (label: string, fn: () => Promise<void>) => {
+      try {
+        await fn();
+        applied.push(label);
+      } catch (err) {
+        warnings.push(`${label}: ${err instanceof Error ? err.message : 'failed'}`);
+      }
+    };
+
+    if (typeof req.body.subject === 'string' && req.body.subject.trim()) {
+      await tryStep('subject', () => client.updateGroupSubject(jid, req.body.subject.trim().slice(0, 128)));
+    }
+    if (typeof req.body.announceOnly === 'boolean') {
+      await tryStep('announcement', () =>
+        client.updateGroupSetting(jid, req.body.announceOnly ? 'announcement' : 'not_announcement'),
+      );
+    }
+    if (typeof req.body.infoEditAdminsOnly === 'boolean') {
+      await tryStep('locked', () =>
+        client.updateGroupSetting(jid, req.body.infoEditAdminsOnly ? 'locked' : 'unlocked'),
+      );
+    }
+    if (typeof req.body.approvalMode === 'boolean') {
+      await tryStep('membership_approval', () =>
+        client.updateGroupSetting(jid, 'membership_approval_mode', req.body.approvalMode ? 'on' : 'off'),
+      );
+    }
+    if (req.body.memberAddMode === 'admin_add' || req.body.memberAddMode === 'all_member_add') {
+      await tryStep('member_add_mode', () =>
+        client.updateGroupSetting(jid, 'member_add_mode', String(req.body.memberAddMode)),
+      );
+    }
+    if (req.body.ephemeral !== undefined && req.body.ephemeral !== null) {
+      const ephemeral = Number(req.body.ephemeral);
+      if (Number.isFinite(ephemeral) && ephemeral >= 0) {
+        await tryStep('ephemeral', () => client.updateGroupEphemeral(jid, ephemeral));
+      }
+    }
+    if (typeof req.body.picture === 'string' && req.body.picture.length > 0) {
+      try {
+        const jpeg = Buffer.from(req.body.picture.replace(/^data:image\/\w+;base64,/, ''), 'base64');
+        if (jpeg.length > 0 && jpeg.length <= 5 * 1024 * 1024) {
+          await tryStep('picture', () => client.updateGroupPicture(jid, jpeg));
+        }
+      } catch {
+        warnings.push('picture: invalid image data');
+      }
+    }
+
+    res.json({ success: true, jid, applied, warnings });
   });
 
   // Resolve profile picture URLs for a batch of JIDs via usync 'picture'.

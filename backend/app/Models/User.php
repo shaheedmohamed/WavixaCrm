@@ -56,6 +56,7 @@ class User extends Authenticatable
         'crm_plan_id',
         'crm_custom_agents_limit',
         'crm_custom_sessions_limit',
+        'max_active_chats',
     ];
 
     /**
@@ -90,6 +91,7 @@ class User extends Authenticatable
             'reputation_factors' => 'array',
             'reputation_calculated_at' => 'datetime',
             'crm_assigned_sessions' => 'array',
+            'max_active_chats' => 'integer',
         ];
     }
 

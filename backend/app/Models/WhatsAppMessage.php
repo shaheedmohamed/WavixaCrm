@@ -27,6 +27,7 @@ class WhatsAppMessage extends Model
         'media_size',
         'reactions',
         'mentioned_jids',
+        'starred_at',
         'reply_to_id',
         'is_forwarded',
         'message_id',
@@ -61,6 +62,7 @@ class WhatsAppMessage extends Model
         'revoked_at' => 'datetime',
         'reactions' => 'array',
         'mentioned_jids' => 'array',
+        'starred_at' => 'datetime',
         'media_meta' => 'array',
         'is_forwarded' => 'boolean',
     ];

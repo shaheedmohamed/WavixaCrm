@@ -58,6 +58,9 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/whatsapp/disconnected', [\App\Http\Controllers\WhatsAppWebhookController::class, 'disconnected']);
         Route::post('/whatsapp/message-reaction', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageReaction']);
         Route::post('/whatsapp/message-revoked', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageRevoked']);
+        Route::post('/whatsapp/chat-read', [\App\Http\Controllers\WhatsAppWebhookController::class, 'chatRead']);
+        Route::post('/whatsapp/chat-archived', [\App\Http\Controllers\WhatsAppWebhookController::class, 'chatArchived']);
+        Route::post('/whatsapp/chat-pinned', [\App\Http\Controllers\WhatsAppWebhookController::class, 'chatPinned']);
         Route::post('/whatsapp/history-sync', [\App\Http\Controllers\WhatsAppWebhookController::class, 'historySync']);
         Route::post('/whatsapp/contacts-sync', [\App\Http\Controllers\WhatsAppWebhookController::class, 'contactsSync']);
         Route::post('/whatsapp/message-media', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageMedia']);
@@ -155,6 +158,15 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/chat-lists', [\App\Http\Controllers\Api\CrmController::class, 'saveChatList']);
         Route::delete('/chat-lists/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteChatList']);
         Route::post('/chat-lists/{id}/remove-members', [\App\Http\Controllers\Api\CrmController::class, 'removeChatListMembers']);
+        Route::post('/messages/{id}/star', [\App\Http\Controllers\Api\CrmController::class, 'toggleMessageStar']);
+        Route::get('/conversations/{id}/starred', [\App\Http\Controllers\Api\CrmController::class, 'getStarredMessages']);
+        Route::get('/quick-replies', [\App\Http\Controllers\Api\CrmController::class, 'getQuickReplies']);
+        Route::post('/quick-replies', [\App\Http\Controllers\Api\CrmController::class, 'saveQuickReply']);
+        Route::delete('/quick-replies/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteQuickReply']);
+        Route::post('/messages/{id}/pin', [\App\Http\Controllers\Api\CrmController::class, 'pinMessage']);
+        Route::post('/conversations/{id}/unpin', [\App\Http\Controllers\Api\CrmController::class, 'unpinMessage']);
+        Route::post('/conversations/{id}/archive', [\App\Http\Controllers\Api\CrmController::class, 'archiveConversation']);
+        Route::post('/conversations/{id}/pin-chat', [\App\Http\Controllers\Api\CrmController::class, 'pinConversation']);
         Route::get('/me', [\App\Http\Controllers\Api\CrmController::class, 'me']);
         Route::get('/stats', [\App\Http\Controllers\Api\CrmController::class, 'stats']);
 
@@ -179,6 +191,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/contacts', [\App\Http\Controllers\Api\CrmContactsController::class, 'index']);
         Route::post('/contacts', [\App\Http\Controllers\Api\CrmContactsController::class, 'store']);
         Route::post('/contacts/import', [\App\Http\Controllers\Api\CrmContactsController::class, 'import']);
+        Route::get('/contacts/export', [\App\Http\Controllers\Api\CrmContactsController::class, 'export']);
         Route::put('/contacts/{id}', [\App\Http\Controllers\Api\CrmContactsController::class, 'update']);
         Route::delete('/contacts/{id}', [\App\Http\Controllers\Api\CrmContactsController::class, 'destroy']);
 
@@ -198,6 +211,8 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         // Conversations & Chat
         Route::get('/conversations', [\App\Http\Controllers\Api\CrmController::class, 'getConversations']);
         Route::post('/conversations/new', [\App\Http\Controllers\Api\CrmController::class, 'startConversation']);
+        Route::post('/conversations/new-group', [\App\Http\Controllers\Api\CrmController::class, 'createWhatsAppGroup']);
+        Route::post('/conversations/{id}/group-update', [\App\Http\Controllers\Api\CrmController::class, 'updateWhatsAppGroup']);
         Route::get('/conversations/{id}/messages', [\App\Http\Controllers\Api\CrmController::class, 'getMessages']);
         Route::post('/messages/send', [\App\Http\Controllers\Api\CrmController::class, 'sendMessage']);
         Route::post('/messages/send-media', [\App\Http\Controllers\Api\CrmController::class, 'sendMedia']);

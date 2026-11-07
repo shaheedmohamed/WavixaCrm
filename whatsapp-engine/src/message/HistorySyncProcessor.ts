@@ -24,6 +24,7 @@ export interface NormalizedMessage {
   quotedMessageId?: string;
   quotedParticipant?: string;
   mentionedJids?: string[];
+  pin?: { action: 'pin' | 'unpin'; messageId?: string; remoteJid?: string };
   isForwarded?: boolean;
   edited?: boolean;
   fromMe?: boolean;
@@ -239,6 +240,21 @@ export function normalizeMessageContent(message: any): NormalizedMessage | null 
 
   if (message.eventMessage) {
     return { type: 'event', body: message.eventMessage.name || 'حدث', ...quoted };
+  }
+
+  // A pin/unpin action sent into the chat (WhatsApp "Pin message") — not a
+  // bubble, Laravel flags the conversation instead.
+  if (message.pinInChatMessage) {
+    return {
+      type: 'pin',
+      body: '',
+      pin: {
+        action: Number(message.pinInChatMessage.type) === 2 ? 'unpin' : 'pin',
+        messageId: message.pinInChatMessage.key?.id,
+        remoteJid: message.pinInChatMessage.key?.remoteJid,
+      },
+      ...quoted,
+    };
   }
 
   const hasContent = CONTENT_FIELDS.some((f) => message[f] != null);

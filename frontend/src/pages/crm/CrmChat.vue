@@ -41,16 +41,45 @@
         </div>
 
         <div class="flex items-center gap-1">
-          <!-- Start New Chat -->
-          <button
-            @click="showNewChatModal = true"
-            class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
-            title="محادثة جديدة"
-          >
-            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-            </svg>
-          </button>
+          <!-- Start New Chat / New Group — same + menu WhatsApp Web shows -->
+          <div class="relative">
+            <button
+              @click="showPlusMenu = !showPlusMenu"
+              class="p-2 text-[#aebac1] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
+              :class="{ 'bg-[#3d505c] text-[#00a884]': showPlusMenu }"
+              title="محادثة جديدة"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+            </button>
+
+            <!-- Click-away layer -->
+            <div
+              v-if="showPlusMenu"
+              class="fixed inset-0 z-40"
+              @click="showPlusMenu = false"
+            ></div>
+            <div
+              v-if="showPlusMenu"
+              class="absolute left-0 top-11 z-50 w-48 bg-[#2a3a44] border border-[#3d505c] rounded-xl shadow-2xl overflow-hidden py-1"
+            >
+              <button
+                @click="showPlusMenu = false; showNewChatModal = true"
+                class="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold text-[#dfe5e8] hover:bg-[#3d505c] transition-colors text-right"
+              >
+                <svg class="w-4 h-4 text-[#00a884]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+                محادثة جديدة
+              </button>
+              <button
+                @click="openNewGroup"
+                class="w-full flex items-center gap-3 px-4 py-2.5 text-xs font-semibold text-[#dfe5e8] hover:bg-[#3d505c] transition-colors text-right"
+              >
+                <svg class="w-4 h-4 text-[#00a884]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M12 11a4 4 0 100-8 4 4 0 000 8z"/></svg>
+                جروب جديد
+              </button>
+            </div>
+          </div>
 
           <!-- Refresh button -->
           <button
@@ -95,12 +124,18 @@
             <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
               مكتملة
             </button>
+            <button @click="setFilter('groups')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('groups')">
+              جروبات
+            </button>
 
             <!-- Custom lists -->
             <button v-for="l in chatLists" :key="'list-'+l.id" @click="setFilter('list:'+l.id)"
               @contextmenu.prevent="listCtx = { show: true, x: $event.clientX, y: $event.clientY, list: l }"
               class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
               :class="chipClass('list:'+l.id)">{{ l.name }}</button>
+            <button @click="setFilter('archived')" title="الأرشيف"
+              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
+              :class="chipClass('archived')">📥 أرشيف</button>
             <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
               class="px-2 py-1 rounded-full text-xs whitespace-nowrap transition-colors bg-[#25343d] text-[#96a4ad] hover:text-[#00a884]">+</button>
           </template>
@@ -110,6 +145,9 @@
             </button>
             <button @click="setFilter('unread')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('unread')">
               غير مقروءة
+            </button>
+            <button @click="setFilter('groups')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('groups')">
+              جروبات
             </button>
             <button @click="setFilter('available')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('available')">
               بدون موظف
@@ -123,6 +161,9 @@
               @contextmenu.prevent="listCtx = { show: true, x: $event.clientX, y: $event.clientY, list: l }"
               class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
               :class="chipClass('list:'+l.id)">{{ l.name }}</button>
+            <button @click="setFilter('archived')" title="الأرشيف"
+              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
+              :class="chipClass('archived')">📥 أرشيف</button>
             <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
               class="px-2 py-1 rounded-full text-xs whitespace-nowrap transition-colors bg-[#25343d] text-[#96a4ad] hover:text-[#00a884]">+</button>
           </template>
@@ -199,6 +240,10 @@
               @error="markAvatarBroken(c.contact_avatar)"
             />
             <span v-else class="text-base">{{ convInitial(c) }}</span>
+            <!-- Pinned-chat pin badge -->
+            <span v-if="c.is_pinned" class="absolute -top-1 -right-1 z-10 w-4 h-4 rounded-full bg-[#25343d] border border-[#30424c] flex items-center justify-center">
+              <svg class="w-2.5 h-2.5 text-[#00a884] rotate-45" fill="currentColor" viewBox="0 0 24 24"><path d="M9.828 9.828a4 4 0 015.657 0l2.828 2.829a2 2 0 010 2.828l-1.415 1.414-5.656-5.656L9.828 9.83zM4 15.657V20h4.343l5.829-5.828"/></svg>
+            </span>
             <!-- Custom-list membership badges -->
             <span class="absolute -bottom-1 -right-1 flex gap-0.5 z-10">
               <span v-for="ln in convListNames(c.id).slice(0,2)" :key="ln" class="px-1 rounded text-[8px] font-bold bg-[#00a884]/90 text-white max-w-[56px] truncate">{{ ln }}</span>
@@ -365,6 +410,9 @@
           <template v-else>
           <div class="flex items-center gap-3 min-w-0">
             <!-- Back button for mobile -->
+            <button @click="openStarredPanel" title="الرسائل المميزة" class="p-2 text-[#96a4ad] hover:text-[#ffd279] rounded-full hover:bg-[#3d505c] transition-colors">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+            </button>
             <button
               @click="backToList"
               class="md:hidden text-[#aebac1] hover:text-white p-1 rounded-full"
@@ -555,6 +603,17 @@
           @scroll.passive="onMessagesScroll"
           class="flex-1 overflow-y-auto p-4 space-y-2 relative z-10 bg-transparent"
         >
+          <!-- Pinned message banner -->
+          <div v-if="pinnedMsg" class="sticky top-0 z-20 mx-1 mb-1 flex items-center gap-3 rounded-xl bg-[#202d35]/95 border-r-4 border-[#00a884] px-3 py-2 shadow-lg backdrop-blur-sm cursor-pointer" @click="jumpToPinned">
+            <svg class="w-4 h-4 text-[#00a884] rotate-45 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M9.828 9.828a4 4 0 015.657 0l2.828 2.829a2 2 0 010 2.828l-1.415 1.414-5.656-5.656L9.828 9.83zM4 15.657V20h4.343l5.829-5.828"/></svg>
+            <div class="flex-1 min-w-0">
+              <div class="text-[11px] font-bold text-[#00a884]">رسالة مثبتة</div>
+              <p class="text-[12px] text-[#dfe5e8] truncate">{{ pinnedMsg.message || (pinnedMsg.message_type === 'image' ? '📷 صورة' : (pinnedMsg.message_type === 'video' ? '🎥 فيديو' : (['audio','voice'].includes(pinnedMsg.message_type) ? '🎵 صوت' : '📎 ' + pinnedMsg.message_type))) }}</p>
+            </div>
+            <button @click.stop="doUnpin" class="p-1 text-[#8696a0] hover:text-[#f15c6d]" title="إلغاء التثبيت">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+            </button>
+          </div>
           <!-- Loading spinner while the page of messages resolves -->
           <div v-if="loadingMessages" class="flex flex-col items-center justify-center gap-3 p-12 text-xs text-[#96a4ad]">
             <span class="wx-spinner w-7 h-7"></span>
@@ -833,6 +892,7 @@
 
               <!-- Footer: Time + Status Ticks -->
               <div class="flex items-center justify-end gap-1 text-[11px] text-[#96a4ad] mt-0.5 select-none pl-1" dir="ltr">
+                <svg v-if="m.starred_at" class="w-3 h-3 inline-block ml-0.5" fill="#8696a0" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
                 <span>{{ formatTime(m.timestamp || m.created_at) }}</span>
                 <span v-if="m.direction === 'outgoing'">
                   <span v-if="m.status === 'sending'" class="text-[#96a4ad]">🕐</span>
@@ -1040,6 +1100,9 @@
             </div>
 
             <!-- Emoji Picker Trigger -->
+            <button @click="qrPanel.show = !qrPanel.show" title="الردود السريعة" class="p-2 text-[#96a4ad] hover:text-[#ffd279] rounded-full hover:bg-[#3d505c] transition-colors shrink-0">
+              <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            </button>
             <button
               @click="showEmojiMenu = !showEmojiMenu"
               class="p-2.5 text-[#96a4ad] hover:text-[#00a884] rounded-full hover:bg-[#3d505c] transition-colors"
@@ -1298,6 +1361,221 @@
       </div>
     </div>
 
+    <!-- Modal: New Group — WhatsApp Web "New group" flow (pick members → group info) -->
+    <div
+      v-if="showNewGroupModal"
+      class="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <div class="bg-[#25343d] border border-[#30424c] rounded-3xl w-full max-w-md shadow-2xl relative text-right overflow-hidden">
+
+        <!-- ======= Step 1: pick members ======= -->
+        <div v-if="newGroupStep === 1" class="flex flex-col max-h-[82vh]">
+          <div class="flex items-center gap-3 px-5 pt-5 pb-3 border-b border-[#30424c] shrink-0">
+            <button @click="resetNewGroup" class="text-[#96a4ad] hover:text-white p-1">✕</button>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-white leading-tight">جروب جديد</h3>
+              <p class="text-[11px] text-[#96a4ad]">إضافة أعضاء الجروب</p>
+            </div>
+            <span v-if="newGroupMembers.length" class="text-[11px] font-bold text-[#00a884]" dir="ltr">{{ newGroupMembers.length }}</span>
+          </div>
+
+          <!-- Selected members chips -->
+          <div v-if="newGroupMembers.length" class="flex flex-wrap gap-1.5 px-5 pt-3 shrink-0">
+            <span
+              v-for="m in newGroupMembers" :key="'sel-' + m.jid"
+              class="flex items-center gap-1.5 bg-[#00a884]/15 text-[#00a884] text-[11px] font-semibold rounded-full pr-2 pl-1.5 py-1"
+            >
+              {{ m.name || ('+' + m.phone) }}
+              <button @click="toggleGroupMember(m)" class="text-[#00a884]/70 hover:text-white leading-none">✕</button>
+            </span>
+          </div>
+
+          <div class="px-5 pt-3 space-y-2 shrink-0">
+            <input
+              v-model="groupSearch"
+              type="text"
+              placeholder="ابحث بالاسم أو الرقم..."
+              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-[#00a884]"
+            />
+            <!-- Manual number entry — same number WhatsApp would resolve -->
+            <div class="flex gap-2">
+              <input
+                v-model="manualPhone"
+                @keydown.enter.prevent="addManualMember"
+                type="text"
+                placeholder="أو اكتب رقم بالصيغة الدولية"
+                dir="ltr"
+                class="flex-1 bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2 text-xs text-white focus:outline-none focus:border-[#00a884] font-mono"
+              />
+              <button
+                @click="addManualMember"
+                :disabled="manualPhone.replace(/\D/g, '').length < 8"
+                class="px-3 bg-[#25343d] border border-[#30424c] hover:border-[#00a884] text-[#00a884] rounded-xl text-sm font-bold disabled:opacity-40 transition-colors"
+              >+</button>
+            </div>
+          </div>
+
+          <!-- Candidates list -->
+          <div class="flex-1 overflow-y-auto px-2 py-3 min-h-[180px]">
+            <button
+              v-for="c in filteredGroupCandidates" :key="'gc-' + c.jid"
+              @click="toggleGroupMember(c)"
+              class="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-[#30424c]/60 transition-colors text-right"
+            >
+              <div class="w-10 h-10 rounded-full bg-[#3d505c] shrink-0 flex items-center justify-center overflow-hidden text-sm font-bold text-[#aebac1]">
+                <img v-if="c.avatar" :src="c.avatar" class="w-full h-full object-cover" @error="c.avatar = null" />
+                <span v-else>{{ (c.name || c.phone || '؟').replace(/^\+/, '').charAt(0) }}</span>
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="text-sm font-semibold text-[#dfe5e8] truncate">{{ c.name || ('+' + c.phone) }}</div>
+                <div class="text-[11px] text-[#96a4ad] font-mono truncate" dir="ltr">+{{ c.phone || c.jid.split('@')[0] }}</div>
+              </div>
+              <div
+                class="w-5 h-5 rounded-full border-2 shrink-0 flex items-center justify-center transition-colors"
+                :class="isGroupMemberSelected(c) ? 'bg-[#00a884] border-[#00a884]' : 'border-[#5b6c76]'"
+              >
+                <svg v-if="isGroupMemberSelected(c)" class="w-3 h-3 text-[#18242b]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </div>
+            </button>
+            <div v-if="!filteredGroupCandidates.length" class="text-center text-xs text-[#96a4ad] py-8">
+              مفيش نتائج — جرب تكتب الرقم فوق واضغط +
+            </div>
+          </div>
+
+          <div class="px-5 pb-5 pt-2 border-t border-[#30424c] shrink-0 flex items-center justify-between">
+            <span class="text-[11px] text-[#96a4ad]">{{ newGroupMembers.length }} عضو مختار</span>
+            <button
+              @click="newGroupStep = 2"
+              :disabled="!newGroupMembers.length"
+              class="w-11 h-11 rounded-full bg-[#00a884] hover:bg-[#02906f] text-[#18242b] flex items-center justify-center disabled:opacity-40 transition-all shadow-lg"
+              title="التالي"
+            >
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 12H5m0 0l6-6m-6 6l6 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- ======= Step 2: group info ======= -->
+        <div v-else class="p-6 max-h-[85vh] overflow-y-auto">
+          <div class="flex items-center gap-3 mb-5">
+            <button @click="newGroupStep = 1" class="text-[#96a4ad] hover:text-white p-1" title="رجوع">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            </button>
+            <div class="flex-1">
+              <h3 class="text-lg font-bold text-white leading-tight">بيانات الجروب</h3>
+              <p class="text-[11px] text-[#96a4ad]">{{ newGroupMembers.length }} عضو</p>
+            </div>
+            <button @click="resetNewGroup" class="text-[#96a4ad] hover:text-white p-1">✕</button>
+          </div>
+
+          <!-- Avatar + subject — the WhatsApp Web group-info row -->
+          <div class="flex items-center gap-4 mb-5">
+            <button
+              @click="$refs.groupPhotoInput?.click()"
+              class="relative w-16 h-16 rounded-full bg-[#18242b] border border-[#30424c] shrink-0 overflow-hidden flex items-center justify-center text-[#5b6c76] hover:text-[#00a884] transition-colors group"
+              title="صورة الجروب"
+            >
+              <img v-if="groupPhotoPreview" :src="groupPhotoPreview" class="absolute inset-0 w-full h-full object-cover" />
+              <svg v-else class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.8" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3.2" stroke-width="1.8"/></svg>
+            </button>
+            <input ref="groupPhotoInput" type="file" accept="image/*" class="hidden" @change="onGroupPhotoPicked" />
+            <div class="flex-1">
+              <input
+                v-model="groupSubject"
+                type="text"
+                maxlength="128"
+                placeholder="اسم الجروب"
+                class="w-full bg-transparent border-b-2 border-[#30424c] focus:border-[#00a884] py-2 text-base text-white placeholder-[#5b6c76] focus:outline-none transition-colors"
+              />
+            </div>
+          </div>
+
+          <div class="space-y-4">
+            <div>
+              <label class="block text-[11px] font-semibold text-[#96a4ad] mb-1.5">إنشاء عبر الجهاز</label>
+              <select
+                v-model="newGroupSessionId"
+                class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
+              >
+                <option v-for="d in connectedDevices" :key="d.id" :value="d.id">
+                  {{ d.device_name }} (+{{ d.phone_number }})
+                </option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-[11px] font-semibold text-[#96a4ad] mb-1.5">الرسائل ذاتية الاختفاء</label>
+              <select
+                v-model="groupEphemeral"
+                class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884]"
+              >
+                <option :value="0">إيقاف</option>
+                <option :value="86400">24 ساعة</option>
+                <option :value="604800">7 أيام</option>
+                <option :value="7776000">90 يوم</option>
+              </select>
+            </div>
+
+            <!-- Group permissions — WhatsApp's "Group permissions" toggles -->
+            <div class="bg-[#18242b] border border-[#30424c] rounded-2xl divide-y divide-[#25343d] overflow-hidden">
+              <label class="flex items-center justify-between px-4 py-3 cursor-pointer">
+                <div>
+                  <div class="text-sm font-semibold text-[#dfe5e8]">إرسال الرسائل</div>
+                  <div class="text-[10px] text-[#96a4ad]">{{ groupAnnounceOnly ? 'المشرفون فقط' : 'كل الأعضاء' }}</div>
+                </div>
+                <button
+                  type="button"
+                  @click="groupAnnounceOnly = !groupAnnounceOnly"
+                  class="w-10 h-6 rounded-full relative transition-colors shrink-0"
+                  :class="groupAnnounceOnly ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                >
+                  <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :class="groupAnnounceOnly ? 'left-0.5' : 'left-[18px]'"></span>
+                </button>
+              </label>
+              <label class="flex items-center justify-between px-4 py-3 cursor-pointer">
+                <div>
+                  <div class="text-sm font-semibold text-[#dfe5e8]">تعديل بيانات الجروب</div>
+                  <div class="text-[10px] text-[#96a4ad]">{{ groupInfoAdminsOnly ? 'المشرفون فقط' : 'كل الأعضاء' }}</div>
+                </div>
+                <button
+                  type="button"
+                  @click="groupInfoAdminsOnly = !groupInfoAdminsOnly"
+                  class="w-10 h-6 rounded-full relative transition-colors shrink-0"
+                  :class="groupInfoAdminsOnly ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                >
+                  <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :class="groupInfoAdminsOnly ? 'left-0.5' : 'left-[18px]'"></span>
+                </button>
+              </label>
+              <label class="flex items-center justify-between px-4 py-3 cursor-pointer">
+                <div>
+                  <div class="text-sm font-semibold text-[#dfe5e8]">الموافقة على الأعضاء الجدد</div>
+                  <div class="text-[10px] text-[#96a4ad]">المشرف يوافق على طلبات الانضمام باللينك</div>
+                </div>
+                <button
+                  type="button"
+                  @click="groupApprovalMode = !groupApprovalMode"
+                  class="w-10 h-6 rounded-full relative transition-colors shrink-0"
+                  :class="groupApprovalMode ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                >
+                  <span class="absolute top-0.5 w-5 h-5 rounded-full bg-white transition-all" :class="groupApprovalMode ? 'left-0.5' : 'left-[18px]'"></span>
+                </button>
+              </label>
+            </div>
+
+            <button
+              @click="handleCreateGroup"
+              :disabled="creatingGroup || !groupSubject.trim() || !newGroupMembers.length || !newGroupSessionId"
+              class="w-full py-3 bg-[#00a884] hover:bg-[#02906f] text-[#18242b] font-bold text-sm rounded-xl transition-all shadow-lg disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <svg v-if="!creatingGroup" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
+              <span v-else class="wx-spinner w-4 h-4"></span>
+              {{ creatingGroup ? 'جاري إنشاء الجروب...' : 'إنشاء الجروب' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Media viewer — WhatsApp-style: image/video stage + filmstrip of all chat media -->
     <div
       v-if="viewerItem"
@@ -1447,6 +1725,21 @@
           رد
         </button>
         <button
+          @click="toggleStarMsg(ctxMenu.msg)"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
+        >
+          <svg class="w-4 h-4" :fill="ctxMenu.msg?.starred_at ? '#ffd279' : 'none'" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+          {{ ctxMenu.msg?.starred_at ? 'إلغاء التمييز' : 'تمييز' }}
+        </button>
+        <button
+          v-if="!ctxMenu.msg?.revoked_at"
+          @click="pinDlg = { show: true, msg: ctxMenu.msg }; ctxMenu.show = false"
+          class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.828 9.828a4 4 0 015.657 0l2.828 2.829a2 2 0 010 2.828l-1.415 1.414-5.656-5.656L9.828 9.83zm0 0L4 15.657V20h4.343l5.829-5.828M9.828 9.828L13 13"/></svg>
+          تثبيت
+        </button>
+        <button
           @click="openForwardModal(ctxMenu.msg)"
           class="w-full flex items-center gap-3 px-4 py-2.5 text-[#dfe5e8] hover:bg-[#202d35] transition-colors"
         >
@@ -1508,11 +1801,108 @@
       <div v-if="chatLists.length < 2" class="px-4 py-2 text-[11px] text-[#96a4ad]">لا توجد قوائم أخرى</div>
     </div>
 
+    <!-- Quick-replies panel -->
+    <div v-if="qrPanel.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="qrPanel.show = false">
+      <div class="w-[26rem] max-h-[75vh] rounded-2xl bg-[#111b21] border border-[#30424c] shadow-2xl flex flex-col overflow-hidden">
+        <div class="px-5 py-4 border-b border-[#30424c] flex items-center justify-between">
+          <h3 class="text-[#dfe5e8] font-bold flex items-center gap-2">
+            <svg class="w-5 h-5 text-[#ffd279]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            الردود السريعة
+          </h3>
+          <button @click="qrForm = { show: true, id: null, shortcut: '', body: '' }" class="px-3 py-1.5 rounded-lg bg-[#00a884] text-white text-xs font-bold">+ رد جديد</button>
+        </div>
+        <div v-if="qrForm.show" class="p-4 border-b border-[#30424c] space-y-2">
+          <input v-model="qrForm.shortcut" placeholder="اختصار (اختياري) — مثال: ترحيب" class="w-full rounded-lg bg-[#1c2b33] border border-[#30424c] px-3 py-2 text-sm text-[#dfe5e8] focus:outline-none focus:border-[#00a884]" />
+          <textarea v-model="qrForm.body" rows="3" placeholder="نص الرد…" class="w-full rounded-lg bg-[#1c2b33] border border-[#30424c] px-3 py-2 text-sm text-[#dfe5e8] focus:outline-none focus:border-[#00a884] resize-none"></textarea>
+          <div class="flex gap-2 justify-end">
+            <button @click="qrForm.show = false" class="px-3 py-1.5 text-xs text-[#96a4ad]">إلغاء</button>
+            <button @click="saveQr" :disabled="!qrForm.body.trim()" class="px-4 py-1.5 rounded-lg bg-[#00a884] text-white text-xs font-bold disabled:opacity-40">حفظ</button>
+          </div>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2">
+          <div v-if="!quickReplies.length" class="p-8 text-center text-[#96a4ad] text-sm">لا توجد ردود — أضف أول رد</div>
+          <div v-for="r in quickReplies" :key="r.id" class="group flex items-start gap-2 p-3 rounded-xl hover:bg-[#25343d] transition-colors mb-1">
+            <button @click="qrConfirm = r" class="flex-1 text-right min-w-0">
+              <div v-if="r.shortcut" class="text-[11px] font-bold text-[#53bdeb] mb-0.5">/{{ r.shortcut }}</div>
+              <p class="text-[13px] text-[#dfe5e8] whitespace-pre-wrap break-words">{{ r.body }}</p>
+            </button>
+            <div class="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+              <button @click="qrForm = { show: true, id: r.id, shortcut: r.shortcut || '', body: r.body }" class="p-1 text-[#96a4ad] hover:text-[#53bdeb]" title="تعديل">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
+              </button>
+              <button @click="deleteQr(r)" class="p-1 text-[#96a4ad] hover:text-[#f15c6d]" title="حذف">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Send-confirmation for a picked quick reply -->
+    <div v-if="qrConfirm" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" @click.self="qrConfirm = null">
+      <div class="w-80 rounded-2xl bg-[#25343d] border border-[#30424c] p-5 shadow-2xl">
+        <h4 class="text-[#dfe5e8] font-bold mb-2">إرسال الرد؟</h4>
+        <p class="text-[13px] text-[#96a4ad] whitespace-pre-wrap break-words max-h-40 overflow-y-auto mb-4">{{ qrConfirm.body }}</p>
+        <div class="flex gap-2 justify-end">
+          <button @click="qrConfirm = null" class="px-4 py-2 text-sm text-[#96a4ad]">إلغاء</button>
+          <button @click="confirmSendQr" class="px-5 py-2 rounded-lg bg-[#00a884] text-white text-sm font-semibold">إرسال</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pin duration dialog (WhatsApp-style) -->
+    <div v-if="pinDlg.show" class="fixed inset-0 z-[60] flex items-center justify-center bg-black/60" @click.self="pinDlg.show = false">
+      <div class="w-80 rounded-2xl bg-[#25343d] border border-[#30424c] p-5 shadow-2xl">
+        <h4 class="text-[#dfe5e8] font-bold mb-1">مدة التثبيت</h4>
+        <p class="text-[11px] text-[#96a4ad] mb-4">يمكنك إلغاء التثبيت في أي وقت</p>
+        <div class="space-y-1">
+          <button @click="doPin(86400)" class="w-full text-right px-4 py-3 rounded-xl text-sm text-[#dfe5e8] hover:bg-[#30424c] transition-colors">٢٤ ساعة</button>
+          <button @click="doPin(604800)" class="w-full text-right px-4 py-3 rounded-xl text-sm font-semibold text-[#00a884] hover:bg-[#30424c] transition-colors">٧ أيام</button>
+          <button @click="doPin(2592000)" class="w-full text-right px-4 py-3 rounded-xl text-sm text-[#dfe5e8] hover:bg-[#30424c] transition-colors">٣٠ يوم</button>
+        </div>
+        <div class="flex justify-end mt-3">
+          <button @click="pinDlg.show = false" class="px-4 py-2 text-sm text-[#96a4ad]">إلغاء</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Starred messages panel -->
+    <div v-if="starredPanel.show" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60" @click.self="starredPanel.show = false">
+      <div class="w-[28rem] max-h-[80vh] rounded-2xl bg-[#111b21] border border-[#30424c] shadow-2xl flex flex-col overflow-hidden">
+        <div class="px-5 py-4 border-b border-[#30424c] flex items-center gap-3">
+          <svg class="w-5 h-5 text-[#ffd279]" fill="currentColor" viewBox="0 0 24 24"><path d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+          <h3 class="text-[#dfe5e8] font-bold">الرسائل المميزة</h3>
+          <span class="text-[11px] text-[#96a4ad]">{{ starredPanel.items.length }}</span>
+        </div>
+        <div class="flex-1 overflow-y-auto p-2">
+          <div v-if="starredPanel.loading" class="p-8 text-center text-[#96a4ad] text-sm">جار التحميل…</div>
+          <div v-else-if="!starredPanel.items.length" class="p-8 text-center text-[#96a4ad] text-sm">لا توجد رسائل مميزة — حدد أي رسالة ← تمييز</div>
+          <button v-for="m in starredPanel.items" :key="m.id" @click="jumpToStarred(m)"
+            class="w-full text-right p-3 rounded-xl hover:bg-[#25343d] transition-colors mb-1">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-[11px] text-[#8696a0]">{{ msgTime(m.timestamp) }}</span>
+              <span class="text-[11px] font-semibold" :class="m.direction === 'outgoing' ? 'text-[#53bdeb]' : 'text-[#00a884]'">
+                {{ m.direction === 'outgoing' ? 'أنت' : (m.sender_name || convTitle(activeConv)) }}
+              </span>
+            </div>
+            <p class="text-[13px] text-[#dfe5e8] truncate">
+              <template v-if="m.message">{{ m.message }}</template>
+              <template v-else>{{ m.message_type === 'image' ? '📷 صورة' : (m.message_type === 'video' ? '🎥 فيديو' : (['audio','voice'].includes(m.message_type) ? '🎵 صوت' : (m.message_type === 'document' ? '📄 ملف' : m.message_type)) ) }}</template>
+            </p>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Conversation right-click menu -->
     <div v-if="convCtx.show" class="fixed inset-0 z-40" @click="convCtx.show = false" @contextmenu.prevent="convCtx.show = false"></div>
     <div v-if="convCtx.show" class="fixed z-50 w-48 rounded-xl bg-[#25343d] border border-[#30424c] shadow-2xl py-1"
       :style="{ top: convCtx.y + 'px', left: (convCtx.x - 190) + 'px' }">
       <button @click="enterConvSelectMode" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">تحديد</button>
+      <button @click="pinConv(convCtx.conv, !convCtx.conv?.is_pinned)" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">{{ convCtx.conv?.is_pinned ? 'إلغاء التثبيت' : 'تثبيت الشات' }}</button>
+      <button v-if="!convCtx.conv?.archived_at" @click="archiveConv(convCtx.conv, true)" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">أرشفة</button>
+      <button v-else @click="archiveConv(convCtx.conv, false)" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">إلغاء الأرشفة</button>
       <button @click="openListModal(convCtx.conv?.id)" class="w-full text-right px-4 py-2.5 text-sm text-[#dfe5e8] hover:bg-[#30424c]">إضافة إلى قائمة</button>
       <button v-if="activeList" @click="removeFromActiveList(convCtx.conv?.id); convCtx.show = false" class="w-full text-right px-4 py-2.5 text-sm text-red-400 hover:bg-[#30424c]">إزالة من القائمة</button>
     </div>
@@ -1603,16 +1993,30 @@
         <div class="flex-1 overflow-y-auto">
           <!-- Avatar + name -->
           <div class="p-6 flex flex-col items-center gap-3 border-b border-[#2c3c45]">
-            <div class="w-36 h-36 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-5xl shadow-lg overflow-hidden relative">
-              <img
-                v-if="avatarSrc(activeConv)"
-                :src="avatarSrc(activeConv)"
-                alt=""
-                class="absolute inset-0 w-full h-full object-cover"
-                @error="markAvatarBroken(activeConv.contact_avatar)"
-              />
-              <span v-else>{{ convInitial(activeConv) }}</span>
+            <div class="relative">
+              <div class="w-36 h-36 rounded-full bg-gradient-to-br from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-5xl shadow-lg overflow-hidden relative">
+                <img
+                  v-if="avatarSrc(activeConv)"
+                  :src="avatarSrc(activeConv)"
+                  alt=""
+                  class="absolute inset-0 w-full h-full object-cover"
+                  @error="markAvatarBroken(activeConv.contact_avatar)"
+                />
+                <span v-else>{{ convInitial(activeConv) }}</span>
+              </div>
+              <!-- Group photo change — same camera affordance WhatsApp shows -->
+              <button
+                v-if="isGroupConv"
+                @click="$refs.groupPicInput?.click()"
+                :disabled="savingGroupPic"
+                class="absolute -bottom-1 -left-1 w-9 h-9 rounded-full bg-[#00a884] hover:bg-[#02906f] text-[#18242b] flex items-center justify-center shadow-lg transition-colors border-2 border-[#18242b]"
+                title="تغيير صورة الجروب"
+              >
+                <span v-if="savingGroupPic" class="wx-spinner w-4 h-4" style="border-color:rgba(17,27,33,.3);border-top-color:#18242b"></span>
+                <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"/><circle cx="12" cy="13" r="3.2" stroke-width="1.8"/></svg>
+              </button>
             </div>
+            <input ref="groupPicInput" type="file" accept="image/*" class="hidden" @change="onGroupPicPicked" />
 
             <!-- Editable name -->
             <div v-if="!editingContactName" class="flex items-center gap-2">
@@ -1766,6 +2170,71 @@
                   @click="exportGroupVcf"
                   class="flex-1 px-3 py-1.5 rounded-lg bg-sky-600/20 text-sky-300 hover:bg-sky-600/40 text-[11px] font-bold transition-colors"
                 >تصدير جهات اتصال</button>
+              </div>
+
+              <!-- Live group settings — WhatsApp "Group permissions" toggles -->
+              <div class="mt-4 pt-3 border-t border-[#2c3c45] space-y-3">
+                <h4 class="text-xs font-bold text-[#96a4ad]">إعدادات الجروب</h4>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-semibold text-[#dfe5e8]">إرسال الرسائل</div>
+                    <div class="text-[10px] text-[#96a4ad]">{{ groupSettings.announce ? 'المشرفون فقط' : 'كل الأعضاء' }}</div>
+                  </div>
+                  <button
+                    @click="toggleGroupSetting('announce')"
+                    :disabled="savingGroupSetting || groupSettings.announce === null"
+                    class="w-9 h-5 rounded-full relative transition-colors shrink-0 disabled:opacity-40"
+                    :class="groupSettings.announce ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                  >
+                    <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" :class="groupSettings.announce ? 'left-0.5' : 'left-[16px]'"></span>
+                  </button>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-semibold text-[#dfe5e8]">تعديل بيانات الجروب</div>
+                    <div class="text-[10px] text-[#96a4ad]">{{ groupSettings.restrict ? 'المشرفون فقط' : 'كل الأعضاء' }}</div>
+                  </div>
+                  <button
+                    @click="toggleGroupSetting('restrict')"
+                    :disabled="savingGroupSetting || groupSettings.restrict === null"
+                    class="w-9 h-5 rounded-full relative transition-colors shrink-0 disabled:opacity-40"
+                    :class="groupSettings.restrict ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                  >
+                    <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" :class="groupSettings.restrict ? 'left-0.5' : 'left-[16px]'"></span>
+                  </button>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div>
+                    <div class="text-xs font-semibold text-[#dfe5e8]">الموافقة على الأعضاء الجدد</div>
+                    <div class="text-[10px] text-[#96a4ad]">طلبات الانضمام باللينك تحتاج موافقة مشرف</div>
+                  </div>
+                  <button
+                    @click="toggleGroupSetting('approval')"
+                    :disabled="savingGroupSetting || groupSettings.approval === null"
+                    class="w-9 h-5 rounded-full relative transition-colors shrink-0 disabled:opacity-40"
+                    :class="groupSettings.approval ? 'bg-[#00a884]' : 'bg-[#3d505c]'"
+                  >
+                    <span class="absolute top-0.5 w-4 h-4 rounded-full bg-white transition-all" :class="groupSettings.approval ? 'left-0.5' : 'left-[16px]'"></span>
+                  </button>
+                </div>
+
+                <div class="flex items-center justify-between">
+                  <div class="text-xs font-semibold text-[#dfe5e8]">الرسائل ذاتية الاختفاء</div>
+                  <select
+                    :value="groupSettings.ephemeral ?? 0"
+                    @change="setGroupEphemeral(Number($event.target.value))"
+                    :disabled="savingGroupSetting"
+                    class="bg-[#25343d] text-[11px] text-[#dfe5e8] rounded-lg px-2 py-1 border border-[#30424c] focus:outline-none focus:border-[#00a884] disabled:opacity-40"
+                  >
+                    <option :value="0">إيقاف</option>
+                    <option :value="86400">24 ساعة</option>
+                    <option :value="604800">7 أيام</option>
+                    <option :value="7776000">90 يوم</option>
+                  </select>
+                </div>
               </div>
             </template>
             <div v-else class="text-center py-3">
@@ -2433,7 +2902,9 @@ const checkSyncStatus = async () => {
 const loadConversations = async () => {
   try {
     const params = {};
+    if (selectedFilter.value === 'archived') params.archived = 1;
     if (selectedFilter.value === 'unread') params.unread_only = 1;
+    else if (selectedFilter.value === 'groups') params.groups_only = 1;
     else if (['available', 'mine', 'resolved'].includes(selectedFilter.value)) {
       params.scope = selectedFilter.value;
     }
@@ -2560,6 +3031,63 @@ const selectedMessages = computed(() =>
 );
 
 const ctxMenuEl = ref(null);
+// ---- Pinned message (WhatsApp-style banner + WA sync) -------------------
+const pinnedMsg = ref(null);
+const pinDlg = ref({ show: false, msg: null });
+const pinSending = ref(false);
+
+const doPin = async (duration) => {
+  const m = pinDlg.value.msg;
+  if (!m || pinSending.value) return;
+  pinSending.value = true;
+  try {
+    const res = await crm.pinMessage(m.id, duration);
+    if (res?.success) {
+      pinnedMsg.value = res.pinned;
+      pinDlg.value.show = false;
+    } else {
+      window.alert(res?.message || 'فشل التثبيت');
+    }
+  } catch (e) { window.alert(e?.response?.data?.message || 'فشل التثبيت'); }
+  pinSending.value = false;
+};
+
+const doUnpin = async () => {
+  if (!activeConv.value) return;
+  await crm.unpinMessage(activeConv.value.id).catch(() => {});
+  pinnedMsg.value = null;
+};
+
+const jumpToPinned = () => {
+  if (pinnedMsg.value) scrollToMessage(pinnedMsg.value.message_id);
+};
+
+const starredPanel = ref({ show: false, loading: false, items: [] });
+
+const toggleStarMsg = async (m) => {
+  ctxMenu.value.show = false;
+  if (!m?.id || String(m.id).startsWith('tmp-')) return;
+  try {
+    const res = await crm.toggleStar(m.id);
+    if (res?.success) m.starred_at = res.starred ? new Date().toISOString() : null;
+  } catch { /* keep UI state unchanged on failure */ }
+};
+
+const openStarredPanel = async () => {
+  if (!activeConv.value) return;
+  starredPanel.value = { show: true, loading: true, items: [] };
+  try {
+    const res = await crm.getStarred(activeConv.value.id);
+    starredPanel.value.items = res?.success ? (res.messages || []) : [];
+  } catch { starredPanel.value.items = []; }
+  starredPanel.value.loading = false;
+};
+
+const jumpToStarred = (m) => {
+  starredPanel.value.show = false;
+  scrollToMessage(m.message_id || m.id);
+};
+
 const openContextMenu = (m, e) => {
   if (selectMode.value) {
     toggleSelect(m);
@@ -2619,6 +3147,7 @@ const scrollToMessage = async (replyToId) => {
     if (seq !== msgLoadSeq || activeConv.value?.id !== conv.id) return;
     if (res.success && res.messages?.length) {
       messages.value = res.messages;
+      pinnedMsg.value = res.pinned || null;
       hasMoreMessages.value = !!res.has_more;
       hasNewerMessages.value = !!res.has_newer;
       const target = quotedPreview(replyToId);
@@ -2814,6 +3343,11 @@ const openContactInfo = async () => {
 const groupMembers = ref(null);
 const loadingMembers = ref(false);
 const showPastMembers = ref(false);
+// Live group settings — values come from the w:g2 metadata query, not the
+// local row, so the toggles always mirror the real WhatsApp state.
+const groupSettings = ref({ announce: null, restrict: null, approval: null, ephemeral: null });
+const savingGroupSetting = ref(false);
+const savingGroupPic = ref(false);
 
 const loadGroupMembers = async (force = false) => {
   if (!isGroupConv.value || !activeConv.value) { groupMembers.value = null; return; }
@@ -2822,10 +3356,110 @@ const loadGroupMembers = async (force = false) => {
   try {
     const res = await crm.getGroupMembers(activeConv.value.id);
     groupMembers.value = res?.success ? res : { error: res?.message || 'تعذر جلب الأعضاء' };
+    if (res?.success) {
+      groupSettings.value = {
+        announce: res.announce ?? false,
+        restrict: res.restrict ?? false,
+        approval: res.join_approval ?? false,
+        ephemeral: res.ephemeral ?? 0,
+      };
+    }
   } catch (e) {
     groupMembers.value = { error: e.response?.data?.message || 'تعذر جلب الأعضاء' };
   } finally {
     loadingMembers.value = false;
+  }
+};
+
+// Flip a real WhatsApp group setting — engine sends the w:g2 set stanza.
+const toggleGroupSetting = async (key) => {
+  if (savingGroupSetting.value || !activeConv.value) return;
+  const prev = groupSettings.value[key];
+  const next = !prev;
+  groupSettings.value[key] = next; // optimistic, revert on failure
+  savingGroupSetting.value = true;
+  try {
+    const payload =
+      key === 'announce' ? { announce_only: next }
+      : key === 'restrict' ? { info_edit_admins_only: next }
+      : { approval_mode: next };
+    const res = await crm.updateWhatsAppGroup(activeConv.value.id, payload);
+    if (!res.success || res.warnings?.length) {
+      groupSettings.value[key] = prev;
+      alert(res.warnings?.join('\n') || res.message || 'فشل تعديل الإعداد');
+    }
+  } catch (err) {
+    groupSettings.value[key] = prev;
+    alert(err.response?.data?.message || 'فشل تعديل الإعداد');
+  } finally {
+    savingGroupSetting.value = false;
+  }
+};
+
+const setGroupEphemeral = async (seconds) => {
+  if (savingGroupSetting.value || !activeConv.value) return;
+  const prev = groupSettings.value.ephemeral;
+  groupSettings.value.ephemeral = seconds;
+  savingGroupSetting.value = true;
+  try {
+    const res = await crm.updateWhatsAppGroup(activeConv.value.id, { ephemeral: seconds });
+    if (!res.success || res.warnings?.length) {
+      groupSettings.value.ephemeral = prev;
+      alert(res.warnings?.join('\n') || res.message || 'فشل تعديل الإعداد');
+    }
+  } catch (err) {
+    groupSettings.value.ephemeral = prev;
+    alert(err.response?.data?.message || 'فشل تعديل الإعداد');
+  } finally {
+    savingGroupSetting.value = false;
+  }
+};
+
+// Center-crop any picked image to the 640x640 JPEG WhatsApp expects.
+const fileToJpegDataUrl = (file) => new Promise((resolve) => {
+  const img = new Image();
+  img.onload = () => {
+    const side = Math.min(img.width, img.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = 640;
+    canvas.height = 640;
+    canvas.getContext('2d').drawImage(
+      img,
+      (img.width - side) / 2,
+      (img.height - side) / 2,
+      side,
+      side,
+      0, 0, 640, 640,
+    );
+    URL.revokeObjectURL(img.src);
+    resolve(canvas.toDataURL('image/jpeg', 0.8));
+  };
+  img.src = URL.createObjectURL(file);
+});
+
+const onGroupPicPicked = async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file || !file.type.startsWith('image/') || !isGroupConv.value) return;
+  savingGroupPic.value = true;
+  try {
+    const dataUrl = await fileToJpegDataUrl(file);
+    const res = await crm.updateWhatsAppGroup(activeConv.value.id, { picture: dataUrl });
+    if (res.success) {
+      const avatar = res.conversation?.contact_avatar;
+      if (avatar) {
+        activeConv.value.contact_avatar = avatar;
+        const row = conversations.value.find((c) => c.id === activeConv.value.id);
+        if (row) row.contact_avatar = avatar;
+      }
+      if (res.warnings?.length) alert('اتحفظت الصورة بس فيه تحذير: ' + res.warnings.join('، '));
+    } else {
+      alert(res.message || 'فشل تغيير الصورة');
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل تغيير الصورة');
+  } finally {
+    savingGroupPic.value = false;
   }
 };
 
@@ -2898,13 +3532,23 @@ const saveContactName = async () => {
   if (!name || !activeConv.value || savingContactName.value) return;
   savingContactName.value = true;
   try {
-    const res = await crm.renameConversation(activeConv.value.id, name);
-    if (res.success) {
-      activeConv.value.contact_name = name;
-      const row = conversations.value.find((c) => c.id === activeConv.value.id);
-      if (row) row.contact_name = name;
-      editingContactName.value = false;
+    if (isGroupConv.value) {
+      // Groups: the pencil renames the real WhatsApp subject, not just a
+      // local label — same <subject> set stanza WhatsApp Web sends.
+      const res = await crm.updateWhatsAppGroup(activeConv.value.id, { subject: name });
+      if (!res.success) {
+        alert(res.message || 'فشل تعديل اسم الجروب');
+        return;
+      }
+      if (res.warnings?.length) alert(res.warnings.join('\n'));
+    } else {
+      const res = await crm.renameConversation(activeConv.value.id, name);
+      if (!res.success) return;
     }
+    activeConv.value.contact_name = name;
+    const row = conversations.value.find((c) => c.id === activeConv.value.id);
+    if (row) row.contact_name = name;
+    editingContactName.value = false;
   } catch (err) {
     alert(err.response?.data?.message || 'فشل حفظ الاسم');
   } finally {
@@ -3486,6 +4130,166 @@ const handleStartChat = async () => {
   }
 };
 
+// ---- New Group wizard (WhatsApp "New group" flow) -------------------------
+const showPlusMenu = ref(false);
+const showNewGroupModal = ref(false);
+const newGroupStep = ref(1);
+const groupSearch = ref('');
+const manualPhone = ref('');
+const newGroupMembers = ref([]);        // selected: [{ jid, phone, name, avatar }]
+const groupContactsBook = ref([]);   // CRM address-book contacts (lazy-loaded)
+const groupSubject = ref('');
+const groupPhoto = ref('');          // base64 JPEG payload sent to the engine
+const groupPhotoPreview = ref('');
+const groupEphemeral = ref(0);       // 0 | 86400 | 604800 | 7776000
+const groupAnnounceOnly = ref(false);
+const groupInfoAdminsOnly = ref(false);
+const groupApprovalMode = ref(false);
+const newGroupSessionId = ref(null);
+const creatingGroup = ref(false);
+
+// Member candidates = every 1:1 chat we know + the uploaded address book,
+// deduped on the last 10 digits so PN/LID twins collapse to one entry.
+const groupCandidates = computed(() => {
+  const map = new Map();
+  const addEntry = (entry, tail) => {
+    const key = tail || entry.jid;
+    if (!key) return;
+    if (!map.has(key)) map.set(key, entry);
+    else if (!map.get(key).name && entry.name) map.set(key, entry);
+  };
+  for (const c of uniqueConversations.value) {
+    if (isGroupJid(c.contact_jid)) continue;
+    const jid = String(c.contact_jid || '');
+    const phone = String(c.contact_phone || '').replace(/\D/g, '');
+    if (!jid && !phone) continue;
+    addEntry(
+      { jid: jid || phone + '@s.whatsapp.net', phone, name: convTitle(c), avatar: avatarSrc(c) },
+      (phone || jid.split('@')[0]).replace(/\D/g, '').slice(-10),
+    );
+  }
+  for (const ct of groupContactsBook.value) {
+    let digits = String(ct.phone || '').replace(/\D/g, '').replace(/^00/, '');
+    if (digits.length === 11 && digits.startsWith('0')) digits = '2' + digits;
+    if (digits.length < 8) continue;
+    addEntry(
+      { jid: digits + '@s.whatsapp.net', phone: digits, name: ct.name || '+' + digits, avatar: null },
+      digits.slice(-10),
+    );
+  }
+  return [...map.values()].sort((a, b) => (a.name || '').localeCompare(b.name || '', 'ar'));
+});
+
+const isGroupMemberSelected = (c) => newGroupMembers.value.some((m) => m.jid === c.jid);
+
+const filteredGroupCandidates = computed(() => {
+  const q = groupSearch.value.trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, '');
+  return groupCandidates.value.filter((c) => {
+    if (!q) return true;
+    return (c.name || '').toLowerCase().includes(q) || (qDigits && (c.phone || '').includes(qDigits));
+  });
+});
+
+const toggleGroupMember = (c) => {
+  const i = newGroupMembers.value.findIndex((m) => m.jid === c.jid);
+  if (i >= 0) newGroupMembers.value.splice(i, 1);
+  else newGroupMembers.value.push(c);
+};
+
+const addManualMember = () => {
+  let d = manualPhone.value.replace(/\D/g, '').replace(/^00/, '');
+  if (d.length === 11 && d.startsWith('0')) d = '2' + d;
+  if (d.length < 8) return;
+  const jid = d + '@s.whatsapp.net';
+  if (!newGroupMembers.value.some((m) => m.jid === jid)) {
+    newGroupMembers.value.push({ jid, phone: d, name: '+' + d });
+  }
+  manualPhone.value = '';
+};
+
+const loadGroupContactsBook = async () => {
+  try {
+    for (let page = 1; page <= 5; page++) {
+      const res = await crm.getContacts({ page });
+      const items = res?.contacts || [];
+      groupContactsBook.value.push(...items);
+      if (page >= (res?.pagination?.last_page || 1)) break;
+    }
+  } catch {}
+};
+
+const openNewGroup = () => {
+  showPlusMenu.value = false;
+  showNewGroupModal.value = true;
+  newGroupStep.value = 1;
+  if (!groupContactsBook.value.length) loadGroupContactsBook();
+  if (!newGroupSessionId.value && connectedDevices.value.length) {
+    newGroupSessionId.value = connectedDevices.value[0].id;
+  }
+};
+
+const resetNewGroup = () => {
+  showNewGroupModal.value = false;
+  newGroupStep.value = 1;
+  newGroupMembers.value = [];
+  groupSearch.value = '';
+  manualPhone.value = '';
+  groupSubject.value = '';
+  groupPhoto.value = '';
+  groupPhotoPreview.value = '';
+  groupEphemeral.value = 0;
+  groupAnnounceOnly.value = false;
+  groupInfoAdminsOnly.value = false;
+  groupApprovalMode.value = false;
+};
+
+// Center-crop to 640x640 JPEG — the size WhatsApp expects for group icons.
+const onGroupPhotoPicked = async (e) => {
+  const file = e.target.files?.[0];
+  e.target.value = '';
+  if (!file || !file.type.startsWith('image/')) return;
+  const dataUrl = await fileToJpegDataUrl(file);
+  groupPhoto.value = dataUrl;
+  groupPhotoPreview.value = dataUrl;
+};
+
+const handleCreateGroup = async () => {
+  if (creatingGroup.value || !groupSubject.value.trim() || !newGroupMembers.value.length) return;
+  creatingGroup.value = true;
+  try {
+    const res = await crm.createWhatsAppGroup({
+      subject: groupSubject.value.trim(),
+      participants: newGroupMembers.value.map((m) => m.jid),
+      session_id: newGroupSessionId.value,
+      ephemeral: groupEphemeral.value,
+      announce_only: groupAnnounceOnly.value,
+      info_edit_admins_only: groupInfoAdminsOnly.value,
+      approval_mode: groupApprovalMode.value,
+      picture: groupPhoto.value || undefined,
+    });
+    if (res.success && res.conversation) {
+      const failed = (res.participants || []).filter((p) => p.status !== '200');
+      const invited = (res.participants || []).filter((p) => p.invited);
+      const warnings = res.warnings || [];
+      resetNewGroup();
+      await loadConversations();
+      selectConversation(res.conversation);
+      const notes = [];
+      if (invited.length) notes.push(`${invited.length} عضو هيوصلهم دعوة انضمام (خصوصية)`);
+      if (failed.length) notes.push(`${failed.length} عضو ما اتضافوش (الرقم مش مسجل أو رافض الإضافة)`);
+      if (warnings.length) notes.push('بعض الإعدادات ما اتطبقتش: ' + warnings.join('، '));
+      if (notes.length) alert('اتعمل الجروب ✅\n' + notes.join('\n'));
+    } else {
+      alert(res.message || 'فشل إنشاء الجروب');
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل إنشاء الجروب');
+  } finally {
+    creatingGroup.value = false;
+  }
+};
+
 const appendEmoji = (e) => {
   messageText.value += e;
   showEmojiMenu.value = false;
@@ -3799,8 +4603,11 @@ const inScope = (c) => {
       : (!c.resolved_at && (!c.assigned_agent_id || c.assigned_agent_id === user.value?.id || groupExempt));
     case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at;
     case 'resolved': return !!c.resolved_at;
-    case 'unread': return c.unread_count > 0;
+    case 'unread': return c.unread_count > 0 && !c.archived_at;
+    case 'archived': return !!c.archived_at;
+    case 'groups': return isGroupJid(c.contact_jid) && !c.archived_at;
     default:
+      if (c.archived_at) return false;
       if (String(selectedFilter.value).startsWith('list:')) {
         const l = activeList.value;
         return !!l?.conversation_ids?.includes(c.id);
@@ -4031,6 +4838,44 @@ const pickMention = (m) => {
 };
 
 // ---- Custom chat lists (WhatsApp Lists) ---------------------------------
+// ---- Quick replies (WhatsApp Business style) ----------------------------
+const quickReplies = ref([]);
+const qrPanel = ref({ show: false });
+const qrForm = ref({ show: false, id: null, shortcut: '', body: '' });
+const qrConfirm = ref(null); // reply object pending send confirmation
+
+const loadQuickReplies = async () => {
+  try {
+    const res = await crm.getQuickReplies();
+    if (res?.success) quickReplies.value = res.replies || [];
+  } catch { /* optional UI */ }
+};
+
+const saveQr = async () => {
+  const f = qrForm.value;
+  if (!f.body.trim()) return;
+  const res = await crm.saveQuickReply({ id: f.id, shortcut: f.shortcut.trim() || null, body: f.body.trim() }).catch(() => null);
+  if (res?.success) {
+    await loadQuickReplies();
+    qrForm.value = { show: false, id: null, shortcut: '', body: '' };
+  }
+};
+
+const deleteQr = async (r) => {
+  await crm.deleteQuickReply(r.id).catch(() => {});
+  await loadQuickReplies();
+};
+
+// Tap a reply → confirm → real send through the normal queue.
+const confirmSendQr = () => {
+  const r = qrConfirm.value;
+  qrConfirm.value = null;
+  qrPanel.value.show = false;
+  if (!r) return;
+  messageText.value = r.body;
+  sendTextMessage();
+};
+
 const chatLists = ref([]);
 const convSelectMode = ref(false);
 const selectedConvIds = ref(new Set());
@@ -4119,6 +4964,33 @@ const removeFromActiveList = async (convId) => {
   await loadChatLists();
 };
 
+const pinConv = async (c, pinned) => {
+  convCtx.value.show = false;
+  if (!c) return;
+  await crm.pinConversation(c.id, pinned).catch(() => {});
+  c.is_pinned = !!pinned;
+  // Server sorts is_pinned desc — mirror it locally without a refetch.
+  const i = conversations.value.findIndex((x) => x.id === c.id);
+  if (i !== -1) {
+    const [row] = conversations.value.splice(i, 1);
+    pinned ? conversations.value.unshift(row) : conversations.value.push(row);
+  }
+};
+
+const archiveConv = async (c, archived) => {
+  convCtx.value.show = false;
+  if (!c) return;
+  await crm.archiveConversation(c.id, archived).catch(() => {});
+  c.archived_at = archived ? new Date().toISOString() : null;
+  // Archiving inside a normal tab hides it; unarchiving inside the archive
+  // drawer removes it from that view too.
+  const inArchiveView = String(selectedFilter.value) === 'archived';
+  if ((archived && !inArchiveView) || (!archived && inArchiveView)) {
+    const i = conversations.value.findIndex((x) => x.id === c.id);
+    if (i !== -1) conversations.value.splice(i, 1);
+  }
+};
+
 const onTypingInput = () => {
   if (!activeConv.value) return;
   // Track the last "@" the caret sits after — opens the member picker.
@@ -4147,6 +5019,7 @@ onMounted(async () => {
       await crm.me();
       user.value = crm.getUser();
         void loadChatLists();
+        void loadQuickReplies();
       if (isAgent.value && selectedFilter.value === 'all') {
         selectedFilter.value = 'available';
       }
