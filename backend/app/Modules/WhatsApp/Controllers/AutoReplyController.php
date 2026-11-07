@@ -94,9 +94,11 @@ class AutoReplyController extends Controller
                 'session_id' => 'nullable|integer',
                 'mode' => 'required|in:static,ai',
                 'trigger_mode' => 'nullable|in:all,new_customer,outside_hours,delayed',
-                'work_hours_from' => 'nullable|date_format:H:i|required_if:trigger_mode,outside_hours',
-                'work_hours_to' => 'nullable|date_format:H:i|required_if:trigger_mode,outside_hours',
-                'response_delay_minutes' => 'nullable|integer|min:1|max:1440|required_if:trigger_mode,delayed',
+                'trigger_modes' => 'nullable|array',
+                'trigger_modes.*' => 'in:all,new_customer,outside_hours,delayed',
+                'work_hours_from' => 'nullable|date_format:H:i',
+                'work_hours_to' => 'nullable|date_format:H:i',
+                'response_delay_minutes' => 'nullable|integer|min:1|max:1440',
                 'reply_message' => 'nullable|string|max:4000',
                 'reply_once' => 'nullable|boolean',
                 'delay_seconds' => 'nullable|integer|in:0,5,10,30',
@@ -120,7 +122,33 @@ class AutoReplyController extends Controller
             $mode = $validated['mode'] ?? 'static';
             $replyMessage = trim($validated['reply_message'] ?? '');
 
+            // Multi-select triggers — stored CSV. 'all' covers every message.
+            $triggers = $validated['trigger_modes']
+                ?? ($validated['trigger_mode'] ?? null ? [$validated['trigger_mode']] : []);
+            $triggers = array_values(array_unique(array_intersect(
+                (array) $triggers,
+                ['all', 'new_customer', 'outside_hours', 'delayed'],
+            )));
+            if (empty($triggers)) {
+                $triggers = ['all'];
+            }
+
             if ($isEnabled) {
+                if (in_array('outside_hours', $triggers, true)
+                    && (empty($validated['work_hours_from']) || empty($validated['work_hours_to']))) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'حدد مواعيد العمل (من / إلى) لخيار "بعد انتهاء مواعيد العمل".',
+                    ], 422);
+                }
+                if (in_array('delayed', $triggers, true)
+                    && empty($validated['response_delay_minutes'])) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'حدد مدة التأخير بالدقايق لخيار "عند التأخير في الرد".',
+                    ], 422);
+                }
+
                 if (!$sessionId) {
                     return response()->json([
                         'success' => false,
@@ -174,7 +202,7 @@ class AutoReplyController extends Controller
                 'session_id' => $sessionId,
                 'is_enabled' => $isEnabled,
                 'mode' => $mode,
-                'trigger_mode' => $validated['trigger_mode'] ?? 'all',
+                'trigger_mode' => implode(',', $triggers),
                 'work_hours_from' => $validated['work_hours_from'] ?? null,
                 'work_hours_to' => $validated['work_hours_to'] ?? null,
                 'response_delay_minutes' => (int) ($validated['response_delay_minutes'] ?? 5),
@@ -301,7 +329,9 @@ class AutoReplyController extends Controller
             'id' => $autoReply->id,
             'is_enabled' => (bool) $autoReply->is_enabled,
             'mode' => $autoReply->mode,
-            'trigger_mode' => $autoReply->trigger_mode ?: 'all',
+            'trigger_mode' => array_values(array_filter(
+                explode(',', (string) ($autoReply->trigger_mode ?: 'all')),
+            )),
             'work_hours_from' => $autoReply->work_hours_from ? substr($autoReply->work_hours_from, 0, 5) : null,
             'work_hours_to' => $autoReply->work_hours_to ? substr($autoReply->work_hours_to, 0, 5) : null,
             'response_delay_minutes' => (int) ($autoReply->response_delay_minutes ?? 5),

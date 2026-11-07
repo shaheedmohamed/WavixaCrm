@@ -35,7 +35,8 @@ class SendDelayedAutoReplyJob implements ShouldQueue
     public function handle(): void
     {
         $autoReply = WhatsAppAutoReply::find($this->autoReplyId);
-        if (!$autoReply || !$autoReply->is_enabled || ($autoReply->trigger_mode ?: 'all') !== 'delayed') {
+        $triggers = array_filter(explode(',', (string) ($autoReply?->trigger_mode ?: 'all')));
+        if (!$autoReply || !$autoReply->is_enabled || !in_array('delayed', $triggers, true)) {
             return;
         }
 

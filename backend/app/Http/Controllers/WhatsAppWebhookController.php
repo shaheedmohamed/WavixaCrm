@@ -1692,24 +1692,26 @@ public function messageRevoked(Request $request)
                 return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'disabled_or_empty']);
             }
 
-            // Trigger gating — when the reply fires, not what it says.
-            $trigger = $autoReply->trigger_mode ?: 'all';
+            // Trigger gating — multi-select set; ANY enabled rule fires the
+            // reply. 'all' covers every message; 'delayed' schedules its own
+            // check regardless of the immediate rules.
+            $triggers = array_values(array_filter(
+                explode(',', (string) ($autoReply->trigger_mode ?: 'all')),
+            ));
+            $fireNow = in_array('all', $triggers, true);
 
-            if ($trigger === 'new_customer') {
-                // Only the first-ever incoming message in a conversation.
+            if (!$fireNow && in_array('new_customer', $triggers, true)) {
                 $incomingCount = WhatsAppMessage::where('conversation_id', $conversation->id)
                     ->where('direction', 'incoming')
                     ->count();
-                if ($incomingCount > 1) {
-                    return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'not_new_customer']);
-                }
-            } elseif ($trigger === 'outside_hours') {
+                $fireNow = $incomingCount <= 1;
+            }
+            if (!$fireNow && in_array('outside_hours', $triggers, true)) {
                 $whFrom = $autoReply->work_hours_from ? substr((string) $autoReply->work_hours_from, 0, 5) : null;
                 $whTo = $autoReply->work_hours_to ? substr((string) $autoReply->work_hours_to, 0, 5) : null;
-                if (!$whFrom || !$whTo || $this->isWithinWorkHours($whFrom, $whTo)) {
-                    return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'within_working_hours']);
-                }
-            } elseif ($trigger === 'delayed') {
+                $fireNow = $whFrom && $whTo && !$this->isWithinWorkHours($whFrom, $whTo);
+            }
+            if (in_array('delayed', $triggers, true)) {
                 // Defer: the reply goes out only if no agent answers within
                 // response_delay_minutes. One pending check per conversation.
                 $minutes = max(1, (int) ($autoReply->response_delay_minutes ?? 5));
@@ -1721,7 +1723,9 @@ public function messageRevoked(Request $request)
                         $incomingMessage?->id,
                     )->delay(now()->addMinutes($minutes));
                 }
-                return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'delayed_scheduled']);
+            }
+            if (!$fireNow) {
+                return response()->json(['success' => true, 'auto_replied' => false, 'reason' => 'trigger_not_matched']);
             }
 
             // Duplicate / already processed protection

@@ -337,33 +337,46 @@
             <span class="text-[11px] text-slate-500 font-medium block">اختار الشرط اللي الرد التلقائي يشتغل عليه</span>
           </div>
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            <button type="button" @click="form.trigger_mode = 'new_customer'"
-              class="p-4 rounded-2xl border text-right transition-all"
-              :class="form.trigger_mode === 'new_customer' ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
-              <span class="text-xs font-black block" :class="form.trigger_mode === 'new_customer' ? 'text-emerald-400' : 'text-white'">عميل جديد أول مرة</span>
+            <button type="button" @click="toggleTrigger('new_customer')"
+              class="p-4 rounded-2xl border text-right transition-all relative"
+              :class="form.trigger_modes.includes('new_customer') ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
+              <span v-if="form.trigger_modes.includes('new_customer')" class="absolute top-2 left-2 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="text-xs font-black block" :class="form.trigger_modes.includes('new_customer') ? 'text-emerald-400' : 'text-white'">عميل جديد أول مرة</span>
               <span class="text-[10px] text-slate-500 font-medium block mt-1">يرد بس على أول رسالة من محادثة جديدة كلياً</span>
             </button>
-            <button type="button" @click="form.trigger_mode = 'all'"
-              class="p-4 rounded-2xl border text-right transition-all"
-              :class="form.trigger_mode === 'all' ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
-              <span class="text-xs font-black block" :class="form.trigger_mode === 'all' ? 'text-emerald-400' : 'text-white'">كل العملاء</span>
+            <button type="button" @click="toggleTrigger('all')"
+              class="p-4 rounded-2xl border text-right transition-all relative"
+              :class="form.trigger_modes.includes('all') ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
+              <span v-if="form.trigger_modes.includes('all')" class="absolute top-2 left-2 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="text-xs font-black block" :class="form.trigger_modes.includes('all') ? 'text-emerald-400' : 'text-white'">كل العملاء</span>
               <span class="text-[10px] text-slate-500 font-medium block mt-1">يرد على أي رسالة واردة من أي عميل</span>
             </button>
-            <button type="button" @click="form.trigger_mode = 'outside_hours'"
-              class="p-4 rounded-2xl border text-right transition-all"
-              :class="form.trigger_mode === 'outside_hours' ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
-              <span class="text-xs font-black block" :class="form.trigger_mode === 'outside_hours' ? 'text-emerald-400' : 'text-white'">بعد انتهاء مواعيد العمل</span>
+            <button type="button" @click="toggleTrigger('outside_hours')"
+              class="p-4 rounded-2xl border text-right transition-all relative"
+              :class="form.trigger_modes.includes('outside_hours') ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
+              <span v-if="form.trigger_modes.includes('outside_hours')" class="absolute top-2 left-2 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="text-xs font-black block" :class="form.trigger_modes.includes('outside_hours') ? 'text-emerald-400' : 'text-white'">بعد انتهاء مواعيد العمل</span>
               <span class="text-[10px] text-slate-500 font-medium block mt-1">يرد بس خارج ساعات العمل اللي تحددها تحت</span>
             </button>
-            <button type="button" @click="form.trigger_mode = 'delayed'"
-              class="p-4 rounded-2xl border text-right transition-all"
-              :class="form.trigger_mode === 'delayed' ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
-              <span class="text-xs font-black block" :class="form.trigger_mode === 'delayed' ? 'text-emerald-400' : 'text-white'">عند التأخير في الرد</span>
+            <button type="button" @click="toggleTrigger('delayed')"
+              class="p-4 rounded-2xl border text-right transition-all relative"
+              :class="form.trigger_modes.includes('delayed') ? 'bg-emerald-500/10 border-emerald-500 ring-1 ring-emerald-500/30' : 'bg-slate-900/60 border-slate-700 hover:border-slate-500'">
+              <span v-if="form.trigger_modes.includes('delayed')" class="absolute top-2 left-2 w-4 h-4 rounded-full bg-emerald-500 text-white flex items-center justify-center">
+                <svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/></svg>
+              </span>
+              <span class="text-xs font-black block" :class="form.trigger_modes.includes('delayed') ? 'text-emerald-400' : 'text-white'">عند التأخير في الرد</span>
               <span class="text-[10px] text-slate-500 font-medium block mt-1">يرد بس لو مفيش موظف رد خلال المدة المحددة</span>
             </button>
           </div>
+          <p class="text-[10px] text-slate-500">تقدر تختار أكتر من شرط — الرد هيشتغل لو أي واحد فيهم اتحقق. "كل العملاء" بيغطي كل الحالات فبيلغي الباقي تلقائياً.</p>
 
-          <div v-if="form.trigger_mode === 'outside_hours'" class="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 grid grid-cols-2 gap-3">
+          <div v-if="form.trigger_modes.includes('outside_hours')" class="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 grid grid-cols-2 gap-3">
             <div>
               <label class="block text-[11px] font-bold text-slate-400 mb-1.5">مواعيد العمل من</label>
               <input v-model="form.work_hours_from" type="time" class="w-full bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white focus:border-emerald-500 outline-none" />
@@ -375,7 +388,7 @@
             <p class="col-span-2 text-[10px] text-slate-500">الرد التلقائي هيشتغل <span class="text-emerald-400 font-bold">خارج</span> الفترة دي — لو العميل كلمك جوا مواعيد الشغل مش هيترد تلقائياً.</p>
           </div>
 
-          <div v-if="form.trigger_mode === 'delayed'" class="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 space-y-2">
+          <div v-if="form.trigger_modes.includes('delayed')" class="bg-slate-900/60 border border-slate-700/60 rounded-2xl p-4 space-y-2">
             <label class="block text-[11px] font-bold text-slate-400">ابعت الرد التلقائي لو مفيش رد من موظف خلال (دقايق)</label>
             <input v-model.number="form.response_delay_minutes" type="number" min="1" max="1440" class="w-28 bg-slate-800 border border-slate-700 rounded-xl p-2 text-xs font-bold text-white text-center focus:border-emerald-500 outline-none" />
             <p class="text-[10px] text-slate-500">لو موظف رد على العميل قبل انتهاء المدة، الرد التلقائي مش هيتبعت.</p>
@@ -528,7 +541,7 @@ export default {
       is_enabled: false,
       session_id: null,
       mode: 'ai',
-      trigger_mode: 'all',
+      trigger_modes: ['all'],
       work_hours_from: '09:00',
       work_hours_to: '17:00',
       response_delay_minutes: 5,
@@ -577,6 +590,24 @@ export default {
       form.session_id = id;
     };
 
+    // Multi-select triggers — "all" covers every case so it clears the rest.
+    const toggleTrigger = (t) => {
+      const list = [...form.trigger_modes];
+      const i = list.indexOf(t);
+      if (i >= 0) {
+        list.splice(i, 1);
+      } else {
+        list.push(t);
+      }
+      let next = list;
+      if (t === 'all' && i < 0) {
+        next = ['all'];
+      } else if (next.includes('all') && next.length > 1) {
+        next = next.filter((x) => x !== 'all');
+      }
+      form.trigger_modes = next.length ? next : ['all'];
+    };
+
     const toggleAutoReply = () => {
       form.is_enabled = !form.is_enabled;
       if (form.is_enabled && !form.session_id && connectedSessions.value.length > 0) {
@@ -603,7 +634,9 @@ export default {
             form.is_enabled = Boolean(autoReply.is_enabled);
             form.session_id = autoReply.session_id;
             form.mode = autoReply.mode || 'ai';
-            form.trigger_mode = autoReply.trigger_mode || 'all';
+            form.trigger_modes = Array.isArray(autoReply.trigger_mode)
+              ? autoReply.trigger_mode
+              : [autoReply.trigger_mode || 'all'];
             form.work_hours_from = autoReply.work_hours_from || '09:00';
             form.work_hours_to = autoReply.work_hours_to || '17:00';
             form.response_delay_minutes = Number(autoReply.response_delay_minutes || 5);
@@ -677,11 +710,15 @@ export default {
             errorMessage.value = 'يرجى كتابة تعليمات AI.';
             return;
           }
-          if (form.trigger_mode === 'outside_hours' && (!form.work_hours_from || !form.work_hours_to)) {
+          if (!form.trigger_modes.length) {
+            errorMessage.value = 'اختار شرط واحد على الأقل من "متى يرد؟".';
+            return;
+          }
+          if (form.trigger_modes.includes('outside_hours') && (!form.work_hours_from || !form.work_hours_to)) {
             errorMessage.value = 'حدد مواعيد العمل (من / إلى) عشان الرد يشتغل بعد انتهائها.';
             return;
           }
-          if (form.trigger_mode === 'delayed' && (!form.response_delay_minutes || form.response_delay_minutes < 1)) {
+          if (form.trigger_modes.includes('delayed') && (!form.response_delay_minutes || form.response_delay_minutes < 1)) {
             errorMessage.value = 'حدد مدة التأخير بالدقايق (دقيقة على الأقل).';
             return;
           }
