@@ -638,9 +638,17 @@ class WhatsAppWebhookController extends Controller
     {
         $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'pinned' => 'nullable|boolean']);
         $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        $cands = [$jid];
+        $cands[] = str_ends_with($jid, '@lid')
+            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
+            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
+        $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
+        $cands[] = $digits . '@s.whatsapp.net';
+        $cands[] = $digits . '@lid';
         $conv = WhatsAppConversation::query()
             ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
-            ->where('contact_jid', $jid)->first();
+            ->whereIn('contact_jid', array_unique($cands))
+            ->first();
         if ($conv) {
             $conv->update(['is_pinned' => (bool) ($data['pinned'] ?? true)]);
         }
@@ -651,9 +659,17 @@ public function chatArchived(Request $request)
     {
         $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'archived' => 'nullable|boolean']);
         $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        $cands = [$jid];
+        $cands[] = str_ends_with($jid, '@lid')
+            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
+            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
+        $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
+        $cands[] = $digits . '@s.whatsapp.net';
+        $cands[] = $digits . '@lid';
         $conv = WhatsAppConversation::query()
             ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
-            ->where('contact_jid', $jid)->first();
+            ->whereIn('contact_jid', array_unique($cands))
+            ->first();
         if ($conv) {
             $conv->update(['archived_at' => ($data['archived'] ?? true) ? now() : null]);
         }
@@ -668,9 +684,18 @@ public function chatRead(Request $request)
             'read' => 'nullable|boolean',
         ]);
         $jid = preg_replace('/:\d+@/', '@', $data['jid']);
+        // The patch can carry the @lid form while the conversation is stored
+        // under the PN jid — resolve both directions via the mappings table.
+        $cands = [$jid];
+        $cands[] = str_ends_with($jid, '@lid')
+            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
+            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
+        $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
+        $cands[] = $digits . '@s.whatsapp.net';
+        $cands[] = $digits . '@lid';
         $conv = WhatsAppConversation::query()
             ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
-            ->whereIn('contact_jid', [$jid, preg_replace('/\D/', '', explode('@', $jid)[0]) . '@s.whatsapp.net'])
+            ->whereIn('contact_jid', array_unique($cands))
             ->first();
         if ($conv) {
             $conv->update(['unread_count' => ($data['read'] ?? true) ? 0 : max(1, (int) $conv->unread_count)]);

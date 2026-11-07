@@ -873,6 +873,79 @@ export class WaClient extends EventEmitter {
       }
     }
 
+    // Group retries: the requester lacks our SENDER KEY. Real WhatsApp Web
+    // answers with ONE pairwise message that embeds the SKDM inside the
+    // original payload — { ...message, senderKeyDistributionMessage } —
+    // encrypted pairwise straight onto the stanza (no <participants>
+    // wrapper), with `participant` naming the requesting device.
+    if (cached.destinationJid.endsWith('@g.us')) {
+      const gid = cached.destinationJid;
+      const meIdStr = this.creds.me?.id || '';
+      const meDevice = jidDecode(meIdStr)?.device ?? 0;
+      const meLid = jidDecode(this.creds.me?.lid || '')?.user;
+      const wantLid = decoded.server === 'lid' || decoded.server === 'hosted.lid';
+      const senderIdentity =
+        wantLid && meLid ? jidEncode(meLid, 'lid', meDevice) : meIdStr;
+      const state = this.senderKeyStore.load(SenderKeyStore.name(gid, senderIdentity));
+
+      const messageToSend: Record<string, unknown> = { ...cached.message };
+      if (state?.skdm) {
+        messageToSend.senderKeyDistributionMessage = {
+          groupId: gid,
+          axolotlSenderKeyDistributionMessage: Buffer.from(state.skdm, 'base64'),
+        };
+      } else {
+        logger.warn({ msgId, requesterJid, senderIdentity }, 'group retry: no sender-key state to embed');
+      }
+
+      const isOwnDevice =
+        decoded.user === jidDecode(meIdStr)?.user || decoded.user === meLid;
+      const payload = isOwnDevice
+        ? { deviceSentMessage: { destinationJid: gid, message: messageToSend } }
+        : messageToSend;
+
+      const bytes = await this.encodeWAMessage(payload);
+      const cipher = new SessionCipher(this.signalStore, requesterJid);
+      const { type, body } = await cipher.encrypt(bytes);
+
+      const retryCount = getBinaryNodeChild(node, 'retry')?.attrs.count;
+      const stanza: BinaryNode = {
+        tag: 'message',
+        attrs: {
+          id: msgId,
+          to: gid,
+          type: cached.stanzaType,
+          participant: requesterJid,
+          addressing_mode: wantLid ? 'lid' : 'pn',
+        },
+        content: [
+          {
+            tag: 'enc',
+            attrs: {
+              v: '2',
+              type,
+              ...(retryCount ? { count: String(retryCount) } : {}),
+            },
+            content: body,
+          },
+        ],
+      };
+      if (type === 'pkmsg' && this.creds.account) {
+        const account = { ...(this.creds.account as Record<string, unknown>) };
+        if (!account.accountSignatureKey || !(account.accountSignatureKey as Buffer).length) {
+          account.accountSignatureKey = null;
+        }
+        (stanza.content as BinaryNode[]).push({
+          tag: 'device-identity',
+          attrs: {},
+          content: await WaProto.encodeADVSignedDeviceIdentity(account),
+        });
+      }
+      await this.sendNode(stanza);
+      logger.info({ msgId, requesterJid, attempts }, 're-sent group message with embedded SKDM');
+      return;
+    }
+
     const meUser = jidDecode(this.creds.me?.id || '')?.user;
     const meLidUser = jidDecode(this.creds.me?.lid || '')?.user;
     const isOwnDevice = decoded.user === meUser || decoded.user === meLidUser;

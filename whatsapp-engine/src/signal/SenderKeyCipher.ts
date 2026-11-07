@@ -102,7 +102,9 @@ export class SenderKeyCipher {
     try {
       const seed = this.messageKeyFor(state, requestedIter);
       const keys = deriveSecrets(seed, Buffer.alloc(32), Buffer.from('WhisperGroup'));
-      const plain = signalDecrypt(keys[0]!, Buffer.from(msg.ciphertext), keys[2]!.subarray(0, 16));
+      const cipherKey = Buffer.concat([keys[0]!.subarray(16), keys[1]!.subarray(0, 16)]);
+      const iv = keys[0]!.subarray(0, 16);
+      const plain = signalDecrypt(cipherKey, Buffer.from(msg.ciphertext), iv);
       this.store.store(name, state);
       return plain;
     } catch (e) {
@@ -129,19 +131,25 @@ export class SenderKeyCipher {
     // v=2 marks Ed25519-signed keys — states from the earlier Curve25519
     // scheme produce signatures recipients can't verify, so a new key id
     // is minted and the fresh SKDM fans out to every member device again.
-    const isNew = !state || state.v !== 3;
+    const isNew = !state || state.v !== 4;
 
-    if (!state || state.v !== 3) {
+    if (!state || state.v !== 4) {
+      let signing = Ed25519.generateKeyPair();
+      // XEdDSA interop: recipients rebuild the Edwards point with x-sign=0
+      // from the Montgomery u — odd-x keys verify as -P and every skmsg
+      // signature fails. Resample until the parity is even.
+      while (signing.publicKey[31]! & 0x80) {
+        signing = Ed25519.generateKeyPair();
+      }
       // The sender signing key is an Ed25519 pair — recipients verify
       // skmsg sigs under the Edwards point, so the private must be a real
       // Ed25519 seed. The SKDM publishes the Montgomery form of the same
       // key (u = (1+y)/(1-y)) — the format the protocol carries.
-      const signing = Ed25519.generateKeyPair();
       const signingPubMont = edwardsToMontgomery(signing.publicKey);
       const chainKey = crypto.randomBytes(32);
       const keyId = (crypto.randomBytes(4).readUInt32BE(0) & 0x7fffffff) || 1;
       state = {
-        v: 3,
+        v: 4,
         keyId,
         iteration: 0,
         chainKey: chainKey.toString('base64'),
@@ -176,7 +184,9 @@ export class SenderKeyCipher {
     state.iteration = iteration + 1;
 
     const secrets = deriveSecrets(msgKey, Buffer.alloc(32), Buffer.from('WhisperGroup'));
-    const inner = signalEncrypt(secrets[0]!, plaintext, secrets[2]!.subarray(0, 16));
+    const cipherKey = Buffer.concat([secrets[0]!.subarray(16), secrets[1]!.subarray(0, 16)]);
+    const iv = secrets[0]!.subarray(0, 16);
+    const inner = signalEncrypt(cipherKey, plaintext, iv);
     const skm = await WaProto.encodeSenderKeyMessage({
       id: state.keyId,
       iteration,

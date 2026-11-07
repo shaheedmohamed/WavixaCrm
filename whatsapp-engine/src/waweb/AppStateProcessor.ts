@@ -107,8 +107,14 @@ export class AppStateProcessor {
         }
       }
 
+      // Pushed deltas arrive as <collection><patch>… directly — resync
+      // results wrap them in <collection><patches><patch>…. Take both.
       const patchesNode = getBinaryNodeChild(coll, 'patches');
-      for (const patchNode of getBinaryNodeChildren(patchesNode, 'patch')) {
+      const patchNodes = [
+        ...getBinaryNodeChildren(patchesNode, 'patch'),
+        ...getBinaryNodeChildren(coll, 'patch'),
+      ];
+      for (const patchNode of patchNodes) {
         if (!Buffer.isBuffer(patchNode.content)) continue;
         let patch: any;
         try {
