@@ -98,11 +98,18 @@ export class SenderKeyCipher {
     }
 
     this.verifySignature(state, serialized, signature);
-    const seed = this.messageKeyFor(state, Number(msg.iteration));
-    const keys = deriveSecrets(seed, Buffer.alloc(32), Buffer.from('WhisperGroup'));
-    const plain = signalDecrypt(keys[0]!, Buffer.from(msg.ciphertext), keys[2]!.subarray(0, 16));
-    this.store.store(name, state);
-    return plain;
+    const requestedIter = Number(msg.iteration);
+    try {
+      const seed = this.messageKeyFor(state, requestedIter);
+      const keys = deriveSecrets(seed, Buffer.alloc(32), Buffer.from('WhisperGroup'));
+      const plain = signalDecrypt(keys[0]!, Buffer.from(msg.ciphertext), keys[2]!.subarray(0, 16));
+      this.store.store(name, state);
+      return plain;
+    } catch (e) {
+      throw new Error(
+        `${e instanceof Error ? e.message : e} (keyId=${state.keyId} msgIter=${requestedIter} stateIter=${state.iteration})`,
+      );
+    }
   }
 
   /**

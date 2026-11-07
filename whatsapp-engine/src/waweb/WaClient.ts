@@ -953,7 +953,7 @@ export class WaClient extends EventEmitter {
         const buf = Buffer.isBuffer(axolotl) ? axolotl : Buffer.from(axolotl);
         try {
           await this.senderKeyCipher.processDistribution(String(groupJid), authorJid, buf);
-          logger.info({ groupJid, authorJid }, 'stored sender key distribution');
+          logger.info({ groupJid, authorJid, field }, 'stored sender key distribution');
         } catch (e) {
           logger.warn(
             {

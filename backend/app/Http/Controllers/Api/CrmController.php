@@ -1306,7 +1306,6 @@ class CrmController extends Controller
 
         // Archived chats live in their own drawer — hidden from every normal
         // tab, listed alone under ?archived=1.
-        $conversation->getQuery();
         $query->when($request->boolean('archived'), fn ($q) => $q->whereNotNull('archived_at'),
              fn ($q) => $q->whereNull('archived_at'));
 
