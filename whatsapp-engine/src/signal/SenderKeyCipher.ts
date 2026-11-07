@@ -129,9 +129,9 @@ export class SenderKeyCipher {
     // v=2 marks Ed25519-signed keys — states from the earlier Curve25519
     // scheme produce signatures recipients can't verify, so a new key id
     // is minted and the fresh SKDM fans out to every member device again.
-    const isNew = !state || state.v !== 2;
+    const isNew = !state || state.v !== 3;
 
-    if (!state || state.v !== 2) {
+    if (!state || state.v !== 3) {
       // The sender signing key is an Ed25519 pair — recipients verify
       // skmsg sigs under the Edwards point, so the private must be a real
       // Ed25519 seed. The SKDM publishes the Montgomery form of the same
@@ -141,7 +141,7 @@ export class SenderKeyCipher {
       const chainKey = crypto.randomBytes(32);
       const keyId = (crypto.randomBytes(4).readUInt32BE(0) & 0x7fffffff) || 1;
       state = {
-        v: 2,
+        v: 3,
         keyId,
         iteration: 0,
         chainKey: chainKey.toString('base64'),
@@ -159,7 +159,9 @@ export class SenderKeyCipher {
             id: keyId,
             iteration: 0,
             chainKey,
-            signingKey: signingPubMont,
+            // Curve key-type byte 0x05 — libsignal serializes IdentityKeys
+            // with the type prefix; bare 32B keys fail recipient parsing.
+            signingKey: Buffer.concat([Buffer.from([5]), signingPubMont]),
           }),
         ]).toString('base64'),
       };

@@ -2490,6 +2490,14 @@ export class WaClient extends EventEmitter {
         for (const d of await this.getDeviceList([q])) deviceJids.add(d);
       } catch { /* own-device enumeration is best-effort */ }
     }
+    // One address form per stanza: LID-addressed groups only accept @lid
+    // `to` jids — mixing PN forms gets nodes silently dropped.
+    const wantLid = addressingMode === 'lid';
+    for (const d of [...deviceJids]) {
+      const server = d.split('@')[1] || '';
+      const isLidForm = server === 'lid' || server === 'hosted.lid';
+      if (wantLid !== isLidForm) deviceJids.delete(d);
+    }
 
     const encoded = await this.encodeWAMessage(message);
     const { ciphertext, skdm, state } = await this.senderKeyCipher.encryptForGroup(
