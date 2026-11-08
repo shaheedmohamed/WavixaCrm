@@ -2833,7 +2833,17 @@ class CrmController extends Controller
             if (str_starts_with($mediaUrl, 'http')) {
                 $content = $mediaUrl; // engine resolves http(s) itself
             } else {
-                $path = public_path(ltrim($mediaUrl, '/'));
+                $rel = ltrim($mediaUrl, '/');
+                $path = public_path($rel);
+                if (!is_file($path)) {
+                    // Inbound media is decrypted by the engine into the main
+                    // app's docroot — nginx serves it from there via the
+                    // @crm_media_main fallback, so check that dir too.
+                    $alt = '/var/www/Wavixa/backend/public/' . $rel;
+                    if (is_file($alt)) {
+                        $path = $alt;
+                    }
+                }
                 if (!is_file($path)) {
                     throw new \RuntimeException('ملف الوسائط غير موجود على الخادم');
                 }
@@ -3820,14 +3830,18 @@ class CrmController extends Controller
         $session = WhatsAppSession::findOrFail($conv->session_id);
         $token = $session->session_token ?: (string) $session->id;
 
-        $res = $this->engineClient()->post("{$this->engineUrl}/internal/pin", [
-            'sessionId' => $token,
-            'to' => $conv->contact_jid,
-            'messageId' => $message->message_id,
-            'fromMe' => $message->direction === 'outgoing',
-            'participant' => ($message->direction === 'incoming' && str_contains((string) $conv->contact_jid, '@g.us')) ? $message->from : null,
-            'action' => 'pin',
-        ]);
+        try {
+            $res = $this->engineClient()->post("{$this->engineUrl}/internal/pin", [
+                'sessionId' => $token,
+                'to' => $conv->contact_jid,
+                'messageId' => $message->message_id,
+                'fromMe' => $message->direction === 'outgoing',
+                'participant' => ($message->direction === 'incoming' && str_contains((string) $conv->contact_jid, '@g.us')) ? $message->from : null,
+                'action' => 'pin',
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'WhatsApp did not confirm the pin in time — try again'], 502);
+        }
         $body = $res->json() ?: [];
         if (!$res->successful() || !($body['success'] ?? false)) {
             return response()->json(['success' => false, 'message' => $body['message'] ?? $body['error'] ?? 'Engine rejected the pin'], 502);

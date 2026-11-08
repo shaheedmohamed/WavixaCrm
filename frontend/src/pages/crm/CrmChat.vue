@@ -2947,6 +2947,7 @@ const selectConversation = async (conv) => {
   showContactInfo.value = false;
   ctxMenu.value.show = false;
   showScrollDown.value = false;
+  pinnedMsg.value = null;
   sendSessionId.value = conv.session_id;
   // Keep the open chat in the URL so a page refresh restores it.
   if (String(route.query.id) !== String(conv.id)) {
@@ -3601,6 +3602,7 @@ const loadMessages = async (convId) => {
     if (seq !== msgLoadSeq || activeConv.value?.id !== convId) return;
     if (res.success) {
       messages.value = res.messages || [];
+      pinnedMsg.value = res.pinned || null;
       hasMoreMessages.value = !!res.has_more;
       hasNewerMessages.value = !!res.has_newer;
       if (activeConv.value) {
@@ -3680,6 +3682,7 @@ const jumpToDate = async () => {
     if (seq !== msgLoadSeq || activeConv.value?.id !== conv.id) return;
     if (res.success) {
       messages.value = res.messages || [];
+      pinnedMsg.value = res.pinned || null;
       hasMoreMessages.value = !!res.has_more;
       hasNewerMessages.value = !!res.has_newer;
       // The window starts at the target day — pin it to the top like WhatsApp.
@@ -4420,6 +4423,9 @@ const startBackgroundPoller = () => {
         // never paint the previous chat's rows into the open one.
         if (pollSeq !== msgLoadSeq || activeConv.value?.id !== pollConv.id) return;
         if (res.success && res.messages) {
+          // Pins made on the phone ride the same response — keep the banner
+          // per-conversation instead of leaking the last chat's pin.
+          pinnedMsg.value = res.pinned || null;
           if (incremental) {
             if (res.messages.length) {
               const stick = isNearBottom();

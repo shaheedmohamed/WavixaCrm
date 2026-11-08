@@ -2552,10 +2552,18 @@ export class WaClient extends EventEmitter {
     // Member devices — own devices included so they keep a synced copy.
     const memberJids = meta.participants.map((p) => p.jid).filter(Boolean);
     const deviceJids = new Set<string>();
-    for (const q of memberJids) {
-      try {
-        for (const d of await this.getDeviceList([q])) deviceJids.add(d);
-      } catch { /* one bad member form must not kill the send */ }
+    // One usync <list> carries every member — the old per-member loop fired
+    // a sequential query per participant (each up to the 60s query timeout)
+    // and pushed first sends to big groups past the caller's HTTP timeout.
+    try {
+      for (const d of await this.getDeviceList(memberJids)) deviceJids.add(d);
+    } catch {
+      // A rejected query shouldn't kill the fan-out — degrade to per-member.
+      for (const q of memberJids) {
+        try {
+          for (const d of await this.getDeviceList([q])) deviceJids.add(d);
+        } catch { /* one bad member form must not kill the send */ }
+      }
     }
     for (const q of [jidEncode(jidDecode(meId)!.user, 's.whatsapp.net'),
       ...(meLidUser ? [jidEncode(meLidUser, 'lid')] : [])]) {
