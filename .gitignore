@@ -43,3 +43,5 @@ logs/
 *.swp
 *.swo
 *~
+
+!mobile/assets/notify_ding.wav
