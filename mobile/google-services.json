@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "524011086425",
+    "project_id": "shaheed-d5b65",
+    "storage_bucket": "shaheed-d5b65.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:524011086425:android:09285ad12d106dcbe28748",
+        "android_client_info": {
+          "package_name": "net.wavixa.crm"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAT2UMOnye6JlWVy9Od8qkVLLTlD9bJ43o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

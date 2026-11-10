@@ -1,0 +1,103 @@
+export type CrmRole = 'owner' | 'admin' | 'agent';
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+  avatar?: string | null;
+  crm_role: CrmRole;
+  crm_parent_id?: number | null;
+  assigned_sessions?: number[];
+  group_id?: number | null;
+  group_name?: string | null;
+  active_chats?: number | null;
+  max_active_chats?: number | null;
+}
+
+export interface SessionDevice {
+  id: number;
+  device_name?: string | null;
+  phone_number?: string | null;
+  status?: string | null;
+}
+
+export interface Conversation {
+  id: number;
+  session_id: number;
+  contact_jid: string;
+  contact_phone?: string | null;
+  contact_name?: string | null;
+  contact_username?: string | null;
+  contact_avatar?: string | null;
+  is_pinned?: boolean;
+  pinned_message_id?: number | null;
+  pin_expires_at?: string | null;
+  unread_count: number;
+  last_message?: string | null;
+  last_message_at?: string | null;
+  last_message_type?: string | null;
+  last_message_direction?: 'incoming' | 'outgoing' | null;
+  last_message_status?: 'pending' | 'sent' | 'delivered' | 'read' | null;
+  assigned_agent_id?: number | null;
+  assigned_at?: string | null;
+  resolved_at?: string | null;
+  transferred_by?: number | null;
+  rating?: number | null;
+  rating_note?: string | null;
+  session?: SessionDevice | null;
+  assigned_agent?: { id: number; name: string } | null;
+  transferred_by_user?: { id: number; name: string } | null;
+}
+
+export interface PinnedPreview {
+  id: number;
+  message_id: string;
+  direction: 'incoming' | 'outgoing';
+  message_type: string;
+  message: string;
+  sender_name?: string | null;
+  expires_at?: string | null;
+}
+
+export interface Message {
+  id: number;
+  message_id: string;
+  conversation_id: number;
+  direction: 'incoming' | 'outgoing';
+  from?: string | null;
+  to?: string | null;
+  sender_name?: string | null;
+  message?: string | null;
+  message_type: string;
+  media_url?: string | null;
+  media_mime?: string | null;
+  timestamp: string;
+  status?: 'pending' | 'sent' | 'delivered' | 'read' | null;
+  reply_to_id?: string | null;
+  starred_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface QuickReply {
+  id: number;
+  shortcut: string;
+  message: string;
+}
+
+export interface Agent {
+  id: number;
+  name: string;
+  email: string;
+  crm_role: CrmRole;
+  status?: string;
+  active_chats?: number;
+}
+
+export type FilterScope =
+  | 'all'
+  | 'unread'
+  | 'mine'
+  | 'unassigned'
+  | 'groups'
+  | 'resolved'
+  | 'archived';
