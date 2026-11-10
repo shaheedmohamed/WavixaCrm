@@ -39,3 +39,6 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# notification sound must ship to EAS
+!assets/notify_ding.wav
