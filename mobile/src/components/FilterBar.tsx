@@ -20,11 +20,11 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   hasActiveAdvancedFilter = false,
 }) => {
   const filters: { id: FilterScope; label: string; icon?: string; badge?: number }[] = [
-    { id: 'all', label: 'الكل', icon: 'chat-processing-outline' },
-    { id: 'unread', label: 'غير مقروءة', badge: unreadCount > 0 ? unreadCount : undefined },
+    { id: 'chats', label: 'الشاتات', icon: 'chat-outline' },
+    { id: 'groups', label: 'المجموعات', icon: 'account-group-outline' },
     { id: 'mine', label: 'محادثاتي', icon: 'account-outline' },
     { id: 'unassigned', label: 'جديد / متاح', icon: 'account-plus-outline' },
-    { id: 'groups', label: 'المجموعات', icon: 'account-group-outline' },
+    { id: 'unread', label: 'غير مقروءة', badge: unreadCount > 0 ? unreadCount : undefined },
     { id: 'resolved', label: 'المكتملة', icon: 'check-circle-outline' },
     { id: 'archived', label: 'المؤرشفة', icon: 'archive-outline' },
   ];

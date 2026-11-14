@@ -39,6 +39,13 @@ export interface WaCreds {
   myAppStateKeyId?: string;
   /** App-state sync keys pushed by the primary — keyId (base64) → keyData (base64). */
   appStateKeys?: Record<string, string>;
+  /**
+   * Per-collection syncd integrity state — version + LtHash (base64).
+   * Persisted so resyncs fetch deltas instead of replaying history, and so
+   * outgoing patches chain on the server's state. The indexMac→valueMac
+   * map stays in memory; misses only cost a 409+full-resync retry.
+   */
+  appStateCollections?: Record<string, { version: number; hash: string }>;
   /** Signal double-ratchet session records, keyed by remote jid */
   signalSessions?: Record<string, unknown>;
   /** Sender-key (group/broadcast) ratchet state, keyed "groupJid::authorJid" */

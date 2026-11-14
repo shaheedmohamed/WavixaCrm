@@ -78,23 +78,96 @@ export const chatService = {
     return response.data;
   },
 
-  async sendMedia(conversationId: number, fileUri: string, mimeType: string, caption?: string) {
+  async sendMedia(
+    conversationId: number,
+    file: { uri: string; name?: string; mimeType?: string },
+    type: 'image' | 'video' | 'audio' | 'voice' | 'document',
+    options: { caption?: string; sessionId?: number; replyToId?: string | null } = {}
+  ) {
     const formData = new FormData();
     formData.append('conversation_id', String(conversationId));
-    if (caption) formData.append('caption', caption);
+    formData.append('type', type);
+    if (options.caption) formData.append('caption', options.caption);
+    if (options.sessionId) formData.append('session_id', String(options.sessionId));
+    if (options.replyToId) formData.append('reply_to_id', options.replyToId);
 
-    const filename = fileUri.split('/').pop() || 'upload.jpg';
+    const filename = file.name || file.uri.split('/').pop() || (type === 'image' ? 'photo.jpg' : type === 'video' ? 'video.mp4' : 'upload.bin');
+    let mime = file.mimeType;
+    if (!mime || mime === 'application/octet-stream') {
+      const ext = filename.split('.').pop()?.toLowerCase();
+      if (ext === 'jpg' || ext === 'jpeg') mime = 'image/jpeg';
+      else if (ext === 'png') mime = 'image/png';
+      else if (ext === 'webp') mime = 'image/webp';
+      else if (ext === 'mp4') mime = 'video/mp4';
+      else if (ext === 'mov') mime = 'video/quicktime';
+      else if (ext === 'm4a') mime = 'audio/m4a';
+      else if (ext === 'ogg' || ext === 'opus') mime = 'audio/ogg';
+      else if (ext === 'mp3') mime = 'audio/mpeg';
+      else if (ext === 'pdf') mime = 'application/pdf';
+      else if (type === 'image') mime = 'image/jpeg';
+      else if (type === 'video') mime = 'video/mp4';
+      else if (type === 'audio' || type === 'voice') mime = 'audio/m4a';
+      else mime = 'application/octet-stream';
+    }
+
     // @ts-ignore React Native file object
     formData.append('file', {
-      uri: fileUri,
+      uri: file.uri,
       name: filename,
-      type: mimeType,
+      type: mime,
     });
 
     const response = await apiClient.post('/crm/messages/send-media', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 120000,
+    });
+    return response.data;
+  },
+
+  async getConversationMedia(conversationId: number, limit: number = 60) {
+    const response = await apiClient.get<{ success: boolean; media: Message[] }>(
+      `/crm/conversations/${conversationId}/media`,
+      { params: { limit } }
+    );
+    return response.data;
+  },
+
+  async renameConversation(conversationId: number, contactName: string) {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/rename`, {
+      contact_name: contactName,
+    });
+    return response.data;
+  },
+
+  async archiveConversation(conversationId: number, archived: boolean = true) {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/archive`, {
+      archived,
+    });
+    return response.data;
+  },
+
+  async pinConversation(conversationId: number, pinned: boolean = true) {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/pin-chat`, {
+      pinned,
+    });
+    return response.data;
+  },
+
+  async forwardMessage(messageId: string | number, targetConversationIds: number[]) {
+    const response = await apiClient.post('/crm/messages/forward', {
+      message_id: messageId,
+      target_conversation_ids: targetConversationIds,
+    });
+    return response.data;
+  },
+
+  async sendReaction(conversationId: number, messageId: string | number, emoji: string | null) {
+    const response = await apiClient.post('/crm/messages/reaction', {
+      conversation_id: conversationId,
+      message_id: messageId,
+      emoji: emoji || '',
     });
     return response.data;
   },
@@ -170,16 +243,6 @@ export const chatService = {
       session_id: sessionId,
       message,
     });
-    return response.data;
-  },
-
-  async archiveConversation(conversationId: number, archived: boolean = true) {
-    const response = await apiClient.post(`/crm/conversations/${conversationId}/archive`, { archived });
-    return response.data;
-  },
-
-  async pinConversation(conversationId: number, pinned: boolean = true) {
-    const response = await apiClient.post(`/crm/conversations/${conversationId}/pin-chat`, { pinned });
     return response.data;
   },
 };

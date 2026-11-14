@@ -1265,10 +1265,9 @@ class CrmController extends Controller
 
         // Distribution rule: an agent only sees the shared pool (unclaimed
         // chats) plus the chats they personally hold — a colleague's locked
-        // chat never shows up in their list. Owners/admins see everything.
-        if ($user->crm_role === 'agent') {
-            // Agents see the pool, their own chats — and every group chat
-            // regardless of who is holding it (groups aren't exclusive).
+        // chat never shows up in their list. Owners and admins see the whole
+        // account on every platform; each row carries its assigned agent.
+        if ($user->crm_role === 'agent' && $request->input('scope') !== 'all_staff') {
             $query->where(function ($q) use ($user) {
                 $q->whereNull('assigned_agent_id')
                   ->orWhere('assigned_agent_id', $user->id)
@@ -1280,6 +1279,17 @@ class CrmController extends Controller
         // the unclaimed pool + the chats they are holding. For the owner it
         // means "no one picked this up yet" (بدون موظف).
         match ($request->input('scope')) {
+            'chats' => $query->where(function ($q) {
+                $q->whereNull('contact_jid')->orWhere('contact_jid', 'not like', '%@g.us');
+            })->whereNull('resolved_at')->when(
+                $user->crm_role === 'agent',
+                fn ($q) => $q->where(function ($w) use ($user) {
+                    $w->whereNull('assigned_agent_id')
+                      ->orWhere('assigned_agent_id', $user->id);
+                })
+            ),
+            'groups' => $query->where('contact_jid', 'like', '%@g.us'),
+            'unassigned' => $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
             'available' => $user->crm_role === 'agent'
                 ? $query->whereNull('resolved_at')->where(function ($q) use ($user) {
                     $q->whereNull('assigned_agent_id')
@@ -1288,6 +1298,7 @@ class CrmController extends Controller
                   })
                 : $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
             'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),
+            'unread' => $query->where('unread_count', '>', 0),
             'resolved' => $query->whereNotNull('resolved_at'),
             default => null,
         };
@@ -1351,6 +1362,9 @@ class CrmController extends Controller
         if ($conversation->unread_count > 0) {
             $conversation->update(['unread_count' => 0]);
             $this->sendReadReceipts($conversation);
+            // Other open tabs/agents must see the badge clear too, not just
+            // the tab that happened to open the chat.
+            $this->broadcastConversation($conversation);
         }
 
         // The "محولة من …" badge is acknowledged once the receiving agent
@@ -1386,6 +1400,24 @@ class CrmController extends Controller
                           $sq2->where('from', $conversation->contact_phone)
                              ->orWhere('to', $conversation->contact_phone);
                       });
+                      // Incoming group rows store the participant's own number
+                      // in `from` (not the group JID), so the from/to fallback
+                      // above would drag every group message this contact sends
+                      // into their private thread. Only rows with no group-type
+                      // conversation may leak through here — twin private
+                      // conversations still merge as before.
+                      if (!str_contains((string) $conversation->contact_jid, '@g.us')) {
+                          $sq->whereNotExists(function ($sub) {
+                              $sub->select(\DB::raw(1))
+                                  ->from('whatsapp_conversations as gc')
+                                  ->whereColumn('gc.id', 'whatsapp_messages.conversation_id')
+                                  ->where(function ($cq) {
+                                      $cq->where('gc.contact_jid', 'like', '%@g.us')
+                                         ->orWhere('gc.contact_jid', 'like', '%@broadcast')
+                                         ->orWhere('gc.contact_jid', 'like', '%@newsletter');
+                                  });
+                          });
+                      }
                   }
               });
         });
@@ -1587,7 +1619,7 @@ class CrmController extends Controller
         $groupDigits = preg_replace('/\D/', '', (string) $conversation->contact_jid);
         $fromDigits = $incoming->pluck('from')
             ->map(fn ($f) => preg_replace('/\D/', '', (string) $f))
-            ->filter(fn ($d) => $d !== $groupDigits)
+            ->filter(fn ($d) => $d !== $groupDigits && strlen($d) >= 5)
             ->unique()
             ->values();
         if ($fromDigits->isEmpty()) {
@@ -1618,12 +1650,17 @@ class CrmController extends Controller
             ->pluck('name', 'phone_tail');
 
         $pushnames = $incoming
-            ->filter(fn ($m) => !empty($m->sender_name))
+            ->filter(fn ($m) => !empty($m->sender_name) && preg_replace('/\D/', '', (string) $m->from) !== $groupDigits)
             ->groupBy('from')
             ->map(fn ($rows) => $rows->first()->sender_name);
 
-        $incoming->each(function ($m) use ($resolved, $book, $pushnames) {
+        $incoming->each(function ($m) use ($groupDigits, $resolved, $book, $pushnames) {
             $digits = preg_replace('/\D/', '', (string) $m->from);
+            if ($digits === $groupDigits) {
+                $m->sender_name = null;
+                $m->sender_phone = null;
+                return;
+            }
             $resolvedPhone = $resolved[$digits] ?? $digits;
             $bookName = $resolvedPhone ? ($book[substr($resolvedPhone, -10)] ?? null) : null;
             $m->sender_name = $bookName ?: ($pushnames[$m->from] ?? $m->sender_name);
@@ -3823,6 +3860,7 @@ class CrmController extends Controller
     public function pinMessage(Request $request, $id)
     {
         $data = $request->validate(['duration' => 'nullable|integer|min:60|max:2592000']);
+        $duration = (int) ($data['duration'] ?? 604800); // 7 days default
         $allowed = $this->getAllowedSessionIds($request->user());
         $message = WhatsAppMessage::findOrFail($id);
         $conv = WhatsAppConversation::where('id', $message->conversation_id)
@@ -3838,6 +3876,7 @@ class CrmController extends Controller
                 'fromMe' => $message->direction === 'outgoing',
                 'participant' => ($message->direction === 'incoming' && str_contains((string) $conv->contact_jid, '@g.us')) ? $message->from : null,
                 'action' => 'pin',
+                'duration' => $duration,
             ]);
         } catch (\Throwable $e) {
             return response()->json(['success' => false, 'message' => 'WhatsApp did not confirm the pin in time — try again'], 502);
@@ -3847,7 +3886,6 @@ class CrmController extends Controller
             return response()->json(['success' => false, 'message' => $body['message'] ?? $body['error'] ?? 'Engine rejected the pin'], 502);
         }
 
-        $duration = (int) ($data['duration'] ?? 604800); // 7 days default
         $conv->update([
             'pinned_message_id' => $message->id,
             'pin_expires_at' => now()->addSeconds($duration),
@@ -3886,8 +3924,13 @@ class CrmController extends Controller
         if (!$conv?->pinned_message_id) {
             return null;
         }
+        if ($conv->pin_expires_at && $conv->pin_expires_at->isPast()) {
+            $conv->update(['pinned_message_id' => null, 'pin_expires_at' => null]);
+            return null;
+        }
         $m = WhatsAppMessage::find($conv->pinned_message_id);
-        if (!$m) {
+        if (!$m || (int) $m->conversation_id !== (int) $conv->id) {
+            $conv->update(['pinned_message_id' => null, 'pin_expires_at' => null]);
             return null;
         }
         return [
@@ -3899,6 +3942,29 @@ class CrmController extends Controller
             'sender_name' => $m->sender_name,
             'expires_at' => $conv->pin_expires_at?->toIso8601String(),
         ];
+    }
+
+    /** Register/replace an Expo push token for this user (mobile app). */
+    public function savePushToken(Request $request)
+    {
+        $data = $request->validate([
+            'token' => 'required|string|max:200',
+            'platform' => 'nullable|string|max:20',
+            'device_name' => 'nullable|string|max:100',
+        ]);
+        $user = $request->user();
+        $tokens = collect($user->expo_push_tokens ?? [])
+            ->reject(fn ($t) => ($t['token'] ?? null) === $data['token'])
+            ->push([
+                'token' => $data['token'],
+                'platform' => $data['platform'] ?? null,
+                'device_name' => $data['device_name'] ?? null,
+                'registered_at' => now()->toIso8601String(),
+            ])
+            ->values()
+            ->all();
+        $user->update(['expo_push_tokens' => $tokens]);
+        return response()->json(['success' => true]);
     }
 
     /** Local archive flag — the WhatsApp-side patch rides app-state, synced

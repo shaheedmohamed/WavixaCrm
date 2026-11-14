@@ -160,7 +160,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         });
       });
 
-      session.getClient()?.on?.('chat.pinned', (r: any) => {
+      session.onChatPinned((r) => {
         eventBus.emit('chat.pinned', {
           event: 'chat.pinned',
           session_id: sessionId,
@@ -171,7 +171,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         });
       });
 
-      session.getClient()?.on?.('chat.archived', (r: any) => {
+      session.onChatArchived((r) => {
         eventBus.emit('chat.archived', {
           event: 'chat.archived',
           session_id: sessionId,
@@ -183,7 +183,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
       });
 
       // "Read on the phone" (app-state markChatAsRead) → zero the unread badge.
-      session.getClient()?.on?.('chat.read', (r: any) => {
+      session.onChatRead((r) => {
         eventBus.emit('chat.read', {
           event: 'chat.read',
           session_id: sessionId,
@@ -847,7 +847,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
    * base64-encoded.
    */
   router.post('/internal/pin', async (req: Request, res: Response) => {
-    const { sessionId: reqSessionId, userId, to, messageId, fromMe, participant, action } = req.body || {};
+    const { sessionId: reqSessionId, userId, to, messageId, fromMe, participant, action, duration } = req.body || {};
     const sessionId = String(reqSessionId || userId || '');
     if (!sessionId || !to || !messageId) {
       res.status(400).json({ success: false, message: 'sessionId, to, and messageId are required' });
@@ -865,6 +865,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         messageId: String(messageId),
         fromMe: fromMe !== false,
         participant: participant ? String(participant) : undefined,
+        duration: duration ? Number(duration) : undefined,
       });
       res.json({ success: true, id: r?.id });
     } catch (err) {
@@ -1374,6 +1375,19 @@ export function createRoutes(deps: RouteDependencies): express.Router {
       return;
     }
     await session.sendReadReceipt(chatJid, ids.slice(0, 50), req.body.participant);
+    // The receipt only blues the sender's ticks — the unread badge on the
+    // owner's phone clears via the markChatAsRead app-state mutation.
+    void session.markChatAsRead(chatJid).catch((err) =>
+      logger.warn(
+        {
+          err: (err as Error)?.message,
+          errAttrs: (err as { node?: { content?: unknown } })?.node?.content,
+          sessionId,
+          chatJid,
+        },
+        'markChatAsRead app-state write failed',
+      ),
+    );
     res.json({ success: true });
   });
 

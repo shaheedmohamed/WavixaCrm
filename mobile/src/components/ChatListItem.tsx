@@ -1,8 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons, FontAwesome, MaterialCommunityIcons } from '@expo/vector-icons';
+import { ChatAvatar } from './ChatAvatar';
 import { Conversation } from '../types/crm';
-import { Colors } from '../constants/theme';
 
 interface ChatListItemProps {
   conversation: Conversation;
@@ -11,7 +11,7 @@ interface ChatListItemProps {
   currentUserId?: number;
 }
 
-export const ChatListItem: React.FC<ChatListItemProps> = ({
+const ChatListItemComponent: React.FC<ChatListItemProps> = ({
   conversation,
   onPress,
   onLongPress,
@@ -21,10 +21,6 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
     conversation.contact_name ||
     (conversation.contact_username ? `@${conversation.contact_username}` : null) ||
     (conversation.contact_phone ? `+${conversation.contact_phone}` : 'عميل واتساب');
-
-  const initial = title.trim().charAt(0).toUpperCase();
-
-  const isGroup = conversation.contact_jid?.includes('@g.us');
 
   // Format timestamp (e.g., 9:38 م, or Date)
   const formatTime = (isoString?: string | null) => {
@@ -98,8 +94,12 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
   const previewText = () => {
     if (conversation.last_message_type === 'image') return '📷 صورة';
     if (conversation.last_message_type === 'video') return '🎥 فيديو';
-    if (['audio', 'voice'].includes(conversation.last_message_type || '')) return '🎵 تسجيل صوتي';
+    if (['audio', 'voice'].includes(conversation.last_message_type || '')) return '� تسجيل صوتي';
     if (conversation.last_message_type === 'document') return '📄 ملف';
+    if (conversation.last_message_type === 'sticker') return 'ملصق';
+    if (conversation.last_message_type === 'location') return '📍 موقع';
+    if (conversation.last_message_type === 'contact') return '👤 جهة اتصال';
+    if (conversation.last_message_type === 'call') return '📞 مكالمة';
     return conversation.last_message || 'بدء المحادثة';
   };
 
@@ -114,27 +114,7 @@ export const ChatListItem: React.FC<ChatListItemProps> = ({
     >
       {/* Right side: Avatar with platform/online indicator */}
       <View style={styles.avatarContainer}>
-        {conversation.contact_avatar ? (
-          <Image source={{ uri: conversation.contact_avatar }} style={styles.avatar} />
-        ) : (
-          <View
-            style={[
-              styles.avatarPlaceholder,
-              isGroup ? styles.groupAvatarBg : styles.userAvatarBg,
-            ]}
-          >
-            {isGroup ? (
-              <MaterialCommunityIcons name="account-group" size={20} color="#FFFFFF" />
-            ) : (
-              <Text style={styles.avatarText}>{initial}</Text>
-            )}
-          </View>
-        )}
-
-        {/* Small platform badge on avatar corner */}
-        <View style={styles.avatarBadge}>
-          <FontAwesome name="whatsapp" size={10} color="#FFFFFF" />
-        </View>
+        <ChatAvatar conversation={conversation} title={title} size={48} badge />
       </View>
 
       {/* Middle: Name & Last Message */}
@@ -244,37 +224,6 @@ const styles = StyleSheet.create({
     height: 48,
     borderRadius: 24,
     backgroundColor: '#E9EDEF',
-  },
-  avatarPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  userAvatarBg: {
-    backgroundColor: '#6C757D',
-  },
-  groupAvatarBg: {
-    backgroundColor: '#00A884',
-  },
-  avatarText: {
-    color: '#FFFFFF',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  avatarBadge: {
-    position: 'absolute',
-    bottom: -1,
-    left: -1,
-    width: 15,
-    height: 15,
-    borderRadius: 8,
-    backgroundColor: '#25D366',
-    borderWidth: 1.5,
-    borderColor: '#FFFFFF',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   centerInfo: {
     flex: 1,
@@ -389,3 +338,5 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
 });
+
+export const ChatListItem = React.memo(ChatListItemComponent);

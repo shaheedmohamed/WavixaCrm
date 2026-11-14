@@ -59,6 +59,22 @@ export interface PinnedPreview {
   expires_at?: string | null;
 }
 
+export interface MediaMeta {
+  mediaKey?: string;
+  directPath?: string;
+  url?: string;
+  mimetype?: string;
+  fileName?: string;
+  type?: string;
+  seconds?: number;
+}
+
+export interface MessageReaction {
+  emoji: string;
+  from?: string;
+  timestamp?: number;
+}
+
 export interface Message {
   id: number;
   message_id: string;
@@ -67,12 +83,19 @@ export interface Message {
   from?: string | null;
   to?: string | null;
   sender_name?: string | null;
+  sender_phone?: string | null;
   message?: string | null;
   message_type: string;
   media_url?: string | null;
-  media_mime?: string | null;
+  media_mime_type?: string | null;
+  media_caption?: string | null;
+  media_size?: number | null;
+  media_meta?: MediaMeta | null;
+  reactions?: MessageReaction[] | null;
+  mentioned_jids?: string[] | null;
+  is_forwarded?: boolean;
   timestamp: string;
-  status?: 'pending' | 'sent' | 'delivered' | 'read' | null;
+  status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | null;
   reply_to_id?: string | null;
   starred_at?: string | null;
   revoked_at?: string | null;
@@ -94,10 +117,11 @@ export interface Agent {
 }
 
 export type FilterScope =
-  | 'all'
-  | 'unread'
+  | 'chats'
+  | 'groups'
   | 'mine'
   | 'unassigned'
-  | 'groups'
+  | 'unread'
   | 'resolved'
-  | 'archived';
+  | 'archived'
+  | 'all';

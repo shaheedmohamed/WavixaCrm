@@ -12,7 +12,7 @@ interface Props {
 
 /** Renders message text with tappable links and WhatsApp-style formatting
  *  (*bold*, _italic_, ~strike~, ```mono```). */
-export const MessageText: React.FC<Props> = ({ text, isOutgoing = false, style }) => {
+const MessageTextComponent: React.FC<Props> = ({ text, isOutgoing = false, style }) => {
   const openUrl = useCallback((url: string) => {
     const href = url.startsWith('http') ? url : `https://${url}`;
     Linking.openURL(href).catch(() => {});
@@ -20,7 +20,7 @@ export const MessageText: React.FC<Props> = ({ text, isOutgoing = false, style }
 
   if (!text) return null;
 
-  const linkColor = isOutgoing ? '#0B57A4' : '#027EB5';
+  const linkColor = '#027EB5';
 
   // First pass: split on URLs so links never get mangled by markdown parsing.
   const parts = text.split(URL_RE);
@@ -79,7 +79,6 @@ export const MessageText: React.FC<Props> = ({ text, isOutgoing = false, style }
         </Text>
       );
     } else {
-      URL_RE.lastIndex = 0;
       nodes.push(...renderFormatted(part, `seg-${idx}`));
     }
   });
@@ -109,6 +108,9 @@ const styles = StyleSheet.create({
   mono: {
     fontFamily: 'monospace',
     backgroundColor: 'rgba(0,0,0,0.06)',
+    color: '#111B21',
     fontSize: 12,
   },
 });
+
+export const MessageText = React.memo(MessageTextComponent);

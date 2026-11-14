@@ -6,6 +6,7 @@ import {
   RefreshControl,
   ActivityIndicator,
   Text,
+  Platform,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -42,7 +43,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedScope, setSelectedScope] = useState<FilterScope>('all');
+  const [selectedScope, setSelectedScope] = useState<FilterScope>('chats');
   const [activeTab, setActiveTab] = useState<BottomTabType>('chats');
 
   // Modals state
@@ -69,7 +70,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
 
       try {
         const params: any = {
-          scope: selectedScope === 'all' ? undefined : selectedScope,
+          scope: selectedScope,
           search: searchQuery.trim() || undefined,
           per_page: 50,
         };
@@ -110,7 +111,22 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           }
           firstSyncDone.current = true;
 
-          setConversations(res.conversations);
+          setConversations((prev) => {
+            if (prev.length !== res.conversations.length) return res.conversations;
+            for (let i = 0; i < res.conversations.length; i++) {
+              const a = prev[i];
+              const b = res.conversations[i];
+              if (
+                a?.id !== b?.id ||
+                a?.unread_count !== b?.unread_count ||
+                a?.last_message_at !== b?.last_message_at ||
+                a?.is_pinned !== b?.is_pinned
+              ) {
+                return res.conversations;
+              }
+            }
+            return prev;
+          });
         }
       } catch (err) {
         console.error('Error fetching conversations:', err);
@@ -156,7 +172,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const handleBottomTabPress = (tab: BottomTabType) => {
     setActiveTab(tab);
     if (tab === 'filters') {
-      setSelectedScope(selectedScope === 'unread' ? 'all' : 'unread');
+      setSelectedScope(selectedScope === 'unread' ? 'chats' : 'unread');
     } else if (tab === 'stats') {
       onOpenStats();
     } else if (tab === 'settings') {
@@ -209,6 +225,11 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           <FlatList
             data={conversations}
             keyExtractor={(item) => String(item.id)}
+            removeClippedSubviews={Platform.OS === 'android'}
+            maxToRenderPerBatch={10}
+            windowSize={7}
+            initialNumToRender={15}
+            getItemLayout={(_, index) => ({ length: 72, offset: 72 * index, index })}
             renderItem={({ item }) => (
               <ChatListItem
                 conversation={item}

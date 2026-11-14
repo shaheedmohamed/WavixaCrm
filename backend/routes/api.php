@@ -168,6 +168,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/conversations/{id}/archive', [\App\Http\Controllers\Api\CrmController::class, 'archiveConversation']);
         Route::post('/conversations/{id}/pin-chat', [\App\Http\Controllers\Api\CrmController::class, 'pinConversation']);
         Route::get('/me', [\App\Http\Controllers\Api\CrmController::class, 'me']);
+        Route::post('/push-token', [\App\Http\Controllers\Api\CrmController::class, 'savePushToken']);
         Route::get('/stats', [\App\Http\Controllers\Api\CrmController::class, 'stats']);
 
         // Channel authorization under the /api/crm prefix so the split CRM

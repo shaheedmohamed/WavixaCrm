@@ -645,8 +645,9 @@ class WhatsAppWebhookController extends Controller
         $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
         $cands[] = $digits . '@s.whatsapp.net';
         $cands[] = $digits . '@lid';
+        $session = !empty($data['userId']) ? $this->resolveSession((string) $data['userId']) : null;
         $conv = WhatsAppConversation::query()
-            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
+            ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
             ->whereIn('contact_jid', array_unique($cands))
             ->first();
         if ($conv) {
@@ -666,8 +667,9 @@ public function chatArchived(Request $request)
         $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
         $cands[] = $digits . '@s.whatsapp.net';
         $cands[] = $digits . '@lid';
+        $session = !empty($data['userId']) ? $this->resolveSession((string) $data['userId']) : null;
         $conv = WhatsAppConversation::query()
-            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
+            ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
             ->whereIn('contact_jid', array_unique($cands))
             ->first();
         if ($conv) {
@@ -699,6 +701,21 @@ public function chatRead(Request $request)
             ->first();
         if ($conv) {
             $conv->update(['unread_count' => ($data['read'] ?? true) ? 0 : max(1, (int) $conv->unread_count)]);
+            // Push the new badge to open CRM tabs — without this the list
+            // only refreshes on reload.
+            try {
+                event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'conversation.update', [
+                    'conversation' => $conv->fresh()?->only([
+                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                        'contact_avatar', 'last_message', 'last_message_at',
+                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                        'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
+                        'rating', 'rating_note',
+                    ]),
+                ]));
+            } catch (\Throwable $e) {
+                Log::debug('CRM broadcast (chat-read) failed: ' . $e->getMessage());
+            }
         }
         return response()->json(['success' => true]);
     }
@@ -1084,12 +1101,12 @@ public function messageRevoked(Request $request)
                         || (int) $newestTs >= $conversation->last_message_at->getTimestamp();
                     if ($syncUnread > $storedUnread || ($syncUnread < $storedUnread && $chunkIsFresh)) {
                         $convUpdates['unread_count'] = $syncUnread;
-                        if (isset($convData['archived'])) {
-                            $convUpdates['archived_at'] = $convData['archived'] ? now() : null;
-                        }
-                        if (isset($convData['pinned'])) {
-                            $convUpdates['is_pinned'] = (bool) $convData['pinned'];
-                        }
+                    }
+                    if (isset($convData['archived'])) {
+                        $convUpdates['archived_at'] = $convData['archived'] ? now() : null;
+                    }
+                    if (isset($convData['pinned'])) {
+                        $convUpdates['is_pinned'] = (bool) $convData['pinned'];
                     }
                 }
                 if ($convUpdates) {
@@ -1413,8 +1430,11 @@ public function messageRevoked(Request $request)
         if (is_array($pinInfo) && !empty($pinInfo['action'])) {
             $pJid = (string) ($request->input('from') ?? '');
             if ($pJid) {
-                $pConv = WhatsAppConversation::where('session_id', $request->input('userId'))
-                    ->where('contact_jid', $pJid)->first();
+                $session = !empty($request->input('userId')) ? $this->resolveSession((string) $request->input('userId')) : null;
+                $convQ = WhatsAppConversation::query()
+                    ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
+                    ->where('contact_jid', $pJid);
+                $pConv = $convQ->first();
                 if ($pConv) {
                     if (($pinInfo['action'] ?? '') === 'unpin') {
                         $pConv->update(['pinned_message_id' => null, 'pin_expires_at' => null]);
@@ -1669,6 +1689,34 @@ public function messageRevoked(Request $request)
                 ]));
             } catch (\Throwable $e) {
                 Log::debug('CRM broadcast (message.new) failed: ' . $e->getMessage());
+            }
+
+            // Real push to the mobile app — owner + assigned agent devices
+            // get the custom ding notification for genuinely incoming msgs.
+            if (!$fromMe && $incomingMessage) {
+                try {
+                    $convFresh = $conversation->fresh();
+                    $title = $convFresh->contact_name
+                        ?: ($convFresh->contact_phone ? '+' . $convFresh->contact_phone : 'عميل');
+                    $body = $incomingMessage->message
+                        ?: match ($incomingMessage->message_type) {
+                            'image' => '📷 صورة',
+                            'video' => '🎥 فيديو',
+                            'audio', 'voice' => '🎵 تسجيل صوتي',
+                            'document' => '📄 ملف',
+                            default => 'رسالة جديدة',
+                        };
+                    $targets = collect([$session->user_id, $convFresh->assigned_agent_id])
+                        ->filter()->unique()->values();
+                    foreach ($targets as $uid) {
+                        \App\Services\ExpoPushService::notifyIncoming(
+                            $uid, $title, $body,
+                            ['conversation_id' => $conversation->id]
+                        );
+                    }
+                } catch (\Throwable $e) {
+                    Log::debug('ExpoPush (message.new) failed: ' . $e->getMessage());
+                }
             }
 
             // Dispatch incoming message event for user webhooks

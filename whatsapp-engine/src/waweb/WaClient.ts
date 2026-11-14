@@ -39,7 +39,12 @@ import {
   xmppSignedPreKey,
 } from './WaPayloads.js';
 import { generateWaKeyPair, BufferJSON, type WaCreds } from './WaCreds.js';
-import { AppStateProcessor } from './AppStateProcessor.js';
+import {
+  AppStateProcessor,
+  CollectionState,
+  FlatRecord,
+  OutgoingMutation,
+} from './AppStateProcessor.js';
 import { MediaManager, type MediaType } from '../message/MediaManager.js';
 import {
   normalizeMessageContent,
@@ -176,6 +181,21 @@ export class WaClient extends EventEmitter {
   public readonly signalStore: SignalStore;
   public readonly senderKeyStore: SenderKeyStore;
   private readonly senderKeyCipher: SenderKeyCipher;
+
+  /**
+   * Per-collection syncd integrity state (version + LtHash over mutation
+   * value MACs + indexMac→valueMac map). Rebuilt on every connect from the
+   * version-0 resync replay; required for the WRITE path — the server
+   * rejects patches whose snapshotMac/patchMac don't chain on its state.
+   */
+  private appState = new Map<string, {
+    version: number;
+    hash: Buffer;
+    macs: Map<string, Buffer>;
+    keyId?: Buffer;
+  }>();
+  private lastAppStateKeyId: Buffer | undefined;
+  private appStateSendChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly creds: WaCreds,
@@ -1294,7 +1314,7 @@ export class WaClient extends EventEmitter {
             reject(
               Object.assign(
                 new Error(`Stanza error (${errAttr || errChild?.attrs.code || 'unknown'})`),
-                { statusCode: +(errAttr || errChild?.attrs.code || 500) },
+                { statusCode: +(errAttr || errChild?.attrs.code || 500), node: n },
               ),
             );
             return;
@@ -1410,33 +1430,69 @@ export class WaClient extends EventEmitter {
    * the owner's address book (encrypted ContactAction mutations), so the
    * result is decoded into a 'contacts.sync' event.
    */
-  private resyncAppState(): Promise<BinaryNode> {
-    const collections = [
+  private async resyncAppState(): Promise<void> {
+    await this.syncAppStateCollections([
       'critical_block',
       'critical_unblock_low',
       'regular_high',
       'regular_low',
       'regular',
-    ];
-    return this.query({
-      tag: 'iq',
-      attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'w:sync:app:state' },
-      content: [
-        {
-          tag: 'sync',
-          attrs: {},
-          content: collections.map((name) => ({
-            tag: 'collection',
-            attrs: { name, version: '0', return_snapshot: 'false' },
-          })),
-        },
-      ],
-    }).then((result) => {
-      void this.processAppStateResult(result).catch((err) =>
-        logger.warn({ err }, 'app-state collection decode failed'),
-      );
-      return result;
-    });
+    ]);
+  }
+
+  /**
+   * Pull app-state deltas until every collection drains (has_more_patches
+   * clears). Requests start at the persisted version — a v0 collection
+   * replays full history, so its chat.* events are suppressed (ancient
+   * mutations, not fresh signals). Contacts still import either way.
+   */
+  private async syncAppStateCollections(names: string[]): Promise<void> {
+    const pending = new Set(names);
+    const initialSync = new Set<string>();
+    // Pages can be small — regular_low on a busy account is dozens of
+    // rounds. 60 is generous headroom, not an infinite loop.
+    let guard = 0;
+    while (pending.size && guard++ < 60) {
+      const nodes = [...pending].map((name) => {
+        const st = this.appStateState(name);
+        if (!st.version) initialSync.add(name);
+        return {
+          tag: 'collection',
+          attrs: {
+            name,
+            version: String(st.version),
+            // Always patch replay — snapshots arrive as CDN ExternalBlobReference
+            // blobs this decoder doesn't unpack; v0 replays build the same state.
+            return_snapshot: 'false',
+          },
+        };
+      });
+      const result = await this.query({
+        tag: 'iq',
+        attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'w:sync:app:state' },
+        content: [{ tag: 'sync', attrs: {}, content: nodes }],
+      });
+      let collections: CollectionState[] = [];
+      try {
+        collections = await this.processAppStateResult(result, initialSync);
+      } catch (err) {
+        logger.warn({ err }, 'app-state collection decode failed');
+      }
+      for (const name of [...pending]) {
+        const st = collections.find((c) => c.name === name);
+        if (!st || !st.hasMore) pending.delete(name);
+      }
+    }
+    if (pending.size) {
+      logger.warn({ remaining: [...pending] }, 'app-state resync stopped before draining all collections');
+    }
+  }
+
+  /** Drop local state for one collection and replay it from v0 (409 recovery). */
+  private async fullResyncCollection(name: string): Promise<void> {
+    this.appState.delete(name);
+    if (this.creds.appStateCollections) delete this.creds.appStateCollections[name];
+    await this.syncAppStateCollections([name]);
   }
 
   /**
@@ -1474,9 +1530,13 @@ export class WaClient extends EventEmitter {
    * emit 'contacts.sync' for Laravel, and ask the primary for any keys we
    * still lack (its share arrives asynchronously and re-triggers a resync).
    */
-  private async processAppStateResult(result: BinaryNode): Promise<void> {
-    const records = await AppStateProcessor.collectRecords(result);
-    if (!records.length) return;
+  private async processAppStateResult(
+    result: BinaryNode,
+    suppressEventCollections?: Set<string>,
+  ): Promise<CollectionState[]> {
+    const { records, collections } = await AppStateProcessor.collectRecords(result);
+    if (!records.length && !collections.length) return collections;
+    this.trackAppState(records, collections);
 
     const keyMap = new Map<string, Buffer>();
     for (const [id, b64] of Object.entries(this.creds.appStateKeys || {})) {
@@ -1489,13 +1549,17 @@ export class WaClient extends EventEmitter {
 
     // "Read on another device" patches — keep the CRM unread badge in sync
     // with the phone instead of only resetting when the chat is opened here.
+    // suppressEventCollections gates this to fresh deltas: on a from-v0
+    // replay every markChatAsRead ever written would zero badges on chats
+    // that have legitimately gone unread since.
     try {
+      const emitOk = (c?: string) => !suppressEventCollections?.has(c ?? '');
       const reads = await AppStateProcessor.extractChatReads(records, keyMap);
-      for (const r of reads) this.emit('chat.read', r);
+      for (const r of reads) if (emitOk(r.collection)) this.emit('chat.read', r);
       const archives = await AppStateProcessor.extractChatArchives(records, keyMap);
-      for (const a of archives) this.emit('chat.archived', a);
+      for (const a of archives) if (emitOk(a.collection)) this.emit('chat.archived', a);
       const pins = await AppStateProcessor.extractChatPins(records, keyMap);
-      for (const p2 of pins) this.emit('chat.pinned', p2);
+      for (const p2 of pins) if (emitOk(p2.collection)) this.emit('chat.pinned', p2);
     } catch { /* best effort */ }
 
     const { contacts, missingKeyIds } = await AppStateProcessor.extractContacts(records, keyMap);
@@ -1507,6 +1571,191 @@ export class WaClient extends EventEmitter {
       await this.requestAppStateKeys(missingKeyIds.map((b64) => Buffer.from(b64, 'base64'))).catch(
         (err) => logger.debug({ err, missing: missingKeyIds.length }, 'app-state key request failed'),
       );
+    }
+    return collections;
+  }
+
+  private appStateState(name: string) {
+    let st = this.appState.get(name);
+    if (!st) {
+      const persisted = this.creds.appStateCollections?.[name];
+      const hash = persisted?.hash ? Buffer.from(persisted.hash, 'base64') : null;
+      st = {
+        version: hash && hash.length === AppStateProcessor.LT_HASH_SIZE ? (persisted?.version ?? 0) : 0,
+        hash: hash && hash.length === AppStateProcessor.LT_HASH_SIZE
+          ? hash
+          : Buffer.alloc(AppStateProcessor.LT_HASH_SIZE),
+        macs: new Map(),
+      };
+      this.appState.set(name, st);
+    }
+    return st;
+  }
+
+  /**
+   * Feed decoded snapshot/patch records into the LtHash tracker, in wire
+   * order: SET replaces its index's value-MAC contribution, REMOVE drops
+   * it. Records whose previous SET we never saw can't be subtracted — a
+   * drifted hash only costs a 409+retry on our next write.
+   * Version+hash persist into creds so resyncs fetch deltas only; the
+   * macs map stays in memory and rebuilds on full replays.
+   */
+  private trackAppState(records: FlatRecord[], collections: CollectionState[]): void {
+    // A snapshot is the complete live state — reset before applying.
+    // The persisted entry must go too or the lazy seeder restores it.
+    for (const c of collections) {
+      if (c.hadSnapshot) {
+        this.appState.delete(c.name);
+        if (this.creds.appStateCollections) delete this.creds.appStateCollections[c.name];
+      }
+    }
+    for (const rec of records) {
+      if (!rec.indexMac || !rec.collection) continue;
+      const st = this.appStateState(rec.collection);
+      const idx = rec.indexMac.toString('base64');
+      if (rec.operation === 1) {
+        const prev = st.macs.get(idx);
+        if (prev) {
+          AppStateProcessor.ltHashOp(st.hash, [prev], true);
+          st.macs.delete(idx);
+        }
+        continue;
+      }
+      const vm = rec.value && rec.value.length >= 32
+        ? rec.value.subarray(rec.value.length - 32)
+        : undefined;
+      if (!vm) continue;
+      const prev = st.macs.get(idx);
+      if (prev) AppStateProcessor.ltHashOp(st.hash, [prev], true);
+      AppStateProcessor.ltHashOp(st.hash, [vm], false);
+      st.macs.set(idx, vm);
+      if (rec.keyId) {
+        st.keyId = rec.keyId;
+        this.lastAppStateKeyId = rec.keyId;
+      }
+    }
+    for (const c of collections) {
+      if (c.version) {
+        const st = this.appStateState(c.name);
+        if (c.version > st.version) st.version = c.version;
+      }
+    }
+    if (collections.length) {
+      this.creds.appStateCollections = this.creds.appStateCollections || {};
+      for (const c of collections) {
+        const st = this.appStateState(c.name);
+        this.creds.appStateCollections[c.name] = {
+          version: st.version,
+          hash: st.hash.toString('base64'),
+        };
+      }
+      this.saveCreds();
+    }
+  }
+
+  /**
+   * Write a markChatAsRead mutation to regular_low — the only mechanism
+   * that clears the unread badge on the owner's other devices (the phone).
+   * Read receipts only turn the SENDER's ticks blue.
+   */
+  public async markChatAsRead(chatJid: string, read = true): Promise<void> {
+    const jid = chatJid.includes('@')
+      ? chatJid
+      : jidEncode(chatJid.replace(/\D/g, ''), 's.whatsapp.net');
+    await this.queueAppStateSend('regular_low', [{
+      index: ['markChatAsRead', jid],
+      version: 3,
+      value: {
+        markChatAsReadAction: {
+          read,
+          messageRange: { lastMessageTimestamp: Math.floor(Date.now() / 1000) },
+        },
+      },
+    }]);
+  }
+
+  /** Serialise app-state writes — concurrent patches must chain versions. */
+  private queueAppStateSend(
+    collection: string,
+    mutations: OutgoingMutation[],
+  ): Promise<void> {
+    const run = this.appStateSendChain.then(() => this.sendAppStatePatch(collection, mutations, true));
+    this.appStateSendChain = run.catch(() => undefined);
+    return run;
+  }
+
+  private async sendAppStatePatch(
+    collection: string,
+    mutations: OutgoingMutation[],
+    allowRetry: boolean,
+  ): Promise<void> {
+    if (!this.isOpen) throw new Error('socket not open');
+    const st = this.appStateState(collection);
+    // The newest key id seen anywhere is the active one — a stale
+    // collection-local key id produces MACs the server can't verify.
+    let keyId = this.lastAppStateKeyId ?? st.keyId;
+    if (!keyId) {
+      const first = Object.keys(this.creds.appStateKeys || {})[0];
+      if (first) keyId = Buffer.from(first, 'base64');
+    }
+    if (!keyId) throw new Error('no app-state sync key available');
+    const keyDataB64 = this.creds.appStateKeys?.[keyId.toString('base64')];
+    if (!keyDataB64) throw new Error('missing key data for app-state key');
+
+    const encoded = await AppStateProcessor.encodePatch({
+      collection,
+      version: st.version,
+      hash: st.hash,
+      keyId,
+      keyData: Buffer.from(keyDataB64, 'base64'),
+      mutations,
+      getPrevValueMac: (idx) => st.macs.get(idx.toString('base64')),
+    });
+
+    const resp = await this.query({
+      tag: 'iq',
+      attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'w:sync:app:state' },
+      content: [
+        {
+          tag: 'sync',
+          attrs: {},
+          content: [
+            {
+              tag: 'collection',
+              attrs: {
+                name: collection,
+                version: String(st.version),
+                return_snapshot: 'false',
+              },
+              content: [{ tag: 'patch', attrs: {}, content: encoded.patchBytes }],
+            },
+          ],
+        },
+      ],
+    }, 20_000);
+
+    const syncNode = getBinaryNodeChild(resp, 'sync');
+    const coll = syncNode
+      ? getBinaryNodeChild(syncNode, 'collection')
+      : getBinaryNodeChild(resp, 'collection');
+    const errNode = getBinaryNodeChild(coll ?? resp, 'error') ?? getBinaryNodeChild(resp, 'error');
+    if (errNode || coll?.attrs?.type === 'error') {
+      if (allowRetry && errNode?.attrs?.code === '409') {
+        // Version/hash drift — replay the collection from scratch so the
+        // next patch chains on the server's real state.
+        logger.warn({ collection }, 'app-state patch conflicted, resyncing then retrying');
+        await this.fullResyncCollection(collection).catch(() => undefined);
+        return this.sendAppStatePatch(collection, mutations, false);
+      }
+      throw new Error(`app-state ${collection} rejected (${JSON.stringify(errNode?.attrs || {})})`);
+    }
+
+    // Accepted — advance local integrity state to the new version.
+    st.version = encoded.version;
+    st.hash = encoded.hash;
+    st.keyId = keyId;
+    for (const { indexMac, valueMac } of encoded.mutationMacs) {
+      st.macs.set(indexMac.toString('base64'), valueMac);
     }
   }
 
@@ -3180,6 +3429,7 @@ export class WaClient extends EventEmitter {
       messageId: string;
       fromMe?: boolean;
       participant?: string;
+      duration?: number;
     },
   ): Promise<{ id: string }> {
     const destinationJid = jid.includes('@')
@@ -3226,7 +3476,7 @@ export class WaClient extends EventEmitter {
     for (const remoteJid of jidCandidates) {
       for (const pForm of participantForms) {
         try {
-          const message = {
+          const message: Record<string, unknown> = {
             pinInChatMessage: {
               key: {
                 remoteJid,
@@ -3238,6 +3488,11 @@ export class WaClient extends EventEmitter {
               senderTimestampMs: Date.now(),
             },
           };
+          if (opts.action !== 'unpin') {
+            message.messageContextInfo = {
+              messageAddOnDurationInSecs: opts.duration || 604800,
+            };
+          }
           const r = await this.sendWAMessage(stanzaTo, message, 'text');
           if (r?.id) {
             logger.info({ to: stanzaTo, remoteJid, participant: pForm, ...opts }, 'pin stanza sent');

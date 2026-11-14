@@ -464,6 +464,23 @@ const getDeviceName = (sessionId) => {
 
 const groupName = (id) => groups.value.find((g) => g.id === id)?.name || '';
 
+// Turn a 422 response into something the user can act on — the generic
+// "Validation error" message hides which field actually failed.
+const apiErrorMessage = (err, fallback) => {
+  const errors = err.response?.data?.errors;
+  if (!errors) return err.response?.data?.message || fallback;
+  return Object.entries(errors)
+    .flatMap(([field, msgs]) =>
+      msgs.map((m) => {
+        if (field === 'email' && /already been taken/i.test(m)) {
+          return 'البريد الإلكتروني مسجل بالفعل — استخدم بريداً مختلفاً للموظف';
+        }
+        return m;
+      })
+    )
+    .join('\n');
+};
+
 const openGroupModal = (g = null) => {
   isEditingGroup.value = Boolean(g);
   editingGroupId.value = g?.id ?? null;
@@ -486,7 +503,7 @@ const saveGroup = async () => {
       await loadData();
     }
   } catch (err) {
-    alert(err.response?.data?.message || 'حدث خطأ أثناء حفظ المجموعة');
+    alert(apiErrorMessage(err, 'حدث خطأ أثناء حفظ المجموعة'));
   } finally {
     savingGroup.value = false;
   }
@@ -551,7 +568,7 @@ const saveAgent = async () => {
       }
     }
   } catch (err) {
-    alert(err.response?.data?.message || 'حدث خطأ أثناء حفظ بيانات الموظف');
+    alert(apiErrorMessage(err, 'حدث خطأ أثناء حفظ بيانات الموظف'));
   } finally {
     saving.value = false;
   }

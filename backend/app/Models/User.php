@@ -52,6 +52,7 @@ class User extends Authenticatable
         'crm_role',
         'crm_parent_id',
         'crm_assigned_sessions',
+        'expo_push_tokens',
         'crm_group_id',
         'crm_plan_id',
         'crm_custom_agents_limit',
@@ -91,6 +92,7 @@ class User extends Authenticatable
             'reputation_factors' => 'array',
             'reputation_calculated_at' => 'datetime',
             'crm_assigned_sessions' => 'array',
+            'expo_push_tokens' => 'array',
             'max_active_chats' => 'integer',
         ];
     }
