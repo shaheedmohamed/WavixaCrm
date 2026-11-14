@@ -205,16 +205,34 @@ class CrmCallController extends Controller
             }
             $conversation->update($convUpdate);
 
+            $freshConv = $conversation->fresh([
+                'assignedAgent:id,name',
+                'resolvedBy:id,name',
+                'lastOutgoingUser:id,name',
+                'transferredBy:id,name',
+            ]);
             event(new CrmRealtimeEvent($session->user_id, 'message.new', [
                 'session_id' => $session->id,
                 'conversation_id' => $conversation->id,
-                'conversation' => $conversation->fresh()?->only([
-                    'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
-                    'contact_avatar', 'last_message', 'last_message_at',
-                    'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
-                    'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
-                    'rating', 'rating_note',
-                ]),
+                'conversation' => $freshConv ? array_merge(
+                    $freshConv->only([
+                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                        'contact_avatar', 'last_message', 'last_message_at',
+                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                        'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
+                        'rating', 'rating_note', 'last_outgoing_user_id',
+                    ]),
+                    [
+                        'assigned_agent' => $freshConv->assignedAgent ? [
+                            'id' => $freshConv->assignedAgent->id,
+                            'name' => $freshConv->assignedAgent->name,
+                        ] : null,
+                        'last_outgoing_user' => $freshConv->lastOutgoingUser ? [
+                            'id' => $freshConv->lastOutgoingUser->id,
+                            'name' => $freshConv->lastOutgoingUser->name,
+                        ] : null,
+                    ]
+                ) : null,
                 'message' => $msg->toArray(),
             ]));
         } catch (\Throwable $e) {

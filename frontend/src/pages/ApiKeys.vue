@@ -309,7 +309,9 @@ export default {
     const generatedKey = ref('');
     const newKey = ref({ name: '', expires_at: '', whatsapp_session_id: '', meta_phone_number_id: '', remote_pairing_limit: 1 });
     const currentUser = ref(auth.getUser() || {});
+    const subscription = ref(null);
     const canUseRemotePairing = computed(() => {
+      if (subscription.value?.limits_enforced === false) return true;
       const plan = (currentUser.value?.subscription_plan || '').toLowerCase();
       return plan.includes('partners') && currentUser.value?.subscription_status === 'active';
     });
@@ -345,6 +347,15 @@ export default {
         }
       } catch (err) {
         console.error('Error refreshing user:', err);
+      }
+
+      try {
+        const subRes = await api.get('/subscription');
+        if (subRes.success) {
+          subscription.value = subRes.data;
+        }
+      } catch (err) {
+        console.error('Error loading subscription:', err);
       }
     });
 

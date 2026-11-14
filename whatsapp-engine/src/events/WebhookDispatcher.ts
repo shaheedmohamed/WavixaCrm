@@ -158,9 +158,24 @@ export class WebhookDispatcher {
       await this.notifyLaravel('whatsapp/chat-read', {
         userId: p.session_id,
         jid: p.from,
+        lidJid: p.data?.lidJid || null,
         read: p.data?.read !== false,
+        lastMessageTimestamp: p.data?.lastMessageTimestamp || null,
         timestamp: p.timestamp,
       });
+    });
+
+    bus.on('chats.read_reconcile', async (p) => {
+      const reads = Array.isArray(p.data?.reads) ? p.data.reads : [];
+      const CHUNK = 200;
+      for (let i = 0; i < reads.length; i += CHUNK) {
+        await this.notifyLaravel('whatsapp/chat-read', {
+          userId: p.session_id,
+          reconcile: true,
+          reads: reads.slice(i, i + CHUNK),
+          timestamp: p.timestamp,
+        });
+      }
     });
 
     bus.on('history.sync', async (p) => {

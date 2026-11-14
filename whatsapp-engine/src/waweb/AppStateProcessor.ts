@@ -405,23 +405,35 @@ export class AppStateProcessor {
   public static async extractChatReads(
     records: FlatRecord[],
     appStateKeys: Map<string, Buffer>,
-  ): Promise<{ jid: string; read: boolean; collection?: string }[]> {
+    dedupeInOrder = false,
+  ): Promise<{ jid: string; read: boolean; lastMessageTimestamp?: number; collection?: string }[]> {
     const root = await loadWaProto();
     const dataT = root.lookupType('proto.SyncActionData');
     const toObj = { bytes: Buffer, longs: Number, defaults: false } as const;
     const encKeyCache = new Map<string, Buffer>();
-    const out: { jid: string; read: boolean; collection?: string }[] = [];
+    const out: { jid: string; read: boolean; lastMessageTimestamp?: number; collection?: string }[] = [];
+    const byJid = new Map<string, { jid: string; read: boolean; lastMessageTimestamp?: number; collection?: string }>();
+    const indexMacToJid = new Map<string, string>();
 
     for (const rec of records) {
+      const idxHex = rec.indexMac ? rec.indexMac.toString('hex') : null;
+      if (rec.operation === 1) {
+        if (dedupeInOrder && idxHex) {
+          const prevJid = indexMacToJid.get(idxHex);
+          if (prevJid) byJid.delete(prevJid);
+          indexMacToJid.delete(idxHex);
+        }
+        continue;
+      }
       const keyIdB64 = rec.keyId ? rec.keyId.toString('base64') : null;
       const keyData = keyIdB64 ? appStateKeys.get(keyIdB64) : undefined;
-      if (!keyData) continue;
+      if (!keyData || !rec.value) continue;
       let encKey = encKeyCache.get(keyIdB64!);
       if (!encKey) {
         encKey = AppStateProcessor.valueEncryptionKey(keyData);
         encKeyCache.set(keyIdB64!, encKey);
       }
-      const plain = AppStateProcessor.decryptRecordValue(rec.value!, encKey);
+      const plain = AppStateProcessor.decryptRecordValue(rec.value, encKey);
       if (!plain) continue;
       let data: any;
       try {
@@ -435,11 +447,35 @@ export class AppStateProcessor {
         jid = typeof index?.[1] === 'string' ? index[1] : undefined;
       } catch { /* malformed */ }
       if (!jid) continue;
+      jid = jid.replace(/:\d+@/, '@');
       if (jid.endsWith('@c.us')) jid = jid.replace(/@c\.us$/, '@s.whatsapp.net');
       else if (/^\d+$/.test(jid)) jid = `${jid}@s.whatsapp.net`;
-      out.push({ jid, read: action.read !== false, collection: rec.collection });
+
+      let ts = Number(
+        action.messageRange?.lastMessageTimestamp ||
+        action.messageRange?.lastSystemMessageTimestamp ||
+        0,
+      );
+      if (ts > 100_000_000_000) ts = Math.floor(ts / 1000);
+      if (!ts && data?.value?.timestamp) {
+        const vts = Number(data.value.timestamp);
+        ts = vts > 100_000_000_000 ? Math.floor(vts / 1000) : vts;
+      }
+
+      const entry = {
+        jid,
+        read: action.read !== false,
+        lastMessageTimestamp: ts > 0 ? ts : undefined,
+        collection: rec.collection,
+      };
+      if (dedupeInOrder) {
+        if (idxHex) indexMacToJid.set(idxHex, jid);
+        byJid.set(jid, entry);
+      } else {
+        out.push(entry);
+      }
     }
-    return out;
+    return dedupeInOrder ? [...byJid.values()] : out;
   }
 
   /** Same decode path for ArchiveChatAction (index ["archiveChat", jid]). */

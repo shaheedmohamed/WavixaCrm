@@ -376,8 +376,10 @@ export default {
 
     const { welcomeVisible, start: startTour, skip: skipTour, load: loadOnboarding } = useOnboarding();
 
+    const limitsOff = computed(() => subscription.value?.limits_enforced === false);
+
     const outOfCredits = computed(() => {
-      if (!subscription.value) return false;
+      if (!subscription.value || limitsOff.value) return false;
       return Number(subscription.value.messages_remaining ?? 0) <= 0 || subscription.value.status !== 'active';
     });
 
@@ -473,6 +475,7 @@ export default {
     const currentPlanSlug = computed(() => subscription.value?.plan?.slug || user.value?.subscription_plan || '');
 
     const autoReplyQualifies = computed(() => {
+      if (limitsOff.value) return true;
       const qualifying = ['business', 'business-yearly', 'partners', 'partners-yearly'];
       return qualifying.includes(currentPlanSlug.value);
     });
@@ -482,11 +485,11 @@ export default {
 
     const planSlug = computed(() => subscription.value?.plan?.slug || user.value?.subscription_plan || '');
 
-    const isPro = computed(() => planSlug.value === 'pro');
+    const isPro = computed(() => limitsOff.value || planSlug.value === 'pro');
 
-    const planSupportsCampaigns = computed(() => CAMPAIGN_PLAN_SLUGS.includes(planSlug.value));
+    const planSupportsCampaigns = computed(() => limitsOff.value || CAMPAIGN_PLAN_SLUGS.includes(planSlug.value));
 
-    const planSupportsBusinessFeatures = computed(() => BUSINESS_PLAN_SLUGS.includes(planSlug.value));
+    const planSupportsBusinessFeatures = computed(() => limitsOff.value || BUSINESS_PLAN_SLUGS.includes(planSlug.value));
 
     const menuSections = computed(() => [
       {

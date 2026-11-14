@@ -14,6 +14,7 @@ export type EngineEvent =
   | 'message.media'
   | 'message.revoked'
   | 'chat.read'
+  | 'chats.read_reconcile'
   | 'chat.archived'
   | 'chat.pinned'
   | 'chatstate'

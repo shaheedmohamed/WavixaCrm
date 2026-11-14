@@ -268,6 +268,7 @@ const form = ref({
 });
 
 const isPro = computed(() => {
+  if (subscription.value?.limits_enforced === false) return true;
   const plan = subscription.value?.plan?.name?.toLowerCase() || user.value?.subscription_plan?.toLowerCase();
   return plan === 'pro';
 });

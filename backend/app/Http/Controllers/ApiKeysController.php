@@ -80,7 +80,7 @@ class ApiKeysController extends Controller
             ], 422);
         }
 
-        if ($request->boolean('allow_remote_pairing')) {
+        if ($request->boolean('allow_remote_pairing') && config('billing.enforce_limits')) {
             $planSlug = Auth::user()->activeSubscription?->plan?->slug ?? '';
             $hasPartnersPlan = str_contains($planSlug, 'partners');
             if (!$hasPartnersPlan) {
@@ -204,7 +204,7 @@ class ApiKeysController extends Controller
             ], 422);
         }
 
-        if ($request->has('allow_remote_pairing') && $request->boolean('allow_remote_pairing')) {
+        if ($request->has('allow_remote_pairing') && $request->boolean('allow_remote_pairing') && config('billing.enforce_limits')) {
             $planSlug = Auth::user()->activeSubscription?->plan?->slug ?? '';
             $hasPartnersPlan = str_contains($planSlug, 'partners');
             if (!$hasPartnersPlan) {

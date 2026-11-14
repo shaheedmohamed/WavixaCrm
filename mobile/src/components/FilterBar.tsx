@@ -8,6 +8,7 @@ interface FilterBarProps {
   selectedScope: FilterScope;
   onSelectScope: (scope: FilterScope) => void;
   unreadCount?: number;
+  isAgent?: boolean;
   onOpenAdvancedFilter?: () => void;
   hasActiveAdvancedFilter?: boolean;
 }
@@ -16,10 +17,11 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   selectedScope,
   onSelectScope,
   unreadCount = 0,
+  isAgent = false,
   onOpenAdvancedFilter,
   hasActiveAdvancedFilter = false,
 }) => {
-  const filters: { id: FilterScope; label: string; icon?: string; badge?: number }[] = [
+  const allFilters: { id: FilterScope; label: string; icon?: string; badge?: number }[] = [
     { id: 'chats', label: 'الشاتات', icon: 'chat-outline' },
     { id: 'groups', label: 'المجموعات', icon: 'account-group-outline' },
     { id: 'mine', label: 'محادثاتي', icon: 'account-outline' },
@@ -28,6 +30,9 @@ export const FilterBar: React.FC<FilterBarProps> = ({
     { id: 'resolved', label: 'المكتملة', icon: 'check-circle-outline' },
     { id: 'archived', label: 'المؤرشفة', icon: 'archive-outline' },
   ];
+  const filters = isAgent
+    ? allFilters.filter((f) => f.id !== 'resolved' && f.id !== 'archived')
+    : allFilters;
 
   return (
     <View style={styles.wrapper}>

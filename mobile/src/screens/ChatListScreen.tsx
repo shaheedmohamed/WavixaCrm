@@ -202,6 +202,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         selectedScope={selectedScope}
         onSelectScope={setSelectedScope}
         unreadCount={unreadCount}
+        isAgent={user?.crm_role === 'agent'}
       />
 
       {/* Conversation List */}

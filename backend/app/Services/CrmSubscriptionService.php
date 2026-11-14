@@ -66,33 +66,61 @@ class CrmSubscriptionService
     }
 
     /**
+     * Build the "unlimited" limits payload — used for platform admins and for
+     * every account while plan enforcement is switched off globally
+     * (config('billing.enforce_limits') === false).
+     */
+    protected function unlimitedLimits(User $owner, string $planName, string $planSlug): array
+    {
+        $devicesUsed = WhatsAppSession::where('user_id', $owner->id)->count();
+        $agentsUsed = User::where('crm_parent_id', $owner->id)->count();
+
+        return [
+            'plan_name' => $planName,
+            'plan_slug' => $planSlug,
+            'tier' => 'unlimited',
+            'status' => 'active',
+            'is_active' => true,
+            'billing_period' => 'unlimited',
+            'is_admin_bypass' => true,
+            'devices_limit' => 999999,
+            'devices_base' => 999999,
+            'devices_extra' => 0,
+            'devices_used' => $devicesUsed,
+            'devices_remaining' => 999999,
+            'can_add_device' => true,
+            'agents_limit' => 999999,
+            'agents_base' => 999999,
+            'agents_extra' => 0,
+            'agents_used' => $agentsUsed,
+            'agents_remaining' => 999999,
+            'can_add_agent' => true,
+            'monthly_messages_limit' => 999999999,
+            'messages_base' => 999999999,
+            'messages_extra' => 0,
+            'messages_used_this_month' => 0,
+            'messages_remaining_this_month' => 999999999,
+            'can_send_message' => true,
+            'starts_at' => null,
+            'ends_at' => null,
+            'renews_at' => null,
+            'expires_at' => null,
+        ];
+    }
+
+    /**
      * Get active CRM subscription or custom override limits for an owner.
      */
     public function getOwnerCrmLimits(User $owner): array
     {
+        // 0. Plan enforcement disabled globally — everyone gets full access.
+        if (!config('billing.enforce_limits')) {
+            return $this->unlimitedLimits($owner, 'Unlimited', 'unlimited');
+        }
+
         // 1. Platform admin or users without CRM role restriction (bypass limits)
         if ($owner->is_admin) {
-            return [
-                'plan_name' => 'Unlimited (Admin)',
-                'plan_slug' => 'admin-unlimited',
-                'tier' => 'admin',
-                'status' => 'active',
-                'billing_period' => 'unlimited',
-                'is_admin_bypass' => true,
-                'devices_limit' => 999999,
-                'devices_used' => WhatsAppSession::where('user_id', $owner->id)->count(),
-                'devices_remaining' => 999999,
-                'can_add_device' => true,
-                'agents_limit' => 999999,
-                'agents_used' => User::where('crm_parent_id', $owner->id)->count(),
-                'agents_remaining' => 999999,
-                'can_add_agent' => true,
-                'monthly_messages_limit' => 999999999,
-                'messages_used_this_month' => 0,
-                'messages_remaining_this_month' => 999999999,
-                'can_send_message' => true,
-                'expires_at' => null,
-            ];
+            return $this->unlimitedLimits($owner, 'Unlimited (Admin)', 'admin-unlimited');
         }
 
         // 2. Active Subscription (prefer CRM category plan, or fallback to any active subscription)

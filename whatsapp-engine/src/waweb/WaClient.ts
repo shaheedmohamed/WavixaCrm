@@ -95,7 +95,10 @@ export interface WaClientEvents {
     pin?: { action: 'pin' | 'unpin'; messageId?: string; remoteJid?: string };
     raw: unknown;
   }) => void;
-  'chat.read': (data: { jid: string; read: boolean }) => void;
+  'chat.read': (data: { jid: string; lidJid?: string; read: boolean; lastMessageTimestamp?: number }) => void;
+  'chats.read_reconcile': (data: {
+    reads: Array<{ jid: string; lidJid?: string; read: boolean; lastMessageTimestamp?: number }>;
+  }) => void;
   'chat.archived': (data: { jid: string; archived: boolean }) => void;
   'chat.pinned': (data: { jid: string; pinned: boolean }) => void;
   'history.sync': (payload: ParsedHistorySync) => void;
@@ -657,7 +660,8 @@ export class WaClient extends EventEmitter {
         break;
       }
 
-      case 'receipt':
+      case 'receipt': {
+        void this.ackStanza(node);
         // A peer device that could not decrypt our message asks for a resend
         // with fresh key material attached. Without this the recipient sees
         // "Waiting for this message. Check your phone." forever.
@@ -675,15 +679,66 @@ export class WaClient extends EventEmitter {
           void this.handleRetryReceipt(node).catch((err) =>
             logger.warn({ err }, 'retry receipt handling failed'),
           );
+        } else if (node.attrs.type === 'read-self') {
+          // Primary phone / companion read incoming messages in this chat.
+          const stripDev = (j?: string) => {
+            if (!j) return undefined;
+            const d = jidDecode(j);
+            return d ? jidEncode(d.user, d.server) : j;
+          };
+          const meBare = stripDev(this.creds.me?.id);
+          const meLidBare = stripDev(this.creds.me?.lid);
+          let rawChat = stripDev(node.attrs.from);
+          if (rawChat && (rawChat === meBare || rawChat === meLidBare) && node.attrs.recipient) {
+            rawChat = stripDev(node.attrs.recipient);
+          }
+          if (rawChat && !rawChat.endsWith('@broadcast')) {
+            void (async () => {
+              let chatJid = rawChat!;
+              let lidJid: string | undefined;
+              const senderPn = node.attrs.sender_pn || node.attrs.recipient_pn;
+              if (chatJid.endsWith('@lid') && !chatJid.endsWith('@g.us')) {
+                lidJid = chatJid;
+                if (senderPn) {
+                  chatJid = `${String(senderPn).split('@')[0]}@s.whatsapp.net`;
+                } else {
+                  try {
+                    const pn = (await this.resolveLidUsers([chatJid])).get(chatJid);
+                    if (pn) chatJid = pn;
+                  } catch { /* keep LID */ }
+                }
+              }
+              this.emit('chat.read', { jid: chatJid, lidJid, read: true });
+            })();
+          }
         }
         this.emit('stanza', node);
         break;
+      }
 
       case 'notification': {
-        // Pushed app-state deltas (contact saved on the phone, pin/mute…)
-        // arrive as <notification><collection> outside the dirty→resync path.
-        if (getBinaryNodeChildren(node, 'collection').length) {
-          void this.processAppStateResult(node).catch(() => undefined);
+        void this.ackStanza(node);
+        // App-state notifications arrive either with inline <patch> blobs or as
+        // a bare <collection name="regular_low" version="…"/> server_sync poke
+        // asking us to pull delta patches from our stored version.
+        const collNodes = getBinaryNodeChildren(node, 'collection');
+        if (collNodes.length) {
+          const hasInlinePatches = collNodes.some(
+            (c) =>
+              getBinaryNodeChild(c, 'patch') ||
+              getBinaryNodeChild(c, 'patches') ||
+              getBinaryNodeChild(c, 'snapshot'),
+          );
+          if (hasInlinePatches) {
+            void this.processAppStateResult(node).catch(() => undefined);
+          } else {
+            const names = collNodes
+              .map((c) => String(c.attrs?.name || ''))
+              .filter(Boolean);
+            if (names.length) {
+              void this.syncAppStateCollections(names).catch(() => undefined);
+            }
+          }
         }
         this.emit('stanza', node);
         break;
@@ -1189,6 +1244,20 @@ export class WaClient extends EventEmitter {
     await this.sendNode(ack).catch(() => undefined);
   }
 
+  private async ackStanza(node: BinaryNode): Promise<void> {
+    const id = node.attrs.id;
+    const to = node.attrs.from;
+    if (!id || !to) return;
+    const ack: BinaryNode = {
+      tag: 'ack',
+      attrs: { id, to, class: node.tag },
+    };
+    if (node.attrs.type) ack.attrs.type = node.attrs.type;
+    if (node.attrs.participant) ack.attrs.participant = node.attrs.participant;
+    if (node.attrs.recipient) ack.attrs.recipient = node.attrs.recipient;
+    await this.sendNode(ack).catch(() => undefined);
+  }
+
   private async onPairDeviceIq(stanza: BinaryNode): Promise<void> {
     // acknowledge the iq
     await this.sendNode({
@@ -1266,6 +1335,7 @@ export class WaClient extends EventEmitter {
         await this.digestKeyBundle().catch(() => undefined);
         await this.sendUnifiedSession().catch(() => undefined);
         await this.resyncAppState().catch(() => undefined);
+        await this.reconcileReadStates().catch(() => undefined);
       } catch {
         // non-fatal
       }
@@ -1521,8 +1591,81 @@ export class WaClient extends EventEmitter {
     this.saveCreds();
     logger.info({ shared: keys.length, added }, 'App-state sync keys stored');
     if (added > 0) {
-      void this.resyncAppState().catch(() => undefined);
+      void this.resyncAppState()
+        .then(() => this.reconcileReadStates())
+        .catch(() => undefined);
     }
+  }
+
+  /**
+   * Replay regular_low from v0 (read-only) to extract the latest phone-side
+   * MarkChatAsReadAction + lastMessageTimestamp per chat, then emit
+   * 'chats.read_reconcile' so Laravel zeroes stale unread counts on chats the
+   * owner already read on WhatsApp while preserving genuinely newer unreads.
+   */
+  public async reconcileReadStates(): Promise<
+    Array<{ jid: string; lidJid?: string; read: boolean; lastMessageTimestamp?: number }>
+  > {
+    if (!this.isOpen) return [];
+    const keyMap = new Map<string, Buffer>();
+    for (const [id, b64] of Object.entries(this.creds.appStateKeys || {})) {
+      try {
+        keyMap.set(id, Buffer.from(b64, 'base64'));
+      } catch { /* skip */ }
+    }
+    if (!keyMap.size) return [];
+
+    const allRecords: FlatRecord[] = [];
+    for (const collName of ['regular_low', 'regular_high', 'regular']) {
+      let version = 0;
+      let guard = 0;
+      while (guard++ < 60) {
+        const result = await this.query({
+          tag: 'iq',
+          attrs: { to: S_WHATSAPP_NET, type: 'set', xmlns: 'w:sync:app:state' },
+          content: [
+            {
+              tag: 'sync',
+              attrs: {},
+              content: [
+                {
+                  tag: 'collection',
+                  attrs: { name: collName, version: String(version), return_snapshot: 'false' },
+                },
+              ],
+            },
+          ],
+        });
+        const { records, collections } = await AppStateProcessor.collectRecords(result);
+        allRecords.push(...records);
+        const st = collections.find((c) => c.name === collName);
+        if (st?.version && st.version > version) version = st.version;
+        if (!st || !st.hasMore) break;
+      }
+    }
+
+    const entries = await AppStateProcessor.extractChatReads(allRecords, keyMap, true);
+    if (!entries.length) return [];
+
+    const lidJids = entries.map((e) => e.jid).filter((j) => j.endsWith('@lid') && !j.endsWith('@g.us'));
+    const lidMap = new Map<string, string>();
+    if (lidJids.length) {
+      try {
+        const resolved = await this.resolveLidUsers(lidJids);
+        for (const [lid, pn] of resolved) lidMap.set(lid, pn);
+      } catch { /* keep LID forms */ }
+    }
+
+    const normalized = entries.map((e) => ({
+      jid: lidMap.get(e.jid) || e.jid,
+      lidJid: e.jid.endsWith('@lid') ? e.jid : undefined,
+      read: e.read,
+      lastMessageTimestamp: e.lastMessageTimestamp,
+    }));
+
+    this.emit('chats.read_reconcile', { reads: normalized });
+    logger.info({ chats: normalized.length, records: allRecords.length }, 'app-state chat reads reconciled');
+    return normalized;
   }
 
   /**
@@ -1635,7 +1778,8 @@ export class WaClient extends EventEmitter {
       }
     }
     for (const c of collections) {
-      if (c.version) {
+      const hasRecords = c.hadSnapshot || records.some((r) => r.collection === c.name);
+      if (c.version && hasRecords) {
         const st = this.appStateState(c.name);
         if (c.version > st.version) st.version = c.version;
       }

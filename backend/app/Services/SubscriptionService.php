@@ -100,6 +100,10 @@ class SubscriptionService
      */
     public function hasRemainingMessages(User $user): bool
     {
+        if (!config('billing.enforce_limits')) {
+            return true;
+        }
+
         $subscription = $this->getOrCreateActiveSubscription($user);
 
         return $subscription->isActive() && $subscription->hasRemainingMessages();
@@ -110,6 +114,10 @@ class SubscriptionService
      */
     public function getRemainingMessages(User $user): int
     {
+        if (!config('billing.enforce_limits')) {
+            return 999999999;
+        }
+
         $subscription = $this->getOrCreateActiveSubscription($user);
 
         return $subscription->isActive() ? $subscription->messages_remaining : 0;
@@ -121,9 +129,11 @@ class SubscriptionService
     public function getUsageStats(User $user): array
     {
         $subscription = $this->getOrCreateActiveSubscription($user);
+        $limitsEnforced = (bool) config('billing.enforce_limits', true);
 
         return [
             'subscription_id' => $subscription->id,
+            'limits_enforced' => $limitsEnforced,
             'plan' => [
                 'id' => $subscription->plan->id,
                 'name' => $subscription->plan->name,
@@ -131,10 +141,10 @@ class SubscriptionService
                 'messages_limit' => $subscription->plan->messages_limit,
             ],
             'status' => $subscription->status,
-            'messages_limit' => $subscription->messages_limit,
+            'messages_limit' => $limitsEnforced ? $subscription->messages_limit : 999999999,
             'sessions_limit' => $subscription->sessions_limit,
             'messages_used' => $subscription->messages_used,
-            'messages_remaining' => $subscription->messages_remaining,
+            'messages_remaining' => $limitsEnforced ? $subscription->messages_remaining : 999999999,
             'usage_percentage' => $subscription->usage_percentage,
             'starts_at' => $subscription->starts_at,
             'ends_at' => $subscription->ends_at,
@@ -148,6 +158,10 @@ class SubscriptionService
      */
     public function consumeMessage(User $user): ?int
     {
+        if (!config('billing.enforce_limits')) {
+            return 999999999;
+        }
+
         return DB::transaction(function () use ($user) {
             $subscription = Subscription::forUser($user->id)
                 ->active()

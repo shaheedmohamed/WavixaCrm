@@ -184,11 +184,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         }
       }
     } catch (err: any) {
-      if (err?.response?.status === 404) {
+      const status = err?.response?.status;
+      if (status === 404 || status === 409 || status === 423) {
         setIsDeadConversation(true);
         Alert.alert(
           'تنبيه',
-          'هذه المحادثة غير متوفرة حالياً أو تم دمجها برقم آخر',
+          err?.response?.data?.message || 'هذه المحادثة غير متاحة حالياً',
           [{ text: 'العودة للمحادثات', onPress: onBack }]
         );
         return;
@@ -222,13 +223,6 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     }, 4500);
     return () => clearInterval(timer);
   }, [loadMessages, isDeadConversation]);
-
-  // Auto claim chat if open by an agent and unclaimed
-  useEffect(() => {
-    if (isAgent && !conversation.assigned_agent_id && !conversation.resolved_at && !isGroup) {
-      chatService.claimConversation(conversation.id).catch(() => {});
-    }
-  }, [conversation.id, isAgent, isGroup, conversation.assigned_agent_id, conversation.resolved_at]);
 
   // Send message
   const handleSend = async () => {
@@ -1000,8 +994,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         conversationId={conversation.id}
         onClose={() => setResolveVisible(false)}
         onResolved={() => {
-          Alert.alert('نجاح', 'تم إنهاء المحادثة وتوثيقها بنجاح');
-          loadMessages(false);
+          Alert.alert('نجاح', 'تم إنهاء المحادثة (مكتمل) بنجاح');
+          if (isAgent) {
+            onBack();
+          } else {
+            loadMessages(false);
+          }
         }}
       />
 

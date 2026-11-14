@@ -113,31 +113,20 @@
 
         <!-- Filter Chips & Device Selector -->
         <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-          <!-- Agents work a shared queue: pool → claimed-by-me → done -->
+          <!-- Agents work a clean queue: unread unclaimed + chats they hold -->
           <template v-if="isAgent">
             <button @click="setFilter('available')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('available')">
-              متاحة
+              الكل
             </button>
             <button @click="setFilter('mine')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('mine')">
               محادثاتي
             </button>
-            <button @click="setFilter('resolved')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('resolved')">
-              مكتملة
+            <button @click="setFilter('unread')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('unread')">
+              غير مقروءة
             </button>
             <button @click="setFilter('groups')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('groups')">
               جروبات
             </button>
-
-            <!-- Custom lists -->
-            <button v-for="l in chatLists" :key="'list-'+l.id" @click="setFilter('list:'+l.id)"
-              @contextmenu.prevent="listCtx = { show: true, x: $event.clientX, y: $event.clientY, list: l }"
-              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
-              :class="chipClass('list:'+l.id)">{{ l.name }}</button>
-            <button @click="setFilter('archived')" title="الأرشيف"
-              class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors"
-              :class="chipClass('archived')">📥 أرشيف</button>
-            <button @click="enterConvSelectMode" title="إنشاء قائمة جديدة"
-              class="px-2 py-1 rounded-full text-xs whitespace-nowrap transition-colors bg-[#25343d] text-[#96a4ad] hover:text-[#00a884]">+</button>
           </template>
           <template v-else>
             <button @click="setFilter('all')" class="px-3 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition-colors" :class="chipClass('all')">
@@ -317,17 +306,17 @@
               <!-- Assignment / resolution + unread badges -->
               <div class="flex items-center gap-1 shrink-0">
                 <span
-                  v-if="c.transferred_by && c.assigned_agent_id === user?.id"
+                  v-if="c.transferred_by && c.assigned_agent_id === user?.id && transferredName(c)"
                   class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-violet-500/20 text-violet-300 whitespace-nowrap"
                   :title="'زميلك حوّل المحادثة دي لك'"
                 >↩ محولة من {{ transferredName(c) }}</span>
                 <span
-                  v-else-if="c.assigned_agent_id"
+                  v-else-if="c.assigned_agent_id && assignedName(c)"
                   class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/15 text-amber-300 whitespace-nowrap"
                   :title="'المحادثة محجوزة لهذا الموظف'"
                 >مع {{ assignedName(c) }}</span>
                 <span
-                  v-else-if="c.last_outgoing_user_id"
+                  v-else-if="c.last_outgoing_user_id && lastSenderName(c)"
                   class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/15 text-sky-300 whitespace-nowrap"
                   :title="'آخر موظف رد على هذه المحادثة'"
                 >رد: {{ lastSenderName(c) }}</span>
@@ -500,15 +489,15 @@
             </button>
             <!-- Who's holding this chat -->
             <span
-              v-if="activeConv.transferred_by && activeConv.assigned_agent_id === user?.id"
+              v-if="activeConv.transferred_by && activeConv.assigned_agent_id === user?.id && transferredName(activeConv)"
               class="px-2 py-1 rounded-lg bg-violet-500/15 text-violet-300 text-[11px] font-bold whitespace-nowrap"
             >حوّلها لك {{ transferredName(activeConv) }}</span>
             <span
-              v-else-if="activeConv.assigned_agent_id"
+              v-else-if="activeConv.assigned_agent_id && assignedName(activeConv)"
               class="px-2 py-1 rounded-lg bg-amber-500/15 text-amber-300 text-[11px] font-bold whitespace-nowrap"
             >مع {{ assignedName(activeConv) }}</span>
             <span
-              v-else-if="activeConv.last_outgoing_user_id"
+              v-else-if="activeConv.last_outgoing_user_id && lastSenderName(activeConv)"
               class="px-2 py-1 rounded-lg bg-sky-500/15 text-sky-300 text-[11px] font-bold whitespace-nowrap"
               :title="'آخر موظف رد على هذه المحادثة'"
             >آخر رد: {{ lastSenderName(activeConv) }}</span>
@@ -542,9 +531,9 @@
               v-if="!lockedByOther && !activeConv.resolved_at"
               @click="openResolveModal"
               class="px-3 py-1.5 rounded-lg bg-emerald-600/20 text-emerald-300 hover:bg-emerald-600/40 text-[11px] font-bold transition-colors whitespace-nowrap"
-              title="إنهاء المحادثة وإتاحتها لأي موظف"
+              title="إنهاء المحادثة (مكتمل)"
             >
-              إنهاء الشات
+              ✓ مكتمل
             </button>
 
             <!-- Jump to date (WhatsApp calendar search) -->
@@ -996,7 +985,7 @@
             class="flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500/10 text-amber-300 text-sm font-bold"
           >
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6.75a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z"/></svg>
-            {{ assignedName(activeConv) }} بيتعامل مع هذه المحادثة حالياً — مش هتقدر ترد لحد ما يخلصها
+            {{ assignedName(activeConv) || 'زميل آخر' }} بيتعامل مع هذه المحادثة حالياً — مش هتقدر ترد لحد ما يخلصها
           </div>
 
           <template v-else>
@@ -2552,9 +2541,23 @@ const lockedByOther = computed(() => {
   if (isGroupJid(c.contact_jid)) return false; // groups are never locked
   return c.assigned_agent_id !== user.value?.id;
 });
-const assignedName = (c) => c?.assigned_agent?.name || (c?.assigned_agent_id === user.value?.id ? user.value?.name : 'موظف');
-const lastSenderName = (c) => c?.last_outgoing_user?.name || (c?.last_outgoing_user_id === user.value?.id ? user.value?.name : 'موظف');
-const transferredName = (c) => c?.transferred_by_agent?.name || 'موظف';
+const teamNamesById = computed(() => {
+  const m = {};
+  if (user.value?.id && user.value?.name) m[user.value.id] = user.value.name;
+  for (const a of transferAgents.value) {
+    if (a?.id && a?.name) m[a.id] = a.name;
+  }
+  return m;
+});
+const loadTeamDirectory = async () => {
+  try {
+    const res = await crm.getAgents();
+    if (res?.agents) transferAgents.value = res.agents;
+  } catch {}
+};
+const assignedName = (c) => c?.assigned_agent?.name || teamNamesById.value[c?.assigned_agent_id] || null;
+const lastSenderName = (c) => c?.last_outgoing_user?.name || teamNamesById.value[c?.last_outgoing_user_id] || null;
+const transferredName = (c) => c?.transferred_by_agent?.name || teamNamesById.value[c?.transferred_by] || null;
 
 const chipClass = (f) => selectedFilter.value === f
   ? 'bg-[#00a884] text-[#18242b] font-bold'
@@ -2658,8 +2661,13 @@ const submitResolve = async () => {
     );
     if (res.success && res.conversation) {
       mergeConversation(res.conversation);
-      Object.assign(activeConv.value, res.conversation);
       refreshMe(); // freeing the slot lets the agent claim a new chat
+      if (!isOwner.value) {
+        activeConv.value = null;
+        backToList();
+      } else {
+        Object.assign(activeConv.value, res.conversation);
+      }
     }
     showResolveModal.value = false;
   } catch (err) {
@@ -2931,6 +2939,19 @@ const loadConversations = async () => {
 let msgLoadSeq = 0;
 
 const selectConversation = async (conv) => {
+  if (isAgent.value && !isGroupJid(conv.contact_jid) && conv.assigned_agent_id !== user.value?.id) {
+    if (conv.assigned_agent_id) {
+      alert('هذه المحادثة يتعامل معاها موظف آخر حالياً');
+      mergeConversation(conv);
+      return;
+    }
+    if (isAtCapacity.value) {
+      const cap = user.value?.max_active_chats || 5;
+      alert(`وصلت للحد الأقصى المسموح لك (${cap} محادثات مفتوحة) — اضغط "مكتمل" على إحدى محادثاتك الحالية أولاً لفتح محادثة جديدة`);
+      return;
+    }
+  }
+
   msgLoadSeq++;
   activeConv.value = conv;
   showListOnMobile.value = false;
@@ -2954,12 +2975,6 @@ const selectConversation = async (conv) => {
     router.replace({ query: { ...route.query, id: conv.id } });
   }
   await loadMessages(conv.id);
-  // Agents pick the chat up the moment they open it — the atomic backend
-  // claim decides who wins the race; everyone else's list updates via push.
-  // Group chats are shared workspaces — never claimed or locked.
-  if (isAgent.value && !conv.assigned_agent_id && !conv.resolved_at && !isGroupJid(conv.contact_jid)) {
-    claimConversationForAgent(conv.id);
-  }
 };
 
 // Claim on open. A 423 means a colleague won the race — the patched row
@@ -3605,12 +3620,27 @@ const loadMessages = async (convId) => {
       pinnedMsg.value = res.pinned || null;
       hasMoreMessages.value = !!res.has_more;
       hasNewerMessages.value = !!res.has_newer;
-      if (activeConv.value) {
+      if (res.conversation) {
+        if (activeConv.value) patchRow(activeConv.value, res.conversation);
+        mergeConversation(res.conversation);
+      } else if (activeConv.value) {
         activeConv.value.unread_count = 0;
       }
+      if (isAgent.value) refreshMe();
       scrollToBottom();
     }
-  } catch {} finally {
+  } catch (err) {
+    const status = err?.response?.status;
+    if (status === 409 || status === 423) {
+      alert(err.response?.data?.message || 'لا يمكن فتح هذه المحادثة حالياً');
+      if (isAgent.value && activeConv.value?.id === convId) {
+        activeConv.value = null;
+        backToList();
+      }
+      refreshMe();
+      loadConversations();
+    }
+  } finally {
     loadingMessages.value = false;
   }
 };
@@ -4559,6 +4589,11 @@ const handleRealtimeEvent = (evt) => {
     mergeConversation(data.conversation);
     if (activeConv.value && data.conversation.id === activeConv.value.id) {
       Object.assign(activeConv.value, data.conversation);
+      if (isAgent.value && !inScope(activeConv.value)) {
+        activeConv.value = null;
+        backToList();
+        refreshMe();
+      }
     }
   } else if (type === 'conversations.renamed') {
     // Pushnames landed after the chats imported — swap "+number" titles for
@@ -4599,19 +4634,31 @@ const handleRealtimeEvent = (evt) => {
 // claimed drops out the moment the update lands. Owners see everything;
 // the tab filters then apply on top.
 const inScope = (c) => {
-  // Group chats stay visible to every teammate — nobody owns a group.
-  const groupExempt = isGroupJid(c.contact_jid);
-  if (!isOwner.value && !groupExempt && c.assigned_agent_id && c.assigned_agent_id !== user.value?.id) return false;
+  const isGroup = isGroupJid(c.contact_jid);
+  if (!isOwner.value) {
+    // Agents only see: (1) unclaimed chats with unread messages + (2) chats they hold.
+    // Completed (مكتمل), archived, read unclaimed, or colleague-held chats never appear.
+    if (c.archived_at || c.resolved_at) return false;
+    if (c.assigned_agent_id && c.assigned_agent_id !== user.value?.id) return false;
+    if (selectedFilter.value === 'groups') {
+      return isGroup && (c.unread_count ?? 0) > 0;
+    }
+    if (isGroup) return false;
+    const isMine = c.assigned_agent_id === user.value?.id;
+    const isUnclaimedUnread = !c.assigned_agent_id && (c.unread_count ?? 0) > 0;
+    switch (selectedFilter.value) {
+      case 'mine': return isMine;
+      case 'unread': return (c.unread_count ?? 0) > 0 && (isMine || !c.assigned_agent_id);
+      default: return isMine || isUnclaimedUnread;
+    }
+  }
   switch (selectedFilter.value) {
-    // For agents "متاحة" = the pool + their own open chats + all groups.
-    case 'available': return isOwner.value
-      ? (!c.assigned_agent_id && !c.resolved_at)
-      : (!c.resolved_at && (!c.assigned_agent_id || c.assigned_agent_id === user.value?.id || groupExempt));
-    case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at;
-    case 'resolved': return !!c.resolved_at;
+    case 'available': return !c.assigned_agent_id && !c.resolved_at && !c.archived_at;
+    case 'mine': return c.assigned_agent_id === user.value?.id && !c.resolved_at && !c.archived_at;
+    case 'resolved': return !!c.resolved_at && !c.archived_at;
     case 'unread': return c.unread_count > 0 && !c.archived_at;
     case 'archived': return !!c.archived_at;
-    case 'groups': return isGroupJid(c.contact_jid) && !c.archived_at;
+    case 'groups': return isGroup && !c.archived_at;
     default:
       if (c.archived_at) return false;
       if (String(selectedFilter.value).startsWith('list:')) {
@@ -5026,6 +5073,7 @@ onMounted(async () => {
       user.value = crm.getUser();
         void loadChatLists();
         void loadQuickReplies();
+        void loadTeamDirectory();
       if (isAgent.value && selectedFilter.value === 'all') {
         selectedFilter.value = 'available';
       }

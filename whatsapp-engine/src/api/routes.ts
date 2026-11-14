@@ -182,7 +182,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         });
       });
 
-      // "Read on the phone" (app-state markChatAsRead) → zero the unread badge.
+      // "Read on the phone" (app-state markChatAsRead / read-self receipt) → zero the unread badge.
       session.onChatRead((r) => {
         eventBus.emit('chat.read', {
           event: 'chat.read',
@@ -190,7 +190,21 @@ export function createRoutes(deps: RouteDependencies): express.Router {
           message_id: '',
           from: r.jid,
           timestamp: Math.floor(Date.now() / 1000),
-          data: { read: r.read !== false },
+          data: {
+            read: r.read !== false,
+            lidJid: r.lidJid,
+            lastMessageTimestamp: r.lastMessageTimestamp,
+          },
+        });
+      });
+
+      session.onChatReadReconcile((r) => {
+        eventBus.emit('chats.read_reconcile', {
+          event: 'chats.read_reconcile',
+          session_id: sessionId,
+          message_id: '',
+          timestamp: Math.floor(Date.now() / 1000),
+          data: { reads: r.reads || [] },
         });
       });
 
@@ -216,7 +230,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
             const type = node.attrs.type;
             // 'retry' receipts ask us to re-encrypt — handled in WaClient; they
             // are not a delivery confirmation and must not flip message status.
-            if (type === 'retry' || type === 'mediaretry' || type === 'server-error') return;
+            if (type === 'retry' || type === 'mediaretry' || type === 'server-error' || type === 'read-self') return;
             const status =
               type === 'read' || type === 'played' ? 'read' : 'delivered';
             eventBus.emit('message.status', {
@@ -1370,11 +1384,17 @@ export function createRoutes(deps: RouteDependencies): express.Router {
     }
     const chatJid = String(req.body.chatJid || req.body.to || '');
     const ids = Array.isArray(req.body.messageIds) ? req.body.messageIds.map(String) : [];
-    if (!chatJid || !ids.length) {
-      res.status(422).json({ success: false, message: 'chatJid and messageIds are required' });
+    if (!chatJid) {
+      res.status(422).json({ success: false, message: 'chatJid is required' });
       return;
     }
-    await session.sendReadReceipt(chatJid, ids.slice(0, 50), req.body.participant);
+    // Empty messageIds is valid: skip the tick-blueing receipt but still run
+    // the markChatAsRead mutation below — replying in a chat clears the
+    // phone's unread badge even when every incoming message already got a
+    // receipt (or was phone-flagged unread with nothing new to receipt).
+    if (ids.length) {
+      await session.sendReadReceipt(chatJid, ids.slice(0, 50), req.body.participant);
+    }
     // The receipt only blues the sender's ticks — the unread badge on the
     // owner's phone clears via the markChatAsRead app-state mutation.
     void session.markChatAsRead(chatJid).catch((err) =>
@@ -1389,6 +1409,25 @@ export function createRoutes(deps: RouteDependencies): express.Router {
       ),
     );
     res.json({ success: true });
+  });
+
+  // Reconcile phone-side read state from regular_low app-state collection
+  router.post('/internal/chats/sync-reads', async (req: Request, res: Response) => {
+    const sessionId = String(req.body.sessionId || req.body.userId || '');
+    const session = activeSessions.get(sessionId);
+    if (!session) {
+      res.status(409).json({ success: false, message: 'WhatsApp session is not connected' });
+      return;
+    }
+    try {
+      const reads = await session.reconcileReadStates();
+      res.json({ success: true, count: reads.length });
+    } catch (err) {
+      res.status(500).json({
+        success: false,
+        message: err instanceof Error ? err.message : 'Read reconciliation failed',
+      });
+    }
   });
 
   // Restore persisted (paired) sessions on boot — reconnect them staggered

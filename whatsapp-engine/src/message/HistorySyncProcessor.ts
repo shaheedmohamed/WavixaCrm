@@ -52,6 +52,7 @@ export interface ParsedHistorySync {
     unreadCount?: number;
     lastMsgTimestamp?: number;
     archived?: boolean;
+    pinned?: boolean;
     messages: NormalizedHistoryMessage[];
   }>;
   pushnames: Array<{ jid: string; pushname: string }>;
@@ -449,9 +450,10 @@ export async function processHistorySyncNotification(
       jid: c.id,
       name: c.name || undefined,
       username: c.username || undefined,
-      unreadCount: c.unreadCount != null ? Number(c.unreadCount) : undefined,
+      unreadCount: c.unreadCount != null ? Number(c.unreadCount) : (c.markedAsUnread ? 1 : 0),
       lastMsgTimestamp: c.lastMsgTimestamp != null ? Number(c.lastMsgTimestamp) : undefined,
       archived: c.archived === true,
+      pinned: Boolean(c.pinned),
       messages: (c.messages || [])
         .map((m: any) => normalizeWebMessageInfo(m?.message))
         .filter((m: NormalizedHistoryMessage | null): m is NormalizedHistoryMessage => m !== null),

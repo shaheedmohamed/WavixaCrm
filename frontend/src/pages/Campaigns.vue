@@ -141,7 +141,7 @@ export default {
     );
 
     const createAllowed = computed(() =>
-      user.value?.is_admin || CAMPAIGN_PLAN_SLUGS.includes(planSlug.value)
+      user.value?.is_admin || subscription.value?.limits_enforced === false || CAMPAIGN_PLAN_SLUGS.includes(planSlug.value)
     );
 
     const statusLabel = (status) => {

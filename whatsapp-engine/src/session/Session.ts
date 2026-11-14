@@ -51,7 +51,15 @@ export type ContactsSyncCallback = (payload: {
 }) => void;
 export type DisconnectedCallback = (info: { reason?: string; loggedOut?: boolean }) => void;
 export type QrCallback = (qr: SessionQrState) => void;
-export type ChatReadCallback = (data: { jid: string; read: boolean }) => void;
+export type ChatReadCallback = (data: {
+  jid: string;
+  lidJid?: string;
+  read: boolean;
+  lastMessageTimestamp?: number;
+}) => void;
+export type ChatReadReconcileCallback = (data: {
+  reads: Array<{ jid: string; lidJid?: string; read: boolean; lastMessageTimestamp?: number }>;
+}) => void;
 export type ChatArchivedCallback = (data: { jid: string; archived: boolean }) => void;
 export type ChatPinnedCallback = (data: { jid: string; pinned: boolean }) => void;
 
@@ -92,6 +100,7 @@ export class Session {
   private revokedCallbacks: RevokedCallback[] = [];
   private contactsSyncCallbacks: ContactsSyncCallback[] = [];
   private chatReadCallbacks: ChatReadCallback[] = [];
+  private chatReadReconcileCallbacks: ChatReadReconcileCallback[] = [];
   private chatArchivedCallbacks: ChatArchivedCallback[] = [];
   private chatPinnedCallbacks: ChatPinnedCallback[] = [];
   private leaseTimer: NodeJS.Timeout | null = null;
@@ -174,6 +183,11 @@ export class Session {
   /** Fires when a chat is marked read/unread on another device (app-state patch). */
   public onChatRead(callback: ChatReadCallback): void {
     this.chatReadCallbacks.push(callback);
+  }
+
+  /** Fires on full regular_low read-state reconciliation. */
+  public onChatReadReconcile(callback: ChatReadReconcileCallback): void {
+    this.chatReadReconcileCallbacks.push(callback);
   }
 
   /** Fires when a chat is archived/unarchived on another device (app-state patch). */
@@ -352,6 +366,16 @@ export class Session {
     // connect() and silently never attached (client is null pre-connect).
     client.on('chat.read', (r) => {
       for (const cb of this.chatReadCallbacks) {
+        try {
+          cb(r);
+        } catch {
+          // isolate callback errors
+        }
+      }
+    });
+
+    client.on('chats.read_reconcile', (r) => {
+      for (const cb of this.chatReadReconcileCallbacks) {
         try {
           cb(r);
         } catch {
@@ -759,6 +783,15 @@ export class Session {
       return;
     }
     await this.waClient.markChatAsRead(chatJid, read);
+  }
+
+  public async reconcileReadStates(): Promise<
+    Array<{ jid: string; lidJid?: string; read: boolean; lastMessageTimestamp?: number }>
+  > {
+    if (!this.waClient || !this.waClient.isOpen) {
+      return [];
+    }
+    return this.waClient.reconcileReadStates();
   }
 
   /**

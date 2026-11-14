@@ -637,84 +637,202 @@ class WhatsAppWebhookController extends Controller
     public function chatPinned(Request $request)
     {
         $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'pinned' => 'nullable|boolean']);
-        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
-        $cands = [$jid];
-        $cands[] = str_ends_with($jid, '@lid')
-            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
-            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
-        $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
-        $cands[] = $digits . '@s.whatsapp.net';
-        $cands[] = $digits . '@lid';
         $session = !empty($data['userId']) ? $this->resolveSession((string) $data['userId']) : null;
-        $conv = WhatsAppConversation::query()
-            ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
-            ->whereIn('contact_jid', array_unique($cands))
-            ->first();
+        if (!empty($data['userId']) && !$session) {
+            return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+        }
+        $conv = $this->findConversationByJid($session, $data['jid']);
         if ($conv) {
             $conv->update(['is_pinned' => (bool) ($data['pinned'] ?? true)]);
         }
         return response()->json(['success' => true]);
     }
 
-public function chatArchived(Request $request)
+    public function chatArchived(Request $request)
     {
         $data = $request->validate(['userId' => 'nullable', 'jid' => 'required|string', 'archived' => 'nullable|boolean']);
-        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
-        $cands = [$jid];
-        $cands[] = str_ends_with($jid, '@lid')
-            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
-            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
-        $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
-        $cands[] = $digits . '@s.whatsapp.net';
-        $cands[] = $digits . '@lid';
         $session = !empty($data['userId']) ? $this->resolveSession((string) $data['userId']) : null;
-        $conv = WhatsAppConversation::query()
-            ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
-            ->whereIn('contact_jid', array_unique($cands))
-            ->first();
+        if (!empty($data['userId']) && !$session) {
+            return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+        }
+        $conv = $this->findConversationByJid($session, $data['jid']);
         if ($conv) {
             $conv->update(['archived_at' => ($data['archived'] ?? true) ? now() : null]);
         }
         return response()->json(['success' => true]);
     }
 
-public function chatRead(Request $request)
+    private function findConversationByJid(?WhatsAppSession $session, string $rawJid, ?string $lidJid = null): ?WhatsAppConversation
     {
-        $data = $request->validate([
-            'userId' => 'nullable',
-            'jid' => 'required|string',
-            'read' => 'nullable|boolean',
-        ]);
-        $jid = preg_replace('/:\d+@/', '@', $data['jid']);
-        // The patch can carry the @lid form while the conversation is stored
-        // under the PN jid — resolve both directions via the mappings table.
-        $cands = [$jid];
+        $jid = preg_replace('/:\d+@/', '@', $rawJid);
+        $lidClean = $lidJid ? preg_replace('/:\d+@/', '@', $lidJid) : null;
+        if ($lidClean && str_ends_with($lidClean, '@lid') && str_ends_with($jid, '@s.whatsapp.net')) {
+            DB::table('whatsapp_lid_mappings')->updateOrInsert(
+                ['lid' => $lidClean],
+                ['pn' => $jid, 'updated_at' => now(), 'created_at' => now()]
+            );
+        }
+
+        $cands = array_filter([$jid, $lidClean]);
         $cands[] = str_ends_with($jid, '@lid')
-            ? (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
-            : (\Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
+            ? (DB::table('whatsapp_lid_mappings')->where('lid', $jid)->value('pn') ?? $jid)
+            : (DB::table('whatsapp_lid_mappings')->where('pn', $jid)->value('lid') ?? $jid);
         $digits = preg_replace('/\D/', '', explode('@', $jid)[0]);
-        $cands[] = $digits . '@s.whatsapp.net';
-        $cands[] = $digits . '@lid';
+        $isGroup = str_contains($jid, '@g.us');
+        if (!$isGroup && $digits) {
+            $cands[] = $digits . '@s.whatsapp.net';
+            $cands[] = $digits . '@lid';
+        }
+        $cands = array_values(array_unique(array_filter($cands)));
+
         $conv = WhatsAppConversation::query()
-            ->when($data['userId'] ?? null, fn ($q, $u) => $q->where('session_id', $u))
-            ->whereIn('contact_jid', array_unique($cands))
+            ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
+            ->whereIn('contact_jid', $cands)
             ->first();
-        if ($conv) {
-            $conv->update(['unread_count' => ($data['read'] ?? true) ? 0 : max(1, (int) $conv->unread_count)]);
-            // Push the new badge to open CRM tabs — without this the list
-            // only refreshes on reload.
-            try {
-                event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'conversation.update', [
-                    'conversation' => $conv->fresh()?->only([
+
+        if (!$conv && !$isGroup && $digits && !str_ends_with($jid, '@lid')) {
+            $conv = WhatsAppConversation::query()
+                ->when($session, fn ($q, $s) => $q->where('session_id', $s->id))
+                ->where('contact_phone', $digits)
+                ->first();
+        }
+
+        return $conv;
+    }
+
+    private function broadcastConvReadUpdate(WhatsAppConversation $conv): void
+    {
+        try {
+            $fresh = $conv->fresh(['assignedAgent:id,name', 'resolvedBy:id,name', 'lastOutgoingUser:id,name', 'transferredBy:id,name']);
+            if (!$fresh) {
+                return;
+            }
+            event(new \App\Events\CrmRealtimeEvent($fresh->user_id, 'conversation.update', [
+                'conversation' => array_merge(
+                    $fresh->only([
                         'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
                         'contact_avatar', 'last_message', 'last_message_at',
                         'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
-                        'rating', 'rating_note',
+                        'rating', 'rating_note', 'last_outgoing_user_id',
+                        'transferred_by', 'transferred_at', 'transfer_count',
                     ]),
-                ]));
-            } catch (\Throwable $e) {
-                Log::debug('CRM broadcast (chat-read) failed: ' . $e->getMessage());
+                    [
+                        'assigned_agent' => $fresh->assignedAgent ? [
+                            'id' => $fresh->assignedAgent->id,
+                            'name' => $fresh->assignedAgent->name,
+                        ] : null,
+                        'resolved_by_agent' => $fresh->resolvedBy ? [
+                            'id' => $fresh->resolvedBy->id,
+                            'name' => $fresh->resolvedBy->name,
+                        ] : null,
+                        'last_outgoing_user' => $fresh->lastOutgoingUser ? [
+                            'id' => $fresh->lastOutgoingUser->id,
+                            'name' => $fresh->lastOutgoingUser->name,
+                        ] : null,
+                        'transferred_by_agent' => $fresh->transferredBy ? [
+                            'id' => $fresh->transferredBy->id,
+                            'name' => $fresh->transferredBy->name,
+                        ] : null,
+                    ]
+                ),
+            ]));
+        } catch (\Throwable $e) {
+            Log::debug('CRM broadcast (chat-read) failed: ' . $e->getMessage());
+        }
+    }
+
+    public function chatRead(Request $request)
+    {
+        $data = $request->validate([
+            'userId' => 'nullable',
+            'jid' => 'nullable|string',
+            'lidJid' => 'nullable|string',
+            'read' => 'nullable|boolean',
+            'lastMessageTimestamp' => 'nullable|integer',
+            'reconcile' => 'nullable|boolean',
+            'reads' => 'nullable|array',
+        ]);
+
+        $session = !empty($data['userId']) ? $this->resolveSession((string) $data['userId']) : null;
+        if (!empty($data['userId']) && !$session) {
+            return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+        }
+
+        // Batch full reconciliation from regular_low app-state replay
+        if (!empty($data['reconcile']) && is_array($data['reads'] ?? null)) {
+            $updated = 0;
+            if ($session) {
+                // Any chat whose latest message was sent by us cannot still be unread.
+                $outgoingStuck = WhatsAppConversation::where('session_id', $session->id)
+                    ->where('unread_count', '>', 0)
+                    ->where('last_message_direction', 'outgoing')
+                    ->get();
+                foreach ($outgoingStuck as $oc) {
+                    $oc->update(['unread_count' => 0]);
+                    $this->broadcastConvReadUpdate($oc);
+                    $updated++;
+                }
+            }
+
+            foreach ($data['reads'] as $item) {
+                if (empty($item['jid'])) {
+                    continue;
+                }
+                $conv = $this->findConversationByJid($session, (string) $item['jid'], $item['lidJid'] ?? null);
+                if (!$conv) {
+                    continue;
+                }
+                $isRead = ($item['read'] ?? true) !== false;
+                $readTs = (int) ($item['lastMessageTimestamp'] ?? 0);
+                if ($readTs > 100000000000) {
+                    $readTs = intdiv($readTs, 1000);
+                }
+
+                if ($isRead && (int) $conv->unread_count > 0) {
+                    $newUnread = (int) $conv->unread_count;
+                    if ($conv->last_message_direction === 'outgoing') {
+                        $newUnread = 0;
+                    } elseif ($readTs > 0) {
+                        $convLastTs = $conv->last_message_at ? $conv->last_message_at->getTimestamp() : 0;
+                        if ($convLastTs <= $readTs + 5) {
+                            $newUnread = 0;
+                        } else {
+                            $afterCount = WhatsAppMessage::where('conversation_id', $conv->id)
+                                ->where('direction', 'incoming')
+                                ->where('timestamp', '>', \Carbon\Carbon::createFromTimestamp($readTs + 2))
+                                ->count();
+                            $newUnread = min((int) $conv->unread_count, $afterCount);
+                        }
+                    }
+                    if ($newUnread !== (int) $conv->unread_count) {
+                        $conv->update(['unread_count' => $newUnread]);
+                        $this->broadcastConvReadUpdate($conv);
+                        $updated++;
+                    }
+                } elseif (!$isRead && (int) $conv->unread_count === 0 && $readTs > 0) {
+                    $convLastTs = $conv->last_message_at ? $conv->last_message_at->getTimestamp() : 0;
+                    if ($conv->last_message_direction !== 'outgoing' && $readTs >= $convLastTs - 5) {
+                        $conv->update(['unread_count' => 1]);
+                        $this->broadcastConvReadUpdate($conv);
+                        $updated++;
+                    }
+                }
+            }
+
+            return response()->json(['success' => true, 'updated' => $updated]);
+        }
+
+        if (empty($data['jid'])) {
+            return response()->json(['success' => true]);
+        }
+
+        $conv = $this->findConversationByJid($session, $data['jid'], $data['lidJid'] ?? null);
+        if ($conv) {
+            $newUnread = ($data['read'] ?? true) ? 0 : max(1, (int) $conv->unread_count);
+            if ((int) $conv->unread_count !== $newUnread) {
+                $conv->update(['unread_count' => $newUnread]);
+                $this->broadcastConvReadUpdate($conv);
             }
         }
         return response()->json(['success' => true]);
@@ -1092,25 +1210,37 @@ public function messageRevoked(Request $request)
                 // carries unreadCount 0 in the sync payload. Lowering our
                 // counter is safe only when this chunk is at least as fresh as
                 // what we already store — a stale chunk must never erase a
-                // live unread badge.
+                // live unread badge. ON_DEMAND chunks (syncType 6) are the
+                // exception: the phone generates them at request time, so
+                // their unreadCount is the phone's CURRENT state by
+                // definition — apply it unconditionally. This is what lets the
+                // per-chat reconcile pull fix badges read long ago (whose
+                // markChatAsRead mutations WhatsApp already garbage-collected).
+                $isOnDemandChunk = (int) ($data['syncType'] ?? -1) === 6;
                 if (isset($conv['unreadCount'])) {
                     $syncUnread = (int) $conv['unreadCount'];
                     $storedUnread = (int) ($conversation->unread_count ?? 0);
-                    $chunkIsFresh = !$newestTs
+                    $chunkIsFresh = $isOnDemandChunk
                         || !$conversation->last_message_at
-                        || (int) $newestTs >= $conversation->last_message_at->getTimestamp();
-                    if ($syncUnread > $storedUnread || ($syncUnread < $storedUnread && $chunkIsFresh)) {
+                        || ($newestTs && (int) $newestTs >= $conversation->last_message_at->getTimestamp() - 5);
+                    if ($chunkIsFresh && $syncUnread !== $storedUnread) {
                         $convUpdates['unread_count'] = $syncUnread;
                     }
-                    if (isset($convData['archived'])) {
-                        $convUpdates['archived_at'] = $convData['archived'] ? now() : null;
-                    }
-                    if (isset($convData['pinned'])) {
-                        $convUpdates['is_pinned'] = (bool) $convData['pinned'];
-                    }
+                }
+                if (isset($conv['archived'])) {
+                    $convUpdates['archived_at'] = $conv['archived'] ? now() : null;
+                }
+                if (isset($conv['pinned'])) {
+                    $convUpdates['is_pinned'] = (bool) $conv['pinned'];
                 }
                 if ($convUpdates) {
+                    $unreadChanged = array_key_exists('unread_count', $convUpdates);
                     $conversation->update($convUpdates);
+                    if ($unreadChanged) {
+                        // Push the badge change live — a reconcile pull that
+                        // clears a stale unread must update open CRM tabs.
+                        $this->broadcastConvReadUpdate($conversation);
+                    }
                 }
 
                 // The owner's uploaded address book wins over pushnames.
@@ -1675,16 +1805,43 @@ public function messageRevoked(Request $request)
                 }
             }
             try {
+                $freshConv = $conversation->fresh([
+                    'assignedAgent:id,name',
+                    'resolvedBy:id,name',
+                    'lastOutgoingUser:id,name',
+                    'transferredBy:id,name',
+                ]);
                 event(new \App\Events\CrmRealtimeEvent($session->user_id, 'message.new', [
                     'session_id' => $session->id,
                     'conversation_id' => $conversation->id,
-                    'conversation' => $conversation->fresh()?->only([
-                        'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
-                        'contact_avatar', 'last_message', 'last_message_at',
-                        'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
-                        'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
-                        'rating', 'rating_note',
-                    ]),
+                    'conversation' => $freshConv ? array_merge(
+                        $freshConv->only([
+                            'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                            'contact_avatar', 'last_message', 'last_message_at',
+                            'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                            'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
+                            'rating', 'rating_note', 'last_outgoing_user_id',
+                            'transferred_by', 'transferred_at', 'transfer_count',
+                        ]),
+                        [
+                            'assigned_agent' => $freshConv->assignedAgent ? [
+                                'id' => $freshConv->assignedAgent->id,
+                                'name' => $freshConv->assignedAgent->name,
+                            ] : null,
+                            'resolved_by_agent' => $freshConv->resolvedBy ? [
+                                'id' => $freshConv->resolvedBy->id,
+                                'name' => $freshConv->resolvedBy->name,
+                            ] : null,
+                            'last_outgoing_user' => $freshConv->lastOutgoingUser ? [
+                                'id' => $freshConv->lastOutgoingUser->id,
+                                'name' => $freshConv->lastOutgoingUser->name,
+                            ] : null,
+                            'transferred_by_agent' => $freshConv->transferredBy ? [
+                                'id' => $freshConv->transferredBy->id,
+                                'name' => $freshConv->transferredBy->name,
+                            ] : null,
+                        ]
+                    ) : null,
                     'message' => $broadcastMessage,
                 ]));
             } catch (\Throwable $e) {

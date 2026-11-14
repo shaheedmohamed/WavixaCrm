@@ -658,6 +658,7 @@ export default {
     const selectedSession = computed(() => sessions.value.find((s) => s.id === form.session_id) || null);
 
     const qualifies = computed(() => {
+      if (subscription.value?.limits_enforced === false) return true;
       const slug = subscription.value?.plan?.slug || auth.getUser()?.subscription_plan || '';
       return ['business', 'business-yearly', 'partners', 'partners-yearly'].includes(slug);
     });

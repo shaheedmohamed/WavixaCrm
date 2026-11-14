@@ -79,7 +79,12 @@ class CrmController extends Controller
         if (!$conversation->assigned_agent_id || $conversation->assigned_agent_id === $user->id) {
             return null;
         }
-        return User::find($conversation->assigned_agent_id);
+        $holder = User::find($conversation->assigned_agent_id);
+        if (!$holder) {
+            $conversation->forceFill(['assigned_agent_id' => null, 'assigned_at' => null])->save();
+            return null;
+        }
+        return $holder;
     }
 
     /** WhatsApp group conversations live under @g.us JIDs. */
@@ -160,7 +165,12 @@ class CrmController extends Controller
                     return 'gone';
                 }
                 if ($fresh->assigned_agent_id && !$fresh->resolved_at) {
-                    return $fresh->assigned_agent_id === $user->id ? 'mine' : 'taken';
+                    if ($fresh->assigned_agent_id === $user->id) {
+                        return 'mine';
+                    }
+                    if (User::whereKey($fresh->assigned_agent_id)->exists()) {
+                        return 'taken';
+                    }
                 }
                 if ($this->activeChatsCount($user->id) >= $this->agentChatCap($user)) {
                     return 'full';
@@ -668,6 +678,12 @@ class CrmController extends Controller
 
         $token = $session->session_token ?: (string) $session->id;
         try {
+            try {
+                $this->engineClient()->post("{$this->engineUrl}/internal/chats/sync-reads", [
+                    'sessionId' => $token,
+                ]);
+            } catch (\Throwable $ignored) {}
+
             $res = $this->engineClient()->post("{$this->engineUrl}/internal/history/sync", [
                 'sessionId' => $token,
             ]);
@@ -920,6 +936,26 @@ class CrmController extends Controller
     {
         $owner = $this->resolveOwner();
         $agent = User::where('crm_parent_id', $owner->id)->where('id', $id)->firstOrFail();
+
+        // Release any conversations held by the deleted agent so they return
+        // to the queue instead of pointing at a deleted user ID ("مع موظف").
+        $heldConvs = WhatsAppConversation::where('assigned_agent_id', $agent->id)->get();
+        foreach ($heldConvs as $conv) {
+            $conv->forceFill([
+                'assigned_agent_id' => null,
+                'assigned_at' => null,
+                'transferred_by' => null,
+                'transferred_at' => null,
+            ])->save();
+            $this->broadcastConversation($conv);
+        }
+        WhatsAppConversation::where('transferred_by', $agent->id)->update(['transferred_by' => null, 'transferred_at' => null]);
+        WhatsAppConversation::where('last_outgoing_user_id', $agent->id)->update(['last_outgoing_user_id' => null]);
+        WhatsAppConversation::where('resolved_by', $agent->id)->update(['resolved_by' => null]);
+
+        try {
+            $agent->tokens()->delete();
+        } catch (\Throwable $ignored) {}
         $agent->delete();
 
         return response()->json([
@@ -1251,6 +1287,24 @@ class CrmController extends Controller
             });
         }
 
+        // Stale unread badges: chats read on the phone long ago have no
+        // surviving markChatAsRead mutation to replay — pull the phone's
+        // per-chat unreadCount via on-demand history instead. Throttled per
+        // session; the job caps and paces its own requests.
+        try {
+            $unreadSessions = WhatsAppSession::whereIn('id', $allowedSessionIds)
+                ->where('status', 'connected')
+                ->whereHas('conversations', fn ($c) => $c->where('unread_count', '>', 0))
+                ->pluck('id');
+            foreach ($unreadSessions as $sid) {
+                if (Cache::add("unread_reconcile_{$sid}", 1, 600)) {
+                    \App\Jobs\ReconcileSessionUnreadJob::dispatch($sid);
+                }
+            }
+        } catch (\Throwable $e) {
+            // Reconcile must never take the chat list down.
+        }
+
         /** @var User $user */
         $user = Auth::user();
 
@@ -1263,62 +1317,86 @@ class CrmController extends Controller
             ])
             ->whereIn('session_id', $allowedSessionIds);
 
-        // Distribution rule: an agent only sees the shared pool (unclaimed
-        // chats) plus the chats they personally hold — a colleague's locked
-        // chat never shows up in their list. Owners and admins see the whole
-        // account on every platform; each row carries its assigned agent.
-        if ($user->crm_role === 'agent' && $request->input('scope') !== 'all_staff') {
-            $query->where(function ($q) use ($user) {
-                $q->whereNull('assigned_agent_id')
-                  ->orWhere('assigned_agent_id', $user->id)
-                  ->orWhere('contact_jid', 'like', '%@g.us');
-            });
+        $scope = $request->input('scope');
+
+        if ($user->crm_role === 'agent') {
+            // Agents never see archived or completed (مكتمل) chats, nor chats
+            // handled by colleagues, nor already-read unclaimed history.
+            if ($request->boolean('archived') || $scope === 'resolved') {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereNull('resolved_at')
+                      ->whereNull('archived_at');
+
+                $isGroupsScope = $scope === 'groups' || $request->boolean('groups_only');
+
+                if ($isGroupsScope) {
+                    $query->where('contact_jid', 'like', '%@g.us')
+                          ->where('unread_count', '>', 0);
+                } else {
+                    $query->where(function ($q) {
+                        $q->whereNull('contact_jid')
+                          ->orWhere('contact_jid', 'not like', '%@g.us');
+                    });
+
+                    match ($scope) {
+                        'mine' => $query->where('assigned_agent_id', $user->id),
+                        'unassigned' => $query->whereNull('assigned_agent_id')
+                            ->where('unread_count', '>', 0),
+                        'unread' => $query->where('unread_count', '>', 0)
+                            ->where(function ($q) use ($user) {
+                                $q->whereNull('assigned_agent_id')
+                                  ->orWhere('assigned_agent_id', $user->id);
+                            }),
+                        default => $query->where(function ($q) use ($user) {
+                            // 1) Unclaimed chats with unread messages
+                            // 2) Chats currently handled by this agent
+                            $q->where(function ($u) {
+                                $u->whereNull('assigned_agent_id')
+                                  ->where('unread_count', '>', 0);
+                            })->orWhere('assigned_agent_id', $user->id);
+                        }),
+                    };
+                }
+            }
+
+            if ($request->filled('session_id')) {
+                $query->where('session_id', $request->session_id);
+            }
+            if ($request->boolean('unread_only')) {
+                $query->where('unread_count', '>', 0);
+            }
+        } else {
+            // Owners and admins keep full visibility across all conversations and tabs.
+            match ($scope) {
+                'chats' => $query->where(function ($q) {
+                    $q->whereNull('contact_jid')->orWhere('contact_jid', 'not like', '%@g.us');
+                })->whereNull('resolved_at'),
+                'groups' => $query->where('contact_jid', 'like', '%@g.us'),
+                'unassigned', 'available' => $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
+                'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),
+                'unread' => $query->where('unread_count', '>', 0),
+                'resolved' => $query->whereNotNull('resolved_at'),
+                default => null,
+            };
+
+            if ($request->filled('session_id')) {
+                $query->where('session_id', $request->session_id);
+            }
+
+            if ($request->boolean('unread_only')) {
+                $query->where('unread_count', '>', 0);
+            }
+
+            if ($request->boolean('groups_only')) {
+                $query->where('contact_jid', 'like', '%@g.us');
+            }
+
+            // Archived chats live in their own drawer — hidden from every normal
+            // tab, listed alone under ?archived=1.
+            $query->when($request->boolean('archived'), fn ($q) => $q->whereNotNull('archived_at'),
+                 fn ($q) => $q->whereNull('archived_at'));
         }
-
-        // Queue tabs. For an agent "available" is their whole working queue:
-        // the unclaimed pool + the chats they are holding. For the owner it
-        // means "no one picked this up yet" (بدون موظف).
-        match ($request->input('scope')) {
-            'chats' => $query->where(function ($q) {
-                $q->whereNull('contact_jid')->orWhere('contact_jid', 'not like', '%@g.us');
-            })->whereNull('resolved_at')->when(
-                $user->crm_role === 'agent',
-                fn ($q) => $q->where(function ($w) use ($user) {
-                    $w->whereNull('assigned_agent_id')
-                      ->orWhere('assigned_agent_id', $user->id);
-                })
-            ),
-            'groups' => $query->where('contact_jid', 'like', '%@g.us'),
-            'unassigned' => $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
-            'available' => $user->crm_role === 'agent'
-                ? $query->whereNull('resolved_at')->where(function ($q) use ($user) {
-                    $q->whereNull('assigned_agent_id')
-                      ->orWhere('assigned_agent_id', $user->id)
-                      ->orWhere('contact_jid', 'like', '%@g.us');
-                  })
-                : $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
-            'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),
-            'unread' => $query->where('unread_count', '>', 0),
-            'resolved' => $query->whereNotNull('resolved_at'),
-            default => null,
-        };
-
-        if ($request->filled('session_id')) {
-            $query->where('session_id', $request->session_id);
-        }
-
-        if ($request->boolean('unread_only')) {
-            $query->where('unread_count', '>', 0);
-        }
-
-        if ($request->boolean('groups_only')) {
-            $query->where('contact_jid', 'like', '%@g.us');
-        }
-
-        // Archived chats live in their own drawer — hidden from every normal
-        // tab, listed alone under ?archived=1.
-        $query->when($request->boolean('archived'), fn ($q) => $q->whereNotNull('archived_at'),
-             fn ($q) => $q->whereNull('archived_at'));
 
         if ($request->filled('search')) {
             $search = trim($request->search);
@@ -1357,6 +1435,21 @@ class CrmController extends Controller
             ->where('id', $conversationId)
             ->firstOrFail();
 
+        $caller = $request->user();
+        if ($caller && $caller->crm_role === 'agent') {
+            if ($locker = $this->conversationLocker($conversation, $caller)) {
+                return $this->lockedResponse($locker);
+            }
+            // Enforce max_active_chats BEFORE clearing unread_count so a full
+            // agent can neither open extra chats nor wipe their unread badge.
+            if (!$this->isGroupConv($conversation)
+                && (!$conversation->assigned_agent_id || $conversation->resolved_at)) {
+                if ($err = $this->attemptClaim($conversation, $caller)) {
+                    return $this->claimErrorResponse($err);
+                }
+            }
+        }
+
         // Mark unread count to 0 when opened — and tell WhatsApp the messages
         // were read (blue ticks for the sender), fire-and-forget.
         if ($conversation->unread_count > 0) {
@@ -1366,6 +1459,13 @@ class CrmController extends Controller
             // the tab that happened to open the chat.
             $this->broadcastConversation($conversation);
         }
+
+        $conversation->loadMissing([
+            'assignedAgent:id,name',
+            'resolvedBy:id,name',
+            'lastOutgoingUser:id,name',
+            'transferredBy:id,name',
+        ]);
 
         // The "محولة من …" badge is acknowledged once the receiving agent
         // actually opens the chat.
@@ -1755,10 +1855,10 @@ class CrmController extends Controller
                 ->values()
                 ->all();
 
-            if (!$ids) {
-                return;
-            }
-
+            // Post even with an empty id list: the engine then skips the
+            // tick-blueing receipts but still writes the markChatAsRead
+            // app-state mutation, which is what clears the unread badge on
+            // the owner's phone.
             $token = $session->session_token ?: (string) $session->id;
             $this->engineClient()->post("{$this->engineUrl}/internal/messages/read", [
                 'sessionId' => $token,
@@ -1841,7 +1941,16 @@ class CrmController extends Controller
             if ($updates) $conv->update($updates);
         }
 
-        $conv->load('session:id,device_name,phone_number');
+        if ($request->user() && $request->user()->crm_role === 'agent') {
+            if ($locker = $this->conversationLocker($conv, $request->user())) {
+                return $this->lockedResponse($locker);
+            }
+            if ($err = $this->attemptClaim($conv, $request->user())) {
+                return $this->claimErrorResponse($err);
+            }
+        }
+
+        $conv->load(['session:id,device_name,phone_number', 'assignedAgent:id,name']);
 
         return response()->json([
             'success' => true,
@@ -2243,6 +2352,11 @@ class CrmController extends Controller
                 'unread_count' => 0,
             ]);
 
+            // Replying implies reading — blue-tick the sender's pending
+            // incoming messages and clear the unread badge on the owner's
+            // phone via the markChatAsRead app-state mutation.
+            $this->sendReadReceipts($conversation);
+
             // Broadcast so other agents/devices with the CRM open see the
             // outgoing message without waiting for the next poll.
             try {
@@ -2254,9 +2368,16 @@ class CrmController extends Controller
                             'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
                             'contact_avatar', 'last_message', 'last_message_at',
                             'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                            'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                             'last_outgoing_user_id',
                         ]),
-                        ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                        [
+                            'last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name],
+                            'assigned_agent' => $conversation->assignedAgent ? [
+                                'id' => $conversation->assignedAgent->id,
+                                'name' => $conversation->assignedAgent->name,
+                            ] : null,
+                        ]
                     ),
                     'message' => $msgRecord->toArray(),
                 ]));
@@ -2558,6 +2679,10 @@ class CrmController extends Controller
                 'unread_count' => 0,
             ]);
 
+            // Replying implies reading — clear the unread badge on the
+            // owner's phone (markChatAsRead), same as a text reply.
+            $this->sendReadReceipts($conversation);
+
             // Broadcast so other agents/devices with the CRM open see the
             // outgoing media instantly — the list would otherwise move ahead
             // of the open thread until the next poll.
@@ -2570,9 +2695,16 @@ class CrmController extends Controller
                             'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
                             'contact_avatar', 'last_message', 'last_message_at',
                             'last_message_direction', 'last_message_type', 'last_message_status', 'unread_count', 'is_pinned',
+                            'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                             'last_outgoing_user_id',
                         ]),
-                        ['last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name]]
+                        [
+                            'last_outgoing_user' => ['id' => $request->user()->id, 'name' => $request->user()->name],
+                            'assigned_agent' => $conversation->assignedAgent ? [
+                                'id' => $conversation->assignedAgent->id,
+                                'name' => $conversation->assignedAgent->name,
+                            ] : null,
+                        ]
                     ),
                     'message' => $msgRecord->toArray(),
                 ]));
@@ -2956,6 +3088,10 @@ class CrmController extends Controller
             'unread_count' => 0,
         ]);
 
+        // Forwarding into this chat is an outgoing send — mirror the cleared
+        // unread badge to the owner's phone too.
+        $this->sendReadReceipts($conv);
+
         try {
             event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'message.new', [
                 'session_id' => $session->id,
@@ -3191,6 +3327,7 @@ class CrmController extends Controller
             'assigned_at' => null,
             'resolved_at' => now(),
             'resolved_by' => $user->id,
+            'unread_count' => 0,
             'rating' => $request->input('rating'),
             'rating_note' => $request->input('note'),
             // The pending handoff badge dies with the assignment; the count
@@ -3202,6 +3339,10 @@ class CrmController extends Controller
                 ? max(0, now()->diffInSeconds($conversation->assigned_at))
                 : null,
         ])->save();
+
+        // Resolving zeroes the badge here — mirror it to the phone so the
+        // chat isn't left unread on WhatsApp itself.
+        $this->sendReadReceipts($conversation);
 
         $this->audit('conversation.resolve', [
             'rating' => $request->input('rating'),
