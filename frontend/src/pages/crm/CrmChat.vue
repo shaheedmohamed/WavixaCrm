@@ -1010,6 +1010,15 @@
               <span class="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
               <span class="text-rose-400 font-bold text-sm">جاري تسجيل مقطع صوتي...</span>
               <span class="font-mono text-xs text-white">{{ formatRecordingTime(recordingSeconds) }}</span>
+              <span class="flex items-end gap-[2px] h-4" title="مستوى صوت الميكروفون">
+                <span
+                  v-for="i in 5"
+                  :key="i"
+                  class="w-1 rounded-sm transition-all duration-100"
+                  :class="micLevel * 5 >= i ? 'bg-emerald-400' : 'bg-slate-600'"
+                  :style="{ height: (4 + i * 3) + 'px' }"
+                ></span>
+              </span>
             </div>
             <div class="flex items-center gap-2">
               <button
@@ -1304,17 +1313,49 @@
         <h3 class="text-lg font-bold text-white mb-1">بدء محادثة واتساب جديدة</h3>
         <p class="text-xs text-[#96a4ad] mb-4">أدخل رقم هاتف العميل بالصيغة الدولية</p>
 
-        <form @submit.prevent="handleStartChat" class="space-y-4">
-          <div>
-            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">رقم الهاتف (مع كود الدولة)</label>
+        <form @submit.prevent="handleStartChat" novalidate class="space-y-4">
+          <div class="relative">
+            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">رقم هاتف العميل</label>
             <input
               v-model="newChatPhone"
               type="text"
-              required
-              placeholder="مثال: 201012345678"
+              placeholder="201012345678"
               dir="ltr"
-              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
+              autocomplete="off"
+              @focus="newChatPickerOpen = true"
+              @blur="newChatPickerOpen = false"
+              @input="newChatError = ''"
+              class="w-full bg-[#18242b] border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
+              :class="newChatError ? 'border-red-500' : 'border-[#30424c]'"
             />
+            <p class="text-[10px] text-[#96a4ad] mt-1">
+              اكتب الرقم بالصيغة الدولية مباشرة — أو اختر جهة اتصال من القائمة
+            </p>
+            <p v-if="newChatError" class="text-[11px] font-bold text-red-400 mt-1">{{ newChatError }}</p>
+            <div
+              v-if="newChatPickerOpen"
+              class="absolute z-20 top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto bg-[#18242b] border border-[#30424c] rounded-xl shadow-2xl custom-scrollbar"
+            >
+              <button
+                v-for="c in filteredNewChatContacts"
+                :key="c.jid"
+                type="button"
+                @mousedown.prevent="pickNewChatContact(c)"
+                class="w-full flex items-center gap-3 px-3 py-2 hover:bg-[#25343d] transition-colors text-right"
+              >
+                <img v-if="c.avatar" :src="c.avatar" class="w-8 h-8 rounded-full object-cover shrink-0" alt="" />
+                <div v-else class="w-8 h-8 rounded-full bg-[#30424c] flex items-center justify-center text-xs font-bold text-[#96a4ad] shrink-0">
+                  {{ (c.name || '+').replace(/^\+/, '').charAt(0) }}
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-sm text-white truncate">{{ c.name }}</div>
+                  <div class="text-[11px] text-[#96a4ad] font-mono" dir="ltr">+{{ c.phone || String(c.jid).split('@')[0] }}</div>
+                </div>
+              </button>
+              <div v-if="!filteredNewChatContacts.length" class="px-3 py-2.5 text-xs text-[#96a4ad]">
+                لا توجد جهات مطابقة — سيُستخدم الرقم المكتوب
+              </div>
+            </div>
           </div>
 
           <div>
@@ -2516,7 +2557,32 @@ const showNewChatModal = ref(false);
 const creatingChat = ref(false);
 const newChatPhone = ref('');
 const newChatName = ref('');
+const newChatError = ref('');
 const newChatSessionId = ref(null);
+// New-chat contact picker: the phone input doubles as a search box over
+// every known 1:1 contact (existing chats + CRM address book), WhatsApp
+// "new chat" style. Typing digits filters by phone, text filters by name.
+const newChatPickerOpen = ref(false);
+const filteredNewChatContacts = computed(() => {
+  const q = newChatPhone.value.trim().toLowerCase();
+  const qDigits = q.replace(/\D/g, '');
+  return groupCandidates.value
+    .filter((c) => {
+      if (!q) return true;
+      return (c.name || '').toLowerCase().includes(q)
+        || (qDigits && (c.phone || String(c.jid).split('@')[0]).includes(qDigits));
+    })
+    .slice(0, 60);
+});
+const pickNewChatContact = (c) => {
+  newChatPhone.value = c.phone || String(c.jid).split('@')[0];
+  if (!newChatName.value && c.name && !c.name.startsWith('+')) newChatName.value = c.name;
+  newChatPickerOpen.value = false;
+  newChatError.value = '';
+};
+watch(showNewChatModal, (v) => {
+  if (v && !groupContactsBook.value.length) loadGroupContactsBook();
+});
 // WhatsApp-style media viewer: items = every image/video in the open chat,
 // index = the visible one. Opens instantly on the loaded window, then the
 // backend media endpoint back-fills the full filmstrip.
@@ -4043,9 +4109,76 @@ const sendPastedFile = async (file) => {
 };
 
 // Audio Voice Recording
+let micStream = null;
+let micAnalyser = null;
+let micLevelCtx = null;
+let micLevelRaf = null;
+const micLevel = ref(0);
+
+const releaseMic = () => {
+  if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
+  micLevel.value = 0;
+  micAnalyser = null;
+  if (micLevelCtx) { try { micLevelCtx.close(); } catch {} micLevelCtx = null; }
+  if (micStream) {
+    micStream.getTracks().forEach((t) => t.stop());
+    micStream = null;
+  }
+};
+
+const startMicLevelMeter = (stream) => {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    micLevelCtx = new Ctx();
+    const src = micLevelCtx.createMediaStreamSource(stream);
+    micAnalyser = micLevelCtx.createAnalyser();
+    micAnalyser.fftSize = 512;
+    src.connect(micAnalyser);
+    const data = new Uint8Array(micAnalyser.fftSize);
+    const tick = () => {
+      if (!micAnalyser) return;
+      micAnalyser.getByteTimeDomainData(data);
+      let sum = 0;
+      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
+      micLevel.value = Math.min(1, Math.sqrt(sum / data.length) * 6);
+      micLevelRaf = requestAnimationFrame(tick);
+    };
+    tick();
+  } catch {}
+};
+
+// Decode the recorded blob and measure loudness — MediaRecorder happily
+// produces a valid-looking file of pure silence when the captured track is
+// muted (stale stream, OS-level mute, wrong input device). Sending that
+// gives the contact an unplayable-looking empty voice note.
+const isSilentRecording = async (blob) => {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    const ctx = new Ctx();
+    const buf = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const data = buf.getChannelData(0);
+    const step = Math.max(1, Math.floor(data.length / 8000));
+    let sum = 0, n = 0;
+    for (let i = 0; i < data.length; i += step) { sum += data[i] * data[i]; n++; }
+    try { ctx.close(); } catch {}
+    return Math.sqrt(sum / Math.max(1, n)) < 0.0005;
+  } catch {
+    return false;
+  }
+};
+
 const startVoiceRecording = async () => {
   try {
+    releaseMic();
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const track = stream.getAudioTracks()[0];
+    if (!track || track.readyState !== 'live' || track.muted) {
+      stream.getTracks().forEach((t) => t.stop());
+      alert('الميكروفون غير شغال أو مكتوم — اتأكد من جهاز الإدخال وجرب تاني');
+      return;
+    }
+    micStream = stream;
+    startMicLevelMeter(stream);
     audioChunks = [];
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = (e) => {
@@ -4059,6 +4192,7 @@ const startVoiceRecording = async () => {
       recordingSeconds.value += 1;
     }, 1000);
   } catch (err) {
+    releaseMic();
     alert('تعذر الوصول إلى الميكروفون: ' + err.message);
   }
 };
@@ -4067,6 +4201,7 @@ const cancelRecording = () => {
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     mediaRecorder.stop();
   }
+  releaseMic();
   clearInterval(recordingTimer);
   isRecording.value = false;
   audioChunks = [];
@@ -4076,7 +4211,16 @@ const stopAndSendRecording = () => {
   if (!mediaRecorder || mediaRecorder.state === 'inactive') return;
 
   mediaRecorder.onstop = async () => {
-    const audioBlob = new Blob(audioChunks, { type: 'audio/ogg; codecs=opus' });
+    releaseMic();
+    const audioBlob = new Blob(audioChunks, {
+      type: mediaRecorder?.mimeType || 'audio/webm',
+    });
+
+    if (await isSilentRecording(audioBlob)) {
+      alert('التسجيل طلع فاضي من غير صوت — اتأكد إن الميكروفون شغال وسجّل تاني');
+      return;
+    }
+
     const audioFile = new File([audioBlob], `voice_${Date.now()}.ogg`, { type: 'audio/ogg' });
 
     const formData = new FormData();
@@ -4140,13 +4284,25 @@ const removeReaction = async (msg, emoji) => {
   } catch {}
 };
 
-// Start New Chat
+// Start New Chat — the phone field is the only required input. If the number
+// was typed into the customer-name box by mistake, use it anyway (>= 8 digits).
 const handleStartChat = async () => {
+  let phone = newChatPhone.value.trim();
+  let name = newChatName.value.trim();
+  if (!phone.replace(/\D/g, '').length && name.replace(/\D/g, '').length >= 8) {
+    phone = name;
+    name = '';
+  }
+  if (phone.replace(/\D/g, '').length < 8) {
+    newChatError.value = 'اكتب رقم هاتف العميل بالصيغة الدولية';
+    return;
+  }
+  newChatError.value = '';
   creatingChat.value = true;
   try {
     const res = await crm.startConversation({
-      phone: newChatPhone.value,
-      name: newChatName.value,
+      phone,
+      name,
       session_id: newChatSessionId.value,
     });
     if (res.success && res.conversation) {

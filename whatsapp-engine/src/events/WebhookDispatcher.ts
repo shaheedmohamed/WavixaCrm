@@ -268,6 +268,7 @@ export class WebhookDispatcher {
         to: p.to,
         message: p.data.message,
         messageType: p.data.messageType || 'text',
+        ...(p.data.mediaUrl ? { mediaUrl: p.data.mediaUrl } : {}),
         status: 'sent',
         timestamp: p.timestamp,
       });

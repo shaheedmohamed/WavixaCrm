@@ -1442,8 +1442,16 @@ class CrmController extends Controller
             }
             // Enforce max_active_chats BEFORE clearing unread_count so a full
             // agent can neither open extra chats nor wipe their unread badge.
+            // Auto-claim is limited to live unassigned chats: a resolved chat
+            // must NOT silently reopen just because a stale poll or a second
+            // tab refetches its messages — that made "مكتمل" bounce straight
+            // back to "مع <agent>" seconds after finishing. Reopening a
+            // completed chat is explicit only (claimConversation / transfer),
+            // or implicit when a NEW customer message arrives (webhook clears
+            // resolved_at, which puts it back in the unassigned pool).
             if (!$this->isGroupConv($conversation)
-                && (!$conversation->assigned_agent_id || $conversation->resolved_at)) {
+                && !$conversation->assigned_agent_id
+                && !$conversation->resolved_at) {
                 if ($err = $this->attemptClaim($conversation, $caller)) {
                     return $this->claimErrorResponse($err);
                 }
@@ -2564,6 +2572,23 @@ class CrmController extends Controller
                     @unlink($srcPath);
                     $mediaUrl = '/storage/crm_media/' . $oggName;
                     $fileName = $oggName;
+
+                    // Reject silent recordings server-side too — the browser
+                    // silence check can be bypassed (stale bundle, decode
+                    // failure), and a voice note of digital zeros reaches
+                    // WhatsApp looking playable but producing no sound.
+                    $vol = \Illuminate\Support\Facades\Process::run([
+                        'ffmpeg', '-i', $oggPath, '-af', 'volumedetect', '-f', 'null', '-',
+                    ]);
+                    $volOut = $vol->output() . $vol->errorOutput();
+                    if (preg_match('/max_volume:\s*(-?inf|-[\d.]+)\s*dB/', $volOut, $vm)
+                        && ($vm[1] === '-inf' || (float) $vm[1] <= -60.0)) {
+                        @unlink($oggPath);
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'التسجيل وصل فاضي من غير صوت — اتأكد من الميكروفون وسجّل تاني',
+                        ], 422);
+                    }
                 } catch (\Throwable $e) {
                     Log::warning("CRM voice transcode skipped: " . $e->getMessage());
                     @unlink($oggPath);

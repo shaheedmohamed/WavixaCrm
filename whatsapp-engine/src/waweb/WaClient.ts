@@ -3348,7 +3348,10 @@ export class WaClient extends EventEmitter {
         );
         const data = resp.data as { url?: string; direct_path?: string };
         if (data?.url && data?.direct_path) {
-          return { url: data.url, directPath: data.direct_path };
+          // Official clients put mmg.whatsapp.net + directPath in the url
+          // field — the raw upload response appends '&mms3=true', which some
+          // phone builds choke on when resolving the download URL.
+          return { url: `https://mmg.whatsapp.net${data.direct_path}`, directPath: data.direct_path };
         }
         lastError = new Error(`unexpected upload response from ${host}`);
       } catch (err) {
@@ -3410,16 +3413,44 @@ export class WaClient extends EventEmitter {
           },
         };
         break;
-      default:
+      default: {
+        // Modern WhatsApp clients render a ptt bubble without waveform or
+        // duration as unplayable — derive both from the raw audio bytes.
+        let seconds = opts.seconds;
+        let waveform: Buffer | undefined;
+        try {
+          if (!seconds) {
+            seconds = await MediaManager.probeDurationSeconds(opts.buffer);
+          }
+          waveform = await MediaManager.computeWaveform(opts.buffer);
+        } catch (err) {
+          logger.warn({ err }, 'audio waveform/duration derivation failed; sending without');
+        }
         message = {
           audioMessage: {
             ...base,
             ptt: opts.type === 'voice',
             // WhatsApp refuses/ptt-renders badly without a duration.
-            seconds: opts.seconds || undefined,
+            seconds: seconds || undefined,
+            waveform,
           },
         };
+        logger.info(
+          {
+            destinationJid: jid,
+            mimetype: (message.audioMessage as Record<string, unknown>).mimetype,
+            seconds: (message.audioMessage as Record<string, unknown>).seconds,
+            ptt: (message.audioMessage as Record<string, unknown>).ptt,
+            hasWaveform: !!(message.audioMessage as Record<string, unknown>).waveform,
+            waveformLen: ((message.audioMessage as Record<string, unknown>).waveform as Buffer | undefined)?.length,
+            fileLength: (message.audioMessage as Record<string, unknown>).fileLength,
+            hasUrl: !!(message.audioMessage as Record<string, unknown>).url,
+            hasDirectPath: !!(message.audioMessage as Record<string, unknown>).directPath,
+          },
+          'outgoing audioMessage fields',
+        );
         break;
+      }
     }
 
     return this.sendWAMessage(jid, message, 'text', opts.contextInfo);

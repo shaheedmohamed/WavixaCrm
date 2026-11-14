@@ -714,6 +714,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
     try {
       let result: { id: string };
       let messageLabel: string;
+      let outboundMediaUrl: string | null = null;
 
       if (msgType === 'contact') {
         const displayName =
@@ -745,10 +746,15 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         messageLabel = textContent;
       } else {
         const media = await resolveMediaBuffer(content);
+        const finalMime = mimeType || media.mimetype;
+        // Keep a local copy so the CRM bubble stays playable — the
+        // message-sent webhook is the only row writer for engine-side
+        // sends and it has no other way to reach these bytes.
+        outboundMediaUrl = MediaManager.saveLocalCopy(media.buffer, msgType, finalMime);
         result = await session.sendMediaMessage(to, {
           type: msgType as 'image' | 'video' | 'document' | 'audio' | 'voice',
           buffer: media.buffer,
-          mimetype: mimeType || media.mimetype,
+          mimetype: finalMime,
           caption,
           fileName,
           seconds: typeof seconds === 'number' ? seconds : undefined,
@@ -769,6 +775,7 @@ export function createRoutes(deps: RouteDependencies): express.Router {
         data: {
           message: messageLabel,
           messageType: msgType,
+          ...(outboundMediaUrl ? { mediaUrl: outboundMediaUrl } : {}),
         },
       });
 
