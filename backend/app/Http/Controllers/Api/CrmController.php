@@ -2572,23 +2572,6 @@ class CrmController extends Controller
                     @unlink($srcPath);
                     $mediaUrl = '/storage/crm_media/' . $oggName;
                     $fileName = $oggName;
-
-                    // Reject silent recordings server-side too — the browser
-                    // silence check can be bypassed (stale bundle, decode
-                    // failure), and a voice note of digital zeros reaches
-                    // WhatsApp looking playable but producing no sound.
-                    $vol = \Illuminate\Support\Facades\Process::run([
-                        'ffmpeg', '-i', $oggPath, '-af', 'volumedetect', '-f', 'null', '-',
-                    ]);
-                    $volOut = $vol->output() . $vol->errorOutput();
-                    if (preg_match('/max_volume:\s*(-?inf|-[\d.]+)\s*dB/', $volOut, $vm)
-                        && ($vm[1] === '-inf' || (float) $vm[1] <= -60.0)) {
-                        @unlink($oggPath);
-                        return response()->json([
-                            'success' => false,
-                            'message' => 'التسجيل وصل فاضي من غير صوت — اتأكد من الميكروفون وسجّل تاني',
-                        ], 422);
-                    }
                 } catch (\Throwable $e) {
                     Log::warning("CRM voice transcode skipped: " . $e->getMessage());
                     @unlink($oggPath);

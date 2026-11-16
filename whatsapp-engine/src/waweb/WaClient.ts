@@ -3348,10 +3348,7 @@ export class WaClient extends EventEmitter {
         );
         const data = resp.data as { url?: string; direct_path?: string };
         if (data?.url && data?.direct_path) {
-          // Official clients put mmg.whatsapp.net + directPath in the url
-          // field — the raw upload response appends '&mms3=true', which some
-          // phone builds choke on when resolving the download URL.
-          return { url: `https://mmg.whatsapp.net${data.direct_path}`, directPath: data.direct_path };
+          return { url: data.url, directPath: data.direct_path };
         }
         lastError = new Error(`unexpected upload response from ${host}`);
       } catch (err) {
@@ -3433,6 +3430,10 @@ export class WaClient extends EventEmitter {
             // WhatsApp refuses/ptt-renders badly without a duration.
             seconds: seconds || undefined,
             waveform,
+            // Real clients always emit contextInfo on media messages —
+            // empty when there is no reply/forward context. Its absence
+            // makes phones render the ptt shell but never fetch media.
+            contextInfo: opts.contextInfo ? undefined : {},
           },
         };
         logger.info(

@@ -16,22 +16,50 @@ Notifications.setNotificationHandler({
   }),
 });
 
-let initialized = false;
+let initPromise: Promise<boolean> | null = null;
 
 /** Create the custom-sound Android channel + request permissions. */
-export const initNotifications = async (): Promise<boolean> => {
-  if (initialized) return true;
+export const initNotifications = (): Promise<boolean> => {
+  // Multiple screens call this concurrently — share one in-flight attempt.
+  initPromise ??= initNotificationsInternal().then(
+    (granted) => {
+      if (!granted) initPromise = null;
+      return granted;
+    },
+    () => {
+      initPromise = null;
+      return false;
+    }
+  );
+  return initPromise;
+};
 
+const initNotificationsInternal = async (): Promise<boolean> => {
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
-      name: 'رسائل العملاء',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: SOUND_NAME,
-      vibrationPattern: [0, 250, 250, 250],
-      lightColor: '#00A884',
-      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
-      enableVibrate: true,
-    });
+    try {
+      await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+        name: 'رسائل العملاء',
+        importance: Notifications.AndroidImportance.HIGH,
+        sound: SOUND_NAME,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: '#00A884',
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        enableVibrate: true,
+      });
+    } catch (e) {
+      // Some ROMs NPE inside the native channel builder on the full option
+      // set — a degraded channel still delivers notifications, and a failure
+      // here must never crash app startup.
+      console.warn('[notifications] channel creation with full options failed, retrying minimal:', e);
+      try {
+        await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
+          name: 'رسائل العملاء',
+          importance: Notifications.AndroidImportance.HIGH,
+        });
+      } catch (e2) {
+        console.warn('[notifications] notification channel creation failed:', e2);
+      }
+    }
   }
 
   const { status: existing } = await Notifications.getPermissionsAsync();
@@ -41,8 +69,7 @@ export const initNotifications = async (): Promise<boolean> => {
     status = req.status;
   }
 
-  initialized = status === 'granted';
-  return initialized;
+  return status === 'granted';
 };
 
 /** Immediate local notification on the custom channel (app is open/foreground). */

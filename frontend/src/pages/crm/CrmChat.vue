@@ -1010,15 +1010,6 @@
               <span class="w-3 h-3 rounded-full bg-rose-500 animate-ping"></span>
               <span class="text-rose-400 font-bold text-sm">جاري تسجيل مقطع صوتي...</span>
               <span class="font-mono text-xs text-white">{{ formatRecordingTime(recordingSeconds) }}</span>
-              <span class="flex items-end gap-[2px] h-4" title="مستوى صوت الميكروفون">
-                <span
-                  v-for="i in 5"
-                  :key="i"
-                  class="w-1 rounded-sm transition-all duration-100"
-                  :class="micLevel * 5 >= i ? 'bg-emerald-400' : 'bg-slate-600'"
-                  :style="{ height: (4 + i * 3) + 'px' }"
-                ></span>
-              </span>
             </div>
             <div class="flex items-center gap-2">
               <button
@@ -1313,25 +1304,20 @@
         <h3 class="text-lg font-bold text-white mb-1">بدء محادثة واتساب جديدة</h3>
         <p class="text-xs text-[#96a4ad] mb-4">أدخل رقم هاتف العميل بالصيغة الدولية</p>
 
-        <form @submit.prevent="handleStartChat" novalidate class="space-y-4">
+        <form @submit.prevent="handleStartChat" class="space-y-4">
           <div class="relative">
-            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">رقم هاتف العميل</label>
+            <label class="block text-xs font-semibold text-[#96a4ad] mb-1">رقم الهاتف أو اسم جهة الاتصال</label>
             <input
               v-model="newChatPhone"
               type="text"
-              placeholder="201012345678"
+              required
+              placeholder="مثال: 201012345678 أو ابحث بالاسم"
               dir="ltr"
               autocomplete="off"
               @focus="newChatPickerOpen = true"
               @blur="newChatPickerOpen = false"
-              @input="newChatError = ''"
-              class="w-full bg-[#18242b] border rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
-              :class="newChatError ? 'border-red-500' : 'border-[#30424c]'"
+              class="w-full bg-[#18242b] border border-[#30424c] rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-[#00a884] font-mono"
             />
-            <p class="text-[10px] text-[#96a4ad] mt-1">
-              اكتب الرقم بالصيغة الدولية مباشرة — أو اختر جهة اتصال من القائمة
-            </p>
-            <p v-if="newChatError" class="text-[11px] font-bold text-red-400 mt-1">{{ newChatError }}</p>
             <div
               v-if="newChatPickerOpen"
               class="absolute z-20 top-full left-0 right-0 mt-1.5 max-h-56 overflow-y-auto bg-[#18242b] border border-[#30424c] rounded-xl shadow-2xl custom-scrollbar"
@@ -2557,7 +2543,6 @@ const showNewChatModal = ref(false);
 const creatingChat = ref(false);
 const newChatPhone = ref('');
 const newChatName = ref('');
-const newChatError = ref('');
 const newChatSessionId = ref(null);
 // New-chat contact picker: the phone input doubles as a search box over
 // every known 1:1 contact (existing chats + CRM address book), WhatsApp
@@ -2578,7 +2563,6 @@ const pickNewChatContact = (c) => {
   newChatPhone.value = c.phone || String(c.jid).split('@')[0];
   if (!newChatName.value && c.name && !c.name.startsWith('+')) newChatName.value = c.name;
   newChatPickerOpen.value = false;
-  newChatError.value = '';
 };
 watch(showNewChatModal, (v) => {
   if (v && !groupContactsBook.value.length) loadGroupContactsBook();
@@ -4110,41 +4094,11 @@ const sendPastedFile = async (file) => {
 
 // Audio Voice Recording
 let micStream = null;
-let micAnalyser = null;
-let micLevelCtx = null;
-let micLevelRaf = null;
-const micLevel = ref(0);
-
 const releaseMic = () => {
-  if (micLevelRaf) { cancelAnimationFrame(micLevelRaf); micLevelRaf = null; }
-  micLevel.value = 0;
-  micAnalyser = null;
-  if (micLevelCtx) { try { micLevelCtx.close(); } catch {} micLevelCtx = null; }
   if (micStream) {
     micStream.getTracks().forEach((t) => t.stop());
     micStream = null;
   }
-};
-
-const startMicLevelMeter = (stream) => {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    micLevelCtx = new Ctx();
-    const src = micLevelCtx.createMediaStreamSource(stream);
-    micAnalyser = micLevelCtx.createAnalyser();
-    micAnalyser.fftSize = 512;
-    src.connect(micAnalyser);
-    const data = new Uint8Array(micAnalyser.fftSize);
-    const tick = () => {
-      if (!micAnalyser) return;
-      micAnalyser.getByteTimeDomainData(data);
-      let sum = 0;
-      for (let i = 0; i < data.length; i++) { const v = (data[i] - 128) / 128; sum += v * v; }
-      micLevel.value = Math.min(1, Math.sqrt(sum / data.length) * 6);
-      micLevelRaf = requestAnimationFrame(tick);
-    };
-    tick();
-  } catch {}
 };
 
 // Decode the recorded blob and measure loudness — MediaRecorder happily
@@ -4178,7 +4132,6 @@ const startVoiceRecording = async () => {
       return;
     }
     micStream = stream;
-    startMicLevelMeter(stream);
     audioChunks = [];
     mediaRecorder = new MediaRecorder(stream);
     mediaRecorder.ondataavailable = (e) => {
@@ -4284,25 +4237,13 @@ const removeReaction = async (msg, emoji) => {
   } catch {}
 };
 
-// Start New Chat — the phone field is the only required input. If the number
-// was typed into the customer-name box by mistake, use it anyway (>= 8 digits).
+// Start New Chat
 const handleStartChat = async () => {
-  let phone = newChatPhone.value.trim();
-  let name = newChatName.value.trim();
-  if (!phone.replace(/\D/g, '').length && name.replace(/\D/g, '').length >= 8) {
-    phone = name;
-    name = '';
-  }
-  if (phone.replace(/\D/g, '').length < 8) {
-    newChatError.value = 'اكتب رقم هاتف العميل بالصيغة الدولية';
-    return;
-  }
-  newChatError.value = '';
   creatingChat.value = true;
   try {
     const res = await crm.startConversation({
-      phone,
-      name,
+      phone: newChatPhone.value,
+      name: newChatName.value,
       session_id: newChatSessionId.value,
     });
     if (res.success && res.conversation) {
