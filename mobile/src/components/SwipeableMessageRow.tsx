@@ -56,13 +56,15 @@ const SwipeableMessageRowComponent: React.FC<SwipeableMessageRowProps> = ({
       if (abs >= SWIPE_THRESHOLD && !triggered.value) {
         triggered.value = true;
         runOnJS(vibrateTick)();
+        // Commit the reply the moment the threshold is crossed — the
+        // preview is already up before the finger lifts.
+        runOnJS(onSwipeReply)(message);
       } else if (abs < SWIPE_THRESHOLD * 0.68 && triggered.value) {
         triggered.value = false;
       }
     })
     .onEnd(() => {
       'worklet';
-      const shouldFire = triggered.value;
       triggered.value = false;
       translateX.value = withSpring(0, {
         damping: 20,
@@ -70,9 +72,6 @@ const SwipeableMessageRowComponent: React.FC<SwipeableMessageRowProps> = ({
         mass: 0.7,
         overshootClamping: true,
       });
-      if (shouldFire) {
-        runOnJS(onSwipeReply)(message);
-      }
     })
     .onFinalize(() => {
       'worklet';

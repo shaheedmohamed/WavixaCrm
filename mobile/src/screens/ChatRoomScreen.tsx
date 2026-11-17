@@ -8,6 +8,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -89,6 +90,26 @@ const msgLabel = (m?: PinnedPreview | Message | null): string => {
     call: '📞 مكالمة',
   };
   return labels[m.message_type] || m.message || 'رسالة';
+};
+
+const REPLY_COLORS = [
+  '#00A884',
+  '#1F70C1',
+  '#D63384',
+  '#D97706',
+  '#7C3AED',
+  '#0D9488',
+  '#EA580C',
+];
+
+/** WhatsApp colors the reply strip + sender name per sender. */
+const replySenderColor = (m: Message): string => {
+  if (m.direction === 'outgoing') return '#00A884';
+  const seed = m.sender_name || m.from || '';
+  const hash = Math.abs(
+    seed.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0)
+  );
+  return REPLY_COLORS[hash % REPLY_COLORS.length];
 };
 
 const mergeChronologicalMessages = (
@@ -1263,27 +1284,55 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             </TouchableOpacity>
           )}
 
-          {replyTarget && (
-            <View style={styles.replyPreviewBar}>
-              <View style={styles.replyPreviewContent}>
-                <Text style={styles.replySenderName} numberOfLines={1}>
-                  {replyTarget.direction === 'outgoing'
-                    ? 'أنت'
-                    : replyTarget.sender_name || contactTitle}
-                </Text>
-                <Text style={styles.replyMessageText} numberOfLines={1}>
-                  {msgLabel(replyTarget)}
-                </Text>
-              </View>
-              <TouchableOpacity
-                onPress={() => setReplyTarget(null)}
-                style={styles.closeReplyBtn}
-                hitSlop={8}
-              >
-                <Ionicons name="close-circle" size={20} color="#8696A0" />
-              </TouchableOpacity>
-            </View>
-          )}
+          {replyTarget &&
+            (() => {
+              const rColor = replySenderColor(replyTarget);
+              const thumbUri =
+                replyTarget.message_type === 'image' ||
+                replyTarget.message_type === 'video'
+                  ? mediaSrc(replyTarget, token)
+                  : null;
+              const chipIcon =
+                replyTarget.message_type === 'audio' ||
+                replyTarget.message_type === 'voice' ||
+                replyTarget.message_type === 'ptt'
+                  ? 'mic'
+                  : replyTarget.message_type === 'document'
+                    ? 'document'
+                    : null;
+              return (
+                <View style={styles.replyPreviewBar}>
+                  <View style={[styles.replyStrip, { backgroundColor: rColor }]} />
+                  {thumbUri ? (
+                    <Image source={{ uri: thumbUri }} style={styles.replyThumb} />
+                  ) : chipIcon ? (
+                    <View style={styles.replyIconChip}>
+                      <Ionicons name={`${chipIcon}-outline` as never} size={18} color="#54656F" />
+                    </View>
+                  ) : null}
+                  <View style={styles.replyPreviewContent}>
+                    <Text
+                      style={[styles.replySenderName, { color: rColor }]}
+                      numberOfLines={1}
+                    >
+                      {replyTarget.direction === 'outgoing'
+                        ? 'أنت'
+                        : replyTarget.sender_name || contactTitle}
+                    </Text>
+                    <Text style={styles.replyMessageText} numberOfLines={1}>
+                      {msgLabel(replyTarget)}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => setReplyTarget(null)}
+                    style={styles.closeReplyBtn}
+                    hitSlop={8}
+                  >
+                    <Ionicons name="close" size={20} color="#54656F" />
+                  </TouchableOpacity>
+                </View>
+              );
+            })()}
 
           <ChatInputBar
             ref={composerRef}
@@ -1622,30 +1671,48 @@ const styles = StyleSheet.create({
   replyPreviewBar: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: '#FFFFFF',
-    borderRightWidth: 4,
-    borderRightColor: '#00A884',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
     marginHorizontal: 10,
-    marginBottom: 2,
+    marginBottom: 4,
     borderRadius: 12,
+    overflow: 'hidden',
     elevation: 2,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 2,
   },
+  replyStrip: {
+    width: 4,
+    alignSelf: 'stretch',
+  },
+  replyThumb: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    marginVertical: 6,
+    marginHorizontal: 6,
+    backgroundColor: '#E9EDEF',
+  },
+  replyIconChip: {
+    width: 42,
+    height: 42,
+    borderRadius: 8,
+    marginVertical: 6,
+    marginHorizontal: 6,
+    backgroundColor: '#F0F2F5',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   replyPreviewContent: {
     flex: 1,
     alignItems: 'flex-end',
-    marginLeft: 8,
+    paddingVertical: 8,
+    marginHorizontal: 8,
   },
   replySenderName: {
     fontSize: 11.5,
     fontWeight: '800',
-    color: '#00A884',
     textAlign: 'right',
   },
   replyMessageText: {
@@ -1655,6 +1722,7 @@ const styles = StyleSheet.create({
     marginTop: 1,
   },
   closeReplyBtn: {
-    padding: 2,
+    padding: 6,
+    marginHorizontal: 4,
   },
 });
