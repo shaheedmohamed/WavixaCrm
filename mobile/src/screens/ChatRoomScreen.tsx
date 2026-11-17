@@ -44,6 +44,7 @@ import { Colors } from '../constants/theme';
 interface ChatRoomScreenProps {
   conversation: Conversation;
   onBack: () => void;
+  focusMessageId?: number | string | null;
 }
 
 const dayKey = (t?: string | null) => {
@@ -142,6 +143,7 @@ const mergeChronologicalMessages = (
 export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   conversation: initialConv,
   onBack,
+  focusMessageId = null,
 }) => {
   const { user, token, isAgent } = useAuth();
   const insets = useSafeAreaInsets();
@@ -163,6 +165,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [highlightedMsgKey, setHighlightedMsgKey] = useState<string | number | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [newBelowCount, setNewBelowCount] = useState(0);
+  const [hasNewerTail, setHasNewerTail] = useState(false);
   const [customWallpaperUri, setCustomWallpaperUri] = useState<string | null>(null);
   const [contactInfoVisible, setContactInfoVisible] = useState(false);
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
@@ -237,7 +240,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       const seq = ++msgLoadSeq.current;
 
       try {
-        const res = await chatService.getMessages(initialConv.id, { limit: 60 });
+        const res = await chatService.getMessages(
+          initialConv.id,
+          focusMessageId && !initialLoadDone.current
+            ? { around_id: focusMessageId, limit: 80 }
+            : { limit: 60 }
+        );
         if (seq !== msgLoadSeq.current || !res?.success || !Array.isArray(res.messages)) {
           return;
         }
@@ -278,6 +286,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
         if (mode === 'initial') {
           setHasMoreOlder(Boolean(res.has_more));
+          setHasNewerTail(Boolean(focusMessageId && res.has_newer));
         }
 
         setMessages((prev) => {
@@ -336,7 +345,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         }
       }
     },
-    [initialConv.id, isDeadConversation, syncToCache]
+    [initialConv.id, isDeadConversation, syncToCache, focusMessageId]
   );
 
   useEffect(() => {
@@ -380,8 +389,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const scrollToLatest = useCallback((animated = true) => {
     setNewBelowCount(0);
+    if (hasNewerTail) {
+      setHasNewerTail(false);
+      fetchLatestWindow('poll').finally(() => {
+        flatListRef.current?.scrollToOffset({ offset: 0, animated });
+      });
+      return;
+    }
     flatListRef.current?.scrollToOffset({ offset: 0, animated });
-  }, []);
+  }, [hasNewerTail, fetchLatestWindow]);
 
   const executeTextSend = useCallback(
     async (tempId: string, text: string, replyId: string | null) => {
@@ -891,6 +907,25 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     if (!pinnedMsg) return;
     jumpToMessageKey(pinnedMsg.message_id || pinnedMsg.id);
   };
+
+  const focusJumpDone = useRef(false);
+  useEffect(() => {
+    if (initialLoading || !focusMessageId || focusJumpDone.current) return;
+    const target = invertedMessages.find(
+      (m) =>
+        m.id === focusMessageId ||
+        String(m.message_id) === String(focusMessageId) ||
+        String(m.id) === String(focusMessageId)
+    );
+    if (!target) return;
+    focusJumpDone.current = true;
+    scrolledUpRef.current = true;
+    const t = setTimeout(() => {
+      if (hasNewerTail) setShowScrollBottom(true);
+      jumpToMessageKey(focusMessageId);
+    }, 250);
+    return () => clearTimeout(t);
+  }, [initialLoading, focusMessageId, invertedMessages, hasNewerTail, jumpToMessageKey]);
 
   const contactTitle =
     conversation.contact_name ||

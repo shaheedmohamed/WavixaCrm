@@ -22,7 +22,7 @@ interface KeyboardSafeViewProps {
 export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   children,
   style,
-  extraOffset = 0,
+  extraOffset = 8,
   onKeyboardVisibleChange,
 }) => {
   const [shiftAnim] = useState(() => new Animated.Value(0));
@@ -41,7 +41,9 @@ export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
     const baseline = baselineWinHRef.current;
     const resizedByOs = Math.max(0, baseline - winH);
     const lift = Math.max(0, kb.height - resizedByOs);
-    return lift > 0 ? lift + extraOffset : 0;
+    // extraOffset always applies — keeps the input visibly above the
+    // keyboard even when the OS already resized the window for us.
+    return lift + extraOffset;
   }, [extraOffset]);
 
   const animateLift = useCallback(

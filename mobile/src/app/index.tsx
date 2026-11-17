@@ -13,6 +13,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatRoomScreen } from '../screens/ChatRoomScreen';
+import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { WavixaLogo } from '../components/WavixaLogo';
@@ -20,13 +21,14 @@ import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
-type OverlayView = 'none' | 'welcome' | 'chat-room' | 'profile' | 'stats';
+type OverlayView = 'none' | 'welcome' | 'chat-room' | 'profile' | 'stats' | 'starred';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
   const [overlayView, setOverlayView] = useState<OverlayView>('none');
   const [overlayMounted, setOverlayMounted] = useState(false);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
+  const [focusMessageId, setFocusMessageId] = useState<number | string | null>(null);
 
   const [slideAnim] = useState(() => new Animated.Value(0));
   const screenWidth = Dimensions.get('window').width;
@@ -63,6 +65,7 @@ export default function IndexPage() {
         setOverlayView('none');
         setOverlayMounted(false);
         setSelectedConversation(null);
+        setFocusMessageId(null);
       }
     });
   }, [slideAnim]);
@@ -85,11 +88,16 @@ export default function IndexPage() {
   }, [token, user]);
 
   const handleOpenConversation = useCallback(
-    (conv: Conversation) => {
+    (conv: Conversation, focusId: number | string | null = null) => {
+      setFocusMessageId(focusId);
       openOverlay('chat-room', conv);
     },
     [openOverlay]
   );
+
+  const handleOpenStarred = useCallback(() => {
+    openOverlay('starred');
+  }, [openOverlay]);
 
   const handleOpenProfile = useCallback(() => {
     openOverlay('profile');
@@ -150,6 +158,7 @@ export default function IndexPage() {
           onOpenConversation={handleOpenConversation}
           onOpenProfile={handleOpenProfile}
           onOpenStats={handleOpenStats}
+          onOpenStarred={handleOpenStarred}
         />
       </View>
 
@@ -166,6 +175,14 @@ export default function IndexPage() {
                 key={`room-${selectedConversation.id}`}
                 conversation={selectedConversation}
                 onBack={closeOverlay}
+                focusMessageId={focusMessageId}
+              />
+            ) : overlayView === 'starred' ? (
+              <StarredMessagesScreen
+                onBack={closeOverlay}
+                onOpenMessage={(conv, messageId) =>
+                  handleOpenConversation(conv, messageId)
+                }
               />
             ) : overlayView === 'profile' ? (
               <ProfileScreen onBack={closeOverlay} />

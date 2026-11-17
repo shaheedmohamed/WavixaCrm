@@ -4013,8 +4013,73 @@ class CrmController extends Controller
         $conv = WhatsAppConversation::where('id', $message->conversation_id)
             ->whereIn('session_id', $allowed)->firstOrFail();
         $message->starred_at = $message->starred_at ? null : now();
+        $message->starred_by_user_id = $message->starred_at ? $request->user()->id : null;
         $message->save();
-        return response()->json(['success' => true, 'starred' => (bool) $message->starred_at]);
+        return response()->json([
+            'success' => true,
+            'starred' => (bool) $message->starred_at,
+            'starred_by' => $message->starred_by_user_id ? [
+                'id' => $request->user()->id,
+                'name' => $request->user()->name,
+            ] : null,
+        ]);
+    }
+
+    /** Every starred message across all sessions this user can see. */
+    public function getGlobalStarredMessages(Request $request)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+
+        $messages = WhatsAppMessage::query()
+            ->whereNotNull('starred_at')
+            ->whereHas('conversation', function ($q) use ($allowed) {
+                $q->whereIn('session_id', $allowed);
+            })
+            ->with([
+                'conversation:id,session_id,user_id,contact_jid,contact_name,contact_username,contact_phone,contact_avatar,assigned_agent_id,last_message_at,unread_count,archived_at,is_pinned',
+                'starredBy:id,name',
+            ])
+            ->orderBy('starred_at', 'desc')
+            ->orderBy('id', 'desc')
+            ->limit(300)
+            ->get();
+
+        $items = $messages->map(function ($m) {
+            $conv = $m->conversation;
+            return [
+                'id' => $m->id,
+                'message_id' => $m->message_id,
+                'conversation_id' => $m->conversation_id,
+                'message' => $m->message,
+                'message_type' => $m->message_type,
+                'media_caption' => $m->media_caption,
+                'direction' => $m->direction,
+                'sender_name' => $m->sender_name,
+                'timestamp' => $m->timestamp,
+                'starred_at' => $m->starred_at,
+                'starred_by' => $m->starredBy ? [
+                    'id' => $m->starredBy->id,
+                    'name' => $m->starredBy->name,
+                ] : null,
+                'conversation' => $conv ? [
+                    'id' => $conv->id,
+                    'contact_jid' => $conv->contact_jid,
+                    'contact_name' => $conv->contact_name,
+                    'contact_username' => $conv->contact_username,
+                    'contact_phone' => $conv->contact_phone,
+                    'contact_avatar' => $conv->contact_avatar,
+                    'is_group' => $this->isGroupConv($conv),
+                    'assigned_agent_id' => $conv->assigned_agent_id,
+                    'session_id' => $conv->session_id,
+                    'last_message_at' => $conv->last_message_at,
+                    'unread_count' => $conv->unread_count,
+                    'archived_at' => $conv->archived_at,
+                    'is_pinned' => $conv->is_pinned,
+                ] : null,
+            ];
+        })->values();
+
+        return response()->json(['success' => true, 'messages' => $items]);
     }
 
     /** Every starred message in a conversation, oldest-first. */

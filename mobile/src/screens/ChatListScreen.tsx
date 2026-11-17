@@ -38,6 +38,7 @@ interface ChatListScreenProps {
   onOpenConversation: (conversation: Conversation) => void;
   onOpenProfile: () => void;
   onOpenStats: () => void;
+  onOpenStarred?: () => void;
 }
 
 const sortConversations = (list: Conversation[]): Conversation[] =>
@@ -54,6 +55,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenConversation,
   onOpenProfile,
   onOpenStats,
+  onOpenStarred,
 }) => {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
@@ -731,6 +733,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onClose={() => setMenuVisible(false)}
         onOpenNewChat={() => setNewChatVisible(true)}
         onOpenQuickReplies={() => setQuickRepliesVisible(true)}
+        onOpenStarred={onOpenStarred}
         onOpenArchived={!isAgent ? () => setSelectedScope('archived') : undefined}
         onOpenProfile={onOpenProfile}
       />

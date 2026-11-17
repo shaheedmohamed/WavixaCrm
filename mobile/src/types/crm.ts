@@ -29,6 +29,7 @@ export interface Conversation {
   contact_name?: string | null;
   contact_username?: string | null;
   contact_avatar?: string | null;
+  is_group?: boolean;
   is_pinned?: boolean;
   pinned_message_id?: number | null;
   pin_expires_at?: string | null;
@@ -99,6 +100,8 @@ export interface Message {
   status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | null;
   reply_to_id?: string | null;
   starred_at?: string | null;
+  starred_by_user_id?: number | null;
+  starred_by?: { id: number; name: string } | null;
   revoked_at?: string | null;
   local_uri?: string | null;
   upload_progress?: number | null;
@@ -153,6 +156,21 @@ export interface ChatList {
   id: number;
   name: string;
   conversation_ids: number[];
+}
+
+export interface StarredMessageItem {
+  id: number;
+  message_id?: string | null;
+  conversation_id: number;
+  message?: string | null;
+  message_type: string;
+  media_caption?: string | null;
+  direction: 'incoming' | 'outgoing';
+  sender_name?: string | null;
+  timestamp?: string | null;
+  starred_at?: string | null;
+  starred_by?: { id: number; name: string } | null;
+  conversation?: Conversation | null;
 }
 
 export interface QuickReply {

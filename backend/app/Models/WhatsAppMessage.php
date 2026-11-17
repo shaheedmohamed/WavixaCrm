@@ -28,6 +28,7 @@ class WhatsAppMessage extends Model
         'reactions',
         'mentioned_jids',
         'starred_at',
+        'starred_by_user_id',
         'reply_to_id',
         'is_forwarded',
         'message_id',
@@ -90,5 +91,15 @@ class WhatsAppMessage extends Model
     public function session(): BelongsTo
     {
         return $this->belongsTo(WhatsAppSession::class, 'session_id');
+    }
+
+    public function conversation(): BelongsTo
+    {
+        return $this->belongsTo(WhatsAppConversation::class, 'conversation_id');
+    }
+
+    public function starredBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'starred_by_user_id');
     }
 }

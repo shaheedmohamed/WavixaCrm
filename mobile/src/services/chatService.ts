@@ -267,6 +267,11 @@ export const chatService = {
     return response.data;
   },
 
+  async getStarredMessages() {
+    const response = await apiClient.get('/crm/starred-messages');
+    return response.data;
+  },
+
   async deleteMessage(messageId: string | number, conversationId: number, forEveryone: boolean = false) {
     const response = await apiClient.post('/crm/messages/delete', {
       message_id: messageId,

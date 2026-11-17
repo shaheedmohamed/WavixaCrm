@@ -159,6 +159,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::delete('/chat-lists/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteChatList']);
         Route::post('/chat-lists/{id}/remove-members', [\App\Http\Controllers\Api\CrmController::class, 'removeChatListMembers']);
         Route::post('/messages/{id}/star', [\App\Http\Controllers\Api\CrmController::class, 'toggleMessageStar']);
+        Route::get('/starred-messages', [\App\Http\Controllers\Api\CrmController::class, 'getGlobalStarredMessages']);
         Route::get('/conversations/{id}/starred', [\App\Http\Controllers\Api\CrmController::class, 'getStarredMessages']);
         Route::get('/quick-replies', [\App\Http\Controllers\Api\CrmController::class, 'getQuickReplies']);
         Route::post('/quick-replies', [\App\Http\Controllers\Api\CrmController::class, 'saveQuickReply']);
