@@ -11,15 +11,21 @@ import {
   Alert,
   ActivityIndicator,
   Dimensions,
+  Linking,
+  Share,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import { Conversation, Message } from '../types/crm';
 import { ChatAvatar } from './ChatAvatar';
+import { ZoomableImage } from './ZoomableImage';
+import { KeyboardSafeView } from './KeyboardSafeView';
 import { chatService } from '../services/chatService';
 import { useAuth } from '../context/AuthContext';
-import { mediaSrc } from '../services/media';
+import { avatarSrc, mediaSrc } from '../services/media';
+import { Colors } from '../constants/theme';
 
 interface ContactInfoModalProps {
   visible: boolean;
@@ -39,6 +45,7 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
   onContactRenamed,
 }) => {
   const { token } = useAuth();
+  const insets = useSafeAreaInsets();
   const [mediaItems, setMediaItems] = useState<Message[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);
   const [isEditingName, setIsEditingName] = useState(false);
@@ -46,16 +53,12 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
     conversation.contact_name || conversation.contact_phone || ''
   );
   const [savingName, setSavingName] = useState(false);
+  const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
 
-  useEffect(() => {
-    if (visible) {
-      loadMedia();
-      setEditNameText(conversation.contact_name || conversation.contact_phone || '');
-      setIsEditingName(false);
-    }
-  }, [visible, conversation.id]);
+  const fullAvatarUri = avatarSrc(conversation, token, false);
+  const downloadAvatarUri = avatarSrc(conversation, token, true);
 
-  const loadMedia = async () => {
+  const loadMedia = React.useCallback(async () => {
     setLoadingMedia(true);
     try {
       const res = await chatService.getConversationMedia(conversation.id, 60);
@@ -63,11 +66,20 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
         setMediaItems(res.media);
       }
     } catch {
-      // silently handle
     } finally {
       setLoadingMedia(false);
     }
-  };
+  }, [conversation.id]);
+
+  useEffect(() => {
+    if (!visible) return;
+    Promise.resolve().then(() => {
+      setEditNameText(conversation.contact_name || conversation.contact_phone || '');
+      setIsEditingName(false);
+      setAvatarViewerOpen(false);
+      loadMedia();
+    });
+  }, [visible, conversation.id, conversation.contact_name, conversation.contact_phone, loadMedia]);
 
   const handleSaveName = async () => {
     const trimmed = editNameText.trim();
@@ -77,7 +89,7 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
       const res = await chatService.renameConversation(conversation.id, trimmed);
       if (res && res.success) {
         setIsEditingName(false);
-        if (onContactRenamed) onContactRenamed(trimmed);
+        onContactRenamed?.(trimmed);
       } else {
         Alert.alert('خطأ', res?.message || 'تعذر تعديل الاسم');
       }
@@ -102,19 +114,43 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
         await AsyncStorage.setItem(`chat_wallpaper_${conversation.id}`, uri);
         Alert.alert('تم التغيير', 'تم تعيين خلفية جديدة لهذه المحادثة بنجاح');
       }
-      if (onWallpaperChanged) onWallpaperChanged();
+      onWallpaperChanged?.();
     }
   };
 
-  const handleResetWallpaper = async (forAllChats: boolean) => {
-    if (forAllChats) {
-      await AsyncStorage.removeItem('default_chat_wallpaper');
-      Alert.alert('تم الحذف', 'تمت استعادة الخلفية الافتراضية لجميع المحادثات');
-    } else {
-      await AsyncStorage.removeItem(`chat_wallpaper_${conversation.id}`);
-      Alert.alert('تم الحذف', 'تمت استعادة الخلفية الافتراضية لهذه المحادثة');
+  const handleResetWallpaper = async () => {
+    await AsyncStorage.removeItem(`chat_wallpaper_${conversation.id}`);
+    await AsyncStorage.removeItem('default_chat_wallpaper');
+    Alert.alert('تمت الاستعادة', 'تمت استعادة الخلفية الافتراضية المزخرفة بنجاح');
+    onWallpaperChanged?.();
+  };
+
+  const handleOpenAvatar = () => {
+    if (!fullAvatarUri) {
+      Alert.alert('الصورة الشخصية', 'لا توجد صورة شخصية متاحة لجهة الاتصال هذه حالياً');
+      return;
     }
-    if (onWallpaperChanged) onWallpaperChanged();
+    setAvatarViewerOpen(true);
+  };
+
+  const handleDownloadAvatar = async () => {
+    const target = downloadAvatarUri || fullAvatarUri;
+    if (!target) return;
+    try {
+      await Linking.openURL(target);
+    } catch {
+      Alert.alert('تنبيه', 'تعذر بدء تحميل الصورة');
+    }
+  };
+
+  const handleShareAvatar = async () => {
+    if (!fullAvatarUri) return;
+    try {
+      await Share.share({
+        message: displayName,
+        url: fullAvatarUri,
+      });
+    } catch {}
   };
 
   const displayName = conversation.contact_name || conversation.contact_phone || 'جهة الاتصال';
@@ -128,28 +164,44 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
       presentationStyle="pageSheet"
       onRequestClose={onClose}
     >
-      <View style={styles.container}>
-        {/* Header */}
-        <View style={styles.header}>
+      <KeyboardSafeView style={styles.container}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top + 6, 14) }]}>
           <TouchableOpacity onPress={onClose} style={styles.closeBtn} hitSlop={10}>
-            <Ionicons name="close" size={24} color="#E9EDEF" />
+            <Ionicons name="arrow-forward" size={24} color="#E9EDEF" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>معلومات جهة الاتصال</Text>
           <View style={{ width: 32 }} />
         </View>
 
-        <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-          {/* Avatar Section */}
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
           <View style={styles.avatarSection}>
-            <View style={styles.avatarWrap}>
-              <ChatAvatar
-                conversation={conversation}
-                title={displayName}
-                size={110}
-              />
-            </View>
+            <TouchableOpacity
+              style={styles.avatarTouchWrap}
+              onPress={handleOpenAvatar}
+              activeOpacity={0.85}
+            >
+              <View style={styles.avatarWrap}>
+                <ChatAvatar
+                  conversation={conversation}
+                  title={displayName}
+                  size={116}
+                />
+              </View>
+              {fullAvatarUri ? (
+                <View style={styles.zoomHintBadge}>
+                  <Ionicons name="expand-outline" size={14} color="#FFFFFF" />
+                </View>
+              ) : null}
+            </TouchableOpacity>
 
-            {/* Name & Edit */}
+            {fullAvatarUri ? (
+              <Text style={styles.tapToZoomHint}>اضغط على الصورة لتكبيرها أو حفظها</Text>
+            ) : null}
+
             {isEditingName ? (
               <View style={styles.nameEditRow}>
                 <TextInput
@@ -189,20 +241,17 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
               </TouchableOpacity>
             )}
 
-            {/* Phone */}
             {displayPhone ? (
               <Text style={styles.contactPhone}>{displayPhone}</Text>
             ) : null}
 
-            {/* Via Session Badge */}
             <View style={styles.sessionBadge}>
               <Text style={styles.sessionText}>عبر: {sessionLabel}</Text>
             </View>
           </View>
 
-          {/* Wallpaper Options Section */}
           <View style={styles.sectionCard}>
-            <Text style={styles.sectionTitle}>خلفية الشات</Text>
+            <Text style={styles.sectionTitle}>خلفية المحادثة</Text>
             <View style={styles.wallpaperActionsRow}>
               <TouchableOpacity
                 style={styles.actionBtn}
@@ -210,7 +259,7 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
                 activeOpacity={0.7}
               >
                 <MaterialCommunityIcons name="image-plus" size={18} color="#00A884" />
-                <Text style={styles.actionBtnText}>خلفية هذا الشات</Text>
+                <Text style={styles.actionBtnText}>لهذا الشات</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
@@ -224,7 +273,7 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
 
               <TouchableOpacity
                 style={[styles.actionBtn, styles.actionBtnDanger]}
-                onPress={() => handleResetWallpaper(false)}
+                onPress={handleResetWallpaper}
                 activeOpacity={0.7}
               >
                 <MaterialCommunityIcons name="restore" size={18} color="#EF4444" />
@@ -233,10 +282,9 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
             </View>
           </View>
 
-          {/* Media & Documents Grid Section */}
           <View style={styles.sectionCard}>
             <View style={styles.mediaHeaderRow}>
-              <Text style={styles.sectionTitle}>الوسائط والمستندات</Text>
+              <Text style={styles.sectionTitle}>الوسائط والمستندات المشتركة</Text>
               <Text style={styles.mediaCountBadge}>{mediaItems.length}</Text>
             </View>
 
@@ -264,12 +312,10 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
                     >
                       {isImg && mUri ? (
                         <Image source={{ uri: mUri }} style={styles.cellImage} resizeMode="cover" />
-                      ) : isVid && mUri ? (
-                        <View style={styles.cellPlaceholder}>
-                          <Image source={{ uri: mUri }} style={styles.cellImage} resizeMode="cover" />
-                          <View style={styles.playIconOverlay}>
-                            <Ionicons name="play" size={16} color="#FFFFFF" />
-                          </View>
+                      ) : isVid ? (
+                        <View style={[styles.cellPlaceholder, { backgroundColor: '#202C33' }]}>
+                          <Ionicons name="videocam" size={24} color="#00A884" />
+                          <Text style={styles.cellDocLabel}>فيديو</Text>
                         </View>
                       ) : isAud ? (
                         <View style={[styles.cellPlaceholder, { backgroundColor: '#202C33' }]}>
@@ -291,13 +337,65 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
             )}
           </View>
         </ScrollView>
-      </View>
+
+        <Modal
+          visible={avatarViewerOpen}
+          animationType="fade"
+          statusBarTranslucent
+          onRequestClose={() => setAvatarViewerOpen(false)}
+        >
+          <View style={styles.viewerRoot}>
+            <View style={[styles.viewerHeader, { paddingTop: Math.max(insets.top + 8, 20) }]}>
+              <View style={styles.viewerRightGroup}>
+                <TouchableOpacity
+                  onPress={() => setAvatarViewerOpen(false)}
+                  style={styles.viewerIconBtn}
+                  hitSlop={10}
+                >
+                  <Ionicons name="arrow-forward" size={23} color="#FFFFFF" />
+                </TouchableOpacity>
+                <View style={styles.viewerTitleWrap}>
+                  <Text style={styles.viewerTitle} numberOfLines={1}>
+                    {displayName}
+                  </Text>
+                  {displayPhone ? (
+                    <Text style={styles.viewerSub}>{displayPhone}</Text>
+                  ) : null}
+                </View>
+              </View>
+
+              <View style={styles.viewerLeftActions}>
+                <TouchableOpacity
+                  onPress={handleDownloadAvatar}
+                  style={styles.downloadPillBtn}
+                  activeOpacity={0.8}
+                >
+                  <Ionicons name="download-outline" size={18} color="#FFFFFF" />
+                  <Text style={styles.downloadPillText}>حفظ</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  onPress={handleShareAvatar}
+                  style={styles.viewerIconBtn}
+                  hitSlop={8}
+                >
+                  <Ionicons name="share-social-outline" size={20} color="#FFFFFF" />
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <View style={styles.viewerStage}>
+              {fullAvatarUri ? <ZoomableImage uri={fullAvatarUri} showControls /> : null}
+            </View>
+          </View>
+        </Modal>
+      </KeyboardSafeView>
     </Modal>
   );
 };
 
 const { width } = Dimensions.get('window');
-const cellWidth = (width - 48 - 16) / 3;
+const cellWidth = (width - 32 - 16) / 3;
 
 const styles = StyleSheet.create({
   container: {
@@ -305,11 +403,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#111B21',
   },
   header: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,
-    paddingVertical: 14,
+    paddingBottom: 14,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#202C33',
   },
@@ -326,16 +424,37 @@ const styles = StyleSheet.create({
   },
   avatarSection: {
     alignItems: 'center',
-    paddingVertical: 24,
+    paddingVertical: 22,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#202C33',
   },
+  avatarTouchWrap: {
+    position: 'relative',
+    marginBottom: 8,
+  },
   avatarWrap: {
-    marginBottom: 16,
-    borderRadius: 58,
+    borderRadius: 62,
     borderWidth: 3,
     borderColor: '#00A884',
     overflow: 'hidden',
+  },
+  zoomHintBadge: {
+    position: 'absolute',
+    bottom: 2,
+    left: 2,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: Colors.primary,
+    borderWidth: 2,
+    borderColor: '#111B21',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tapToZoomHint: {
+    color: '#8696A0',
+    fontSize: 11,
+    marginBottom: 10,
   },
   nameRow: {
     flexDirection: 'row-reverse',
@@ -361,8 +480,8 @@ const styles = StyleSheet.create({
     color: '#E9EDEF',
     borderRadius: 8,
     paddingHorizontal: 12,
-    paddingVertical: 6,
-    fontSize: 16,
+    paddingVertical: 7,
+    fontSize: 15.5,
     textAlign: 'right',
   },
   saveNameBtn: {
@@ -459,7 +578,7 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
   },
   mediaGrid: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     flexWrap: 'wrap',
     gap: 8,
   },
@@ -479,16 +598,6 @@ const styles = StyleSheet.create({
     height: '100%',
     alignItems: 'center',
     justifyContent: 'center',
-    position: 'relative',
-  },
-  playIconOverlay: {
-    position: 'absolute',
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.6)',
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   cellAudioLabel: {
     color: '#8696A0',
@@ -500,5 +609,69 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '700',
     marginTop: 4,
+  },
+  viewerRoot: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  viewerHeader: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    backgroundColor: 'rgba(11, 20, 26, 0.85)',
+    zIndex: 20,
+  },
+  viewerRightGroup: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    flex: 1,
+    gap: 10,
+  },
+  viewerTitleWrap: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  viewerTitle: {
+    color: '#FFFFFF',
+    fontSize: 15.5,
+    fontWeight: '700',
+    textAlign: 'right',
+  },
+  viewerSub: {
+    color: '#94A3B8',
+    fontSize: 11.5,
+    marginTop: 1,
+  },
+  viewerLeftActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  viewerIconBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  downloadPillBtn: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: Colors.primary,
+    paddingHorizontal: 13,
+    height: 36,
+    borderRadius: 18,
+  },
+  downloadPillText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '800',
+  },
+  viewerStage: {
+    flex: 1,
   },
 });

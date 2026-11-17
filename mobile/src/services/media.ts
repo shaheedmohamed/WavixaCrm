@@ -13,6 +13,7 @@ export const resolveUrl = (url?: string | null): string | null => {
 // lazily through the token-authed /crm/media/{id} resolver.
 export const mediaSrc = (m: Message | null | undefined, token?: string | null): string | null => {
   if (!m) return null;
+  if (m.local_uri) return m.local_uri;
   if (m.media_url) return resolveUrl(m.media_url);
   if (m.media_meta?.mediaKey) {
     return Config.getMediaUrl(m.id, token || '');
@@ -25,10 +26,11 @@ export const mediaSrc = (m: Message | null | undefined, token?: string | null): 
 // only redirects to the remote URL when nothing is cached.
 export const avatarSrc = (
   conv: Pick<Conversation, 'id' | 'contact_avatar'> | null | undefined,
-  token?: string | null
+  token?: string | null,
+  download = false
 ): string | null => {
   if (!conv?.id || !token || !conv.contact_avatar) return null;
-  return Config.getAvatarUrl(conv.id, token);
+  return Config.getAvatarUrl(conv.id, token, download);
 };
 
 // Documents picked under a loose button used to be stored as 'audio' with a

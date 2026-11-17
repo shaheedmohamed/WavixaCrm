@@ -2,37 +2,64 @@ import React from 'react';
 import { ScrollView, TouchableOpacity, Text, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/theme';
-import { FilterScope } from '../types/crm';
+import { ChatList, FilterScope } from '../types/crm';
+import { FAVORITES_LIST_NAME } from '../services/chatPrefs';
 
 interface FilterBarProps {
   selectedScope: FilterScope;
   onSelectScope: (scope: FilterScope) => void;
   unreadCount?: number;
+  favoritesCount?: number;
+  chatLists?: ChatList[];
   isAgent?: boolean;
-  onOpenAdvancedFilter?: () => void;
-  hasActiveAdvancedFilter?: boolean;
+  onPressCreateList?: () => void;
+  onLongPressCustomList?: (list: ChatList) => void;
 }
 
-export const FilterBar: React.FC<FilterBarProps> = ({
+export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar({
   selectedScope,
   onSelectScope,
   unreadCount = 0,
+  favoritesCount = 0,
+  chatLists = [],
   isAgent = false,
-  onOpenAdvancedFilter,
-  hasActiveAdvancedFilter = false,
-}) => {
-  const allFilters: { id: FilterScope; label: string; icon?: string; badge?: number }[] = [
+  onPressCreateList,
+  onLongPressCustomList,
+}) {
+  const customLists = chatLists.filter((l) => l.name !== FAVORITES_LIST_NAME);
+
+  const baseFilters: {
+    id: FilterScope;
+    label: string;
+    icon?: string;
+    badge?: number;
+    customList?: ChatList;
+  }[] = [
     { id: 'chats', label: 'الشاتات', icon: 'chat-outline' },
+    { id: 'unread', label: 'غير مقروءة', badge: unreadCount > 0 ? unreadCount : undefined },
+    {
+      id: 'favorites',
+      label: 'المفضلة',
+      icon: 'heart-outline',
+      badge: favoritesCount > 0 ? favoritesCount : undefined,
+    },
     { id: 'groups', label: 'المجموعات', icon: 'account-group-outline' },
     { id: 'mine', label: 'محادثاتي', icon: 'account-outline' },
     { id: 'unassigned', label: 'جديد / متاح', icon: 'account-plus-outline' },
-    { id: 'unread', label: 'غير مقروءة', badge: unreadCount > 0 ? unreadCount : undefined },
-    { id: 'resolved', label: 'المكتملة', icon: 'check-circle-outline' },
-    { id: 'archived', label: 'المؤرشفة', icon: 'archive-outline' },
+    ...customLists.map((l) => ({
+      id: `list:${l.id}` as FilterScope,
+      label: l.name,
+      icon: 'format-list-bulleted',
+      badge: l.conversation_ids?.length ? l.conversation_ids.length : undefined,
+      customList: l,
+    })),
+    ...(isAgent
+      ? []
+      : [
+          { id: 'resolved' as FilterScope, label: 'المكتملة', icon: 'check-circle-outline' },
+          { id: 'archived' as FilterScope, label: 'المؤرشفة', icon: 'archive-outline' },
+        ]),
   ];
-  const filters = isAgent
-    ? allFilters.filter((f) => f.id !== 'resolved' && f.id !== 'archived')
-    : allFilters;
 
   return (
     <View style={styles.wrapper}>
@@ -41,34 +68,33 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Advanced Filter Button */}
-        {onOpenAdvancedFilter && (
-          <TouchableOpacity
-            style={[
-              styles.filterIconButton,
-              hasActiveAdvancedFilter && styles.filterIconButtonActive,
-            ]}
-            onPress={onOpenAdvancedFilter}
-            activeOpacity={0.7}
-          >
-            <MaterialCommunityIcons
-              name="tune-variant"
-              size={17}
-              color={hasActiveAdvancedFilter ? '#FFFFFF' : '#54656F'}
-            />
-          </TouchableOpacity>
-        )}
-
-        {/* Chips */}
-        {filters.map((item) => {
+        {baseFilters.map((item) => {
           const isActive = selectedScope === item.id;
           return (
             <TouchableOpacity
               key={item.id}
               style={[styles.chip, isActive && styles.chipActive]}
               onPress={() => onSelectScope(item.id)}
-              activeOpacity={0.7}
+              onLongPress={
+                item.customList && onLongPressCustomList
+                  ? () => onLongPressCustomList(item.customList!)
+                  : undefined
+              }
+              delayLongPress={300}
+              activeOpacity={0.75}
             >
+              {item.icon && (
+                <MaterialCommunityIcons
+                  name={item.icon as any}
+                  size={14}
+                  color={isActive ? '#FFFFFF' : '#667781'}
+                />
+              )}
+
+              <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
+                {item.label}
+              </Text>
+
               {item.badge !== undefined && item.badge > 0 && (
                 <View style={[styles.badge, isActive && styles.badgeActive]}>
                   <Text style={[styles.badgeText, isActive && styles.badgeTextActive]}>
@@ -76,57 +102,44 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                   </Text>
                 </View>
               )}
-
-              <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
-                {item.label}
-              </Text>
-
-              {item.icon && (
-                <MaterialCommunityIcons
-                  name={item.icon as any}
-                  size={14}
-                  color={isActive ? '#FFFFFF' : '#667781'}
-                  style={styles.chipIcon}
-                />
-              )}
             </TouchableOpacity>
           );
         })}
+
+        {onPressCreateList && (
+          <TouchableOpacity
+            style={styles.addListChip}
+            onPress={onPressCreateList}
+            activeOpacity={0.75}
+          >
+            <Ionicons name="add" size={16} color={Colors.primaryDark} />
+            <Text style={styles.addListText}>قائمة</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
     </View>
   );
-};
+});
 
 const styles = StyleSheet.create({
   wrapper: {
     backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F2F5',
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E9EDEF',
     paddingVertical: 7,
   },
   scrollContent: {
     flexDirection: 'row-reverse',
     paddingHorizontal: 12,
     alignItems: 'center',
-    gap: 7,
-  },
-  filterIconButton: {
-    width: 34,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F0F2F5',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  filterIconButtonActive: {
-    backgroundColor: Colors.primary,
+    gap: 6,
   },
   chip: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 18,
+    paddingHorizontal: 11,
+    height: 31,
+    borderRadius: 16,
     backgroundColor: '#F0F2F5',
     gap: 5,
   },
@@ -142,15 +155,12 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
   },
-  chipIcon: {
-    marginRight: -2,
-  },
   badge: {
-    backgroundColor: '#007BFC',
-    borderRadius: 10,
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    minWidth: 18,
+    backgroundColor: '#00A884',
+    borderRadius: 9,
+    paddingHorizontal: 5,
+    height: 17,
+    minWidth: 17,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -163,6 +173,22 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   badgeTextActive: {
-    color: Colors.primary,
+    color: Colors.primaryDark,
+  },
+  addListChip: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    height: 31,
+    borderRadius: 16,
+    backgroundColor: '#E8F8F5',
+    borderWidth: 1,
+    borderColor: '#B6E3D4',
+    gap: 3,
+  },
+  addListText: {
+    fontSize: 11.5,
+    fontWeight: '700',
+    color: Colors.primaryDark,
   },
 });

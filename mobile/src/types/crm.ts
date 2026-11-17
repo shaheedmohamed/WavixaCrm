@@ -32,6 +32,7 @@ export interface Conversation {
   is_pinned?: boolean;
   pinned_message_id?: number | null;
   pin_expires_at?: string | null;
+  archived_at?: string | null;
   unread_count: number;
   last_message?: string | null;
   last_message_at?: string | null;
@@ -99,6 +100,59 @@ export interface Message {
   reply_to_id?: string | null;
   starred_at?: string | null;
   revoked_at?: string | null;
+  local_uri?: string | null;
+  upload_progress?: number | null;
+  client_temp_id?: string | null;
+  edit_spec?: MediaEditSpec | null;
+  retry_payload?: {
+    kind: 'text' | 'media';
+    text?: string;
+    replyToId?: string | null;
+    file?: { uri: string; name?: string; mimeType?: string; size?: number };
+    mediaType?: 'image' | 'video' | 'audio' | 'voice' | 'document';
+    caption?: string;
+    editSpec?: MediaEditSpec | null;
+  } | null;
+}
+
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface DrawStroke {
+  color: string;
+  widthRatio: number;
+  points: [number, number][];
+}
+
+export interface TextOverlayItem {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  color: string;
+  bgStyle: 'none' | 'dark' | 'solid';
+  fontSizeRatio: number;
+}
+
+export interface MediaEditSpec {
+  rotation?: number;
+  crop?: CropRect;
+  strokes?: DrawStroke[];
+  texts?: TextOverlayItem[];
+  trimStart?: number;
+  trimEnd?: number;
+  duration?: number;
+  muteAudio?: boolean;
+}
+
+export interface ChatList {
+  id: number;
+  name: string;
+  conversation_ids: number[];
 }
 
 export interface QuickReply {
@@ -122,6 +176,8 @@ export type FilterScope =
   | 'mine'
   | 'unassigned'
   | 'unread'
+  | 'favorites'
   | 'resolved'
   | 'archived'
-  | 'all';
+  | 'all'
+  | `list:${number}`;

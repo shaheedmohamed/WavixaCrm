@@ -771,6 +771,8 @@ export class WaClient extends EventEmitter {
   private sentCacheDirty = false;
   private sentCacheTimer: NodeJS.Timeout | null = null;
   private static readonly SENT_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+  private static readonly MAX_STORED_RETRY_PREKEYS = 512;
+  private static readonly MAX_STORED_BULK_PREKEYS = 8192;
 
   /** Retry receipts can arrive long after a restart — persist the resend payloads. */
   private sentCacheFile(): string | null {
@@ -1157,8 +1159,20 @@ export class WaClient extends EventEmitter {
       // store it locally as well or we still won't be able to decrypt the resend.
       const preKeyId = this.creds.nextPreKeyId++;
       const preKey = generateWaKeyPair();
-      this.creds.preKeys = this.creds.preKeys || {};
-      this.creds.preKeys[preKeyId.toString()] = preKey;
+      // Retry-issued keys go in their own bounded map: they are only valid
+      // for the peer's immediate resend, so pruning old ones is safe. The
+      // server-published bulk keys in creds.preKeys must NEVER be evicted —
+      // a peer can hold a fetched bundle for weeks, and deleting the key it
+      // references makes every message from it permanently undecryptable.
+      this.creds.retryPreKeys = this.creds.retryPreKeys || {};
+      this.creds.retryPreKeys[preKeyId.toString()] = preKey;
+      const retryIds = Object.keys(this.creds.retryPreKeys);
+      if (retryIds.length > WaClient.MAX_STORED_RETRY_PREKEYS) {
+        retryIds.sort((a, b) => Number(a) - Number(b));
+        for (const id of retryIds.slice(0, retryIds.length - WaClient.MAX_STORED_RETRY_PREKEYS)) {
+          delete this.creds.retryPreKeys[id];
+        }
+      }
       this.saveCreds();
 
       const keysChildren: BinaryNode[] = [
@@ -1964,6 +1978,15 @@ export class WaClient extends EventEmitter {
     await this.query(node);
     this.creds.nextPreKeyId = startId + count;
     this.creds.firstUnuploadedPreKeyId = this.creds.nextPreKeyId;
+    // Safety bound only — server-published keys must live until a peer uses
+    // them, so the cap is generous (8k keys ≈ ~1.5 MB, years of uploads).
+    const bulkIds = Object.keys(this.creds.preKeys || {});
+    if (bulkIds.length > WaClient.MAX_STORED_BULK_PREKEYS) {
+      bulkIds.sort((a, b) => Number(a) - Number(b));
+      for (const id of bulkIds.slice(0, bulkIds.length - WaClient.MAX_STORED_BULK_PREKEYS)) {
+        delete this.creds.preKeys![id];
+      }
+    }
     this.saveCreds();
   }
 
@@ -1986,6 +2009,15 @@ export class WaClient extends EventEmitter {
     } catch {
       // non-fatal
     }
+  }
+
+  /** Force-replace the server's one-time prekey pool with fresh keys.
+   *  Needed when stored prekeys were lost/evicted: the server keeps handing
+   *  out the stale pool to new bundle-fetches, so every peer that fetches
+   *  gets a key we can no longer resolve — replacing the list heals them. */
+  public async refreshServerPreKeys(count = 812): Promise<number> {
+    await this.uploadPreKeys(count);
+    return count;
   }
 
   private async digestKeyBundle(): Promise<void> {

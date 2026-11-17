@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { create } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Config } from '../constants/config';
 import { User } from '../types/crm';
@@ -6,7 +6,7 @@ import { User } from '../types/crm';
 const TOKEN_KEY = 'wavixa_crm_token';
 const USER_KEY = 'wavixa_crm_user';
 
-export const apiClient = axios.create({
+export const apiClient = create({
   baseURL: Config.API_BASE_URL,
   timeout: 30000,
   headers: {

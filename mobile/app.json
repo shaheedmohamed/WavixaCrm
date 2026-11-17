@@ -57,7 +57,8 @@
           "cameraPermission": "اسمح لتطبيق Wavixa CRM باستخدام الكاميرا لالتقاط الصور والفيديو."
         }
       ],
-      "expo-document-picker"
+      "expo-document-picker",
+      "expo-status-bar"
     ],
     "extra": {
       "router": {

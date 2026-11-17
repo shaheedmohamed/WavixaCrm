@@ -5,19 +5,20 @@ import {
   StyleSheet,
   Modal,
   Image,
-  Pressable,
   ScrollView,
   Dimensions,
   Linking,
   TouchableOpacity,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ZoomableImage } from './ZoomableImage';
 
 export interface GalleryMediaItem {
   id: string | number;
   uri: string;
+  downloadUri?: string | null;
   kind: 'image' | 'video';
   caption?: string | null;
   senderName?: string | null;
@@ -39,17 +40,18 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
-  const filmstripRef = useRef<any>(null);
+  const filmstripRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
 
   useEffect(() => {
     if (visible) {
-      setCurrentIndex(Math.max(0, Math.min(initialIndex, items.length - 1)));
+      Promise.resolve().then(() => {
+        setCurrentIndex(Math.max(0, Math.min(initialIndex, items.length - 1)));
+      });
     }
   }, [visible, initialIndex, items.length]);
 
   useEffect(() => {
     if (visible && filmstripRef.current && items.length > 0) {
-      // Scroll filmstrip to center active thumbnail
       const itemWidth = 56;
       const screenWidth = Dimensions.get('window').width;
       const offset = Math.max(0, currentIndex * itemWidth - screenWidth / 2 + itemWidth / 2);
@@ -71,8 +73,9 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   };
 
   const handleDownload = () => {
-    if (currentItem?.uri) {
-      Linking.openURL(currentItem.uri).catch(() => {});
+    const dl = currentItem.downloadUri || currentItem.uri;
+    if (dl) {
+      Linking.openURL(dl).catch(() => {});
     }
   };
 
@@ -95,10 +98,9 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       statusBarTranslucent
     >
       <View style={styles.backdrop}>
-        {/* Top Header Bar */}
-        <View style={[styles.headerBar, { top: Math.max(insets.top, 12) }]}>
+        <View style={[styles.headerBar, { paddingTop: Math.max(insets.top + 8, 18) }]}>
           <TouchableOpacity onPress={onClose} style={styles.headerBtn} hitSlop={12}>
-            <Ionicons name="close" size={24} color="#FFFFFF" />
+            <Ionicons name="arrow-forward" size={23} color="#FFFFFF" />
           </TouchableOpacity>
 
           <View style={styles.headerInfo}>
@@ -116,19 +118,13 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           </TouchableOpacity>
         </View>
 
-        {/* Media Stage */}
         <View style={styles.stage}>
           {currentItem.kind === 'image' ? (
-            <Image
-              source={{ uri: currentItem.uri }}
-              style={styles.mediaImage}
-              resizeMode="contain"
-            />
+            <ZoomableImage uri={currentItem.uri} showControls />
           ) : (
             <FullscreenVideo key={currentItem.uri} uri={currentItem.uri} />
           )}
 
-          {/* Previous Arrow Button */}
           {currentIndex > 0 && (
             <TouchableOpacity
               style={[styles.navBtn, styles.navBtnPrev]}
@@ -139,7 +135,6 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             </TouchableOpacity>
           )}
 
-          {/* Next Arrow Button */}
           {currentIndex < items.length - 1 && (
             <TouchableOpacity
               style={[styles.navBtn, styles.navBtnNext]}
@@ -151,14 +146,12 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
           )}
         </View>
 
-        {/* Caption Bar */}
         {currentItem.caption ? (
           <View style={styles.captionBar}>
             <Text style={styles.captionText}>{currentItem.caption}</Text>
           </View>
         ) : null}
 
-        {/* Bottom Filmstrip Carousel */}
         {items.length > 1 && (
           <View style={[styles.filmstripContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
             <ScrollView
@@ -179,14 +172,15 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                       isActive && styles.thumbnailActive,
                     ]}
                   >
-                    <Image
-                      source={{ uri: it.uri }}
-                      style={styles.thumbnail}
-                      resizeMode="cover"
-                    />
-                    {it.kind === 'video' && (
-                      <View style={styles.thumbVideoBadge}>
-                        <Ionicons name="play" size={10} color="#FFFFFF" />
+                    {it.kind === 'image' ? (
+                      <Image
+                        source={{ uri: it.uri }}
+                        style={styles.thumbnail}
+                        resizeMode="cover"
+                      />
+                    ) : (
+                      <View style={styles.videoThumbBox}>
+                        <Ionicons name="videocam" size={18} color="#FFFFFF" />
                       </View>
                     )}
                   </TouchableOpacity>
@@ -214,50 +208,44 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   headerBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    zIndex: 20,
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: 'rgba(12, 19, 23, 0.75)',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    backgroundColor: 'rgba(12, 19, 23, 0.85)',
+    zIndex: 20,
   },
   headerBtn: {
     width: 40,
     height: 40,
     borderRadius: 20,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
     alignItems: 'center',
     justifyContent: 'center',
   },
   headerInfo: {
     flex: 1,
-    alignItems: 'center',
+    alignItems: 'flex-end',
     marginHorizontal: 12,
   },
   headerTitle: {
     color: '#E9EDEF',
-    fontSize: 14,
+    fontSize: 14.5,
     fontWeight: '700',
+    textAlign: 'right',
   },
   headerSub: {
     color: '#8696A0',
     fontSize: 11,
-    marginTop: 2,
+    marginTop: 1,
+    textAlign: 'right',
   },
   stage: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
     position: 'relative',
-    marginTop: 60,
-  },
-  mediaImage: {
-    width: '100%',
-    height: '100%',
   },
   mediaVideo: {
     width: '100%',
@@ -283,11 +271,11 @@ const styles = StyleSheet.create({
   captionBar: {
     paddingHorizontal: 20,
     paddingVertical: 10,
-    backgroundColor: 'rgba(12, 19, 23, 0.85)',
+    backgroundColor: 'rgba(12, 19, 23, 0.88)',
   },
   captionText: {
     color: '#E9EDEF',
-    fontSize: 13,
+    fontSize: 13.5,
     textAlign: 'center',
   },
   filmstripContainer: {
@@ -318,13 +306,10 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  thumbVideoBadge: {
-    position: 'absolute',
-    bottom: 2,
-    left: 2,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
-    borderRadius: 4,
-    paddingHorizontal: 3,
-    paddingVertical: 1,
+  videoThumbBox: {
+    flex: 1,
+    backgroundColor: '#1F2C34',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

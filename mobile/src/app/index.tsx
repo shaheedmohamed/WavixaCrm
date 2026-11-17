@@ -1,5 +1,13 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ActivityIndicator, BackHandler } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+  View,
+  StyleSheet,
+  ActivityIndicator,
+  BackHandler,
+  Animated,
+  Dimensions,
+  Easing,
+} from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { LoginScreen } from '../screens/LoginScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
@@ -12,43 +20,85 @@ import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
-type ActiveView = 'welcome' | 'chat-list' | 'chat-room' | 'profile' | 'stats';
+type OverlayView = 'none' | 'welcome' | 'chat-room' | 'profile' | 'stats';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
-  const [activeView, setActiveView] = useState<ActiveView>('chat-list');
+  const [overlayView, setOverlayView] = useState<OverlayView>('none');
+  const [overlayMounted, setOverlayMounted] = useState(false);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
 
-  // Android hardware back: walk back through the view stack instead of
-  // quitting the app. Only the chat list lets the OS exit.
+  const [slideAnim] = useState(() => new Animated.Value(0));
+  const screenWidth = Dimensions.get('window').width;
+
+  const openOverlay = useCallback(
+    (next: OverlayView, conv: Conversation | null = null) => {
+      if (conv) setSelectedConversation(conv);
+      setOverlayView(next);
+      setOverlayMounted(false);
+      slideAnim.setValue(1);
+      Animated.timing(slideAnim, {
+        toValue: 0,
+        duration: 175,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }).start();
+      // Mount the heavy screen a couple of frames later so the slide-in
+      // starts on a free JS thread instead of competing with the mount.
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => setOverlayMounted(true));
+      });
+    },
+    [slideAnim]
+  );
+
+  const closeOverlay = useCallback(() => {
+    Animated.timing(slideAnim, {
+      toValue: 1,
+      duration: 150,
+      easing: Easing.in(Easing.cubic),
+      useNativeDriver: true,
+    }).start(({ finished }) => {
+      if (finished) {
+        setOverlayView('none');
+        setOverlayMounted(false);
+        setSelectedConversation(null);
+      }
+    });
+  }, [slideAnim]);
+
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (
-        activeView === 'chat-room' ||
-        activeView === 'profile' ||
-        activeView === 'stats'
-      ) {
-        setSelectedConversation(null);
-        setActiveView('chat-list');
-        return true;
-      }
-      if (activeView === 'welcome') {
-        setActiveView('chat-list');
+      if (overlayView !== 'none') {
+        closeOverlay();
         return true;
       }
       return false;
     });
     return () => sub.remove();
-  }, [activeView]);
+  }, [overlayView, closeOverlay]);
 
-  // Register push-token channel once the session is established.
   useEffect(() => {
     if (token && user) {
       setupPush().catch(() => {});
     }
-  }, [token, user?.id]);
+  }, [token, user]);
 
-  // Initial loading splash
+  const handleOpenConversation = useCallback(
+    (conv: Conversation) => {
+      openOverlay('chat-room', conv);
+    },
+    [openOverlay]
+  );
+
+  const handleOpenProfile = useCallback(() => {
+    openOverlay('profile');
+  }, [openOverlay]);
+
+  const handleOpenStats = useCallback(() => {
+    openOverlay('stats');
+  }, [openOverlay]);
+
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
@@ -62,81 +112,84 @@ export default function IndexPage() {
     );
   }
 
-  // Not logged in -> Show Login Screen
   if (!token || !user) {
     return (
       <LoginScreen
         onLoginSuccess={() => {
-          setActiveView('welcome');
+          openOverlay('welcome');
         }}
       />
     );
   }
 
-  // Post-login Welcome Screen
-  if (activeView === 'welcome') {
+  if (overlayView === 'welcome') {
     return (
       <WelcomeScreen
         onContinue={() => {
-          setActiveView('chat-list');
+          setOverlayView('none');
         }}
       />
     );
   }
 
-  // Chat Room Screen (active conversation)
-  if (activeView === 'chat-room' && selectedConversation) {
-    return (
-      <ChatRoomScreen
-        conversation={selectedConversation}
-        onBack={() => {
-          setSelectedConversation(null);
-          setActiveView('chat-list');
-        }}
-      />
-    );
-  }
+  const translateX = slideAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: [0, -screenWidth * 0.3],
+  });
 
-  // Profile Screen
-  if (activeView === 'profile') {
-    return (
-      <ProfileScreen
-        onBack={() => {
-          setActiveView('chat-list');
-        }}
-      />
-    );
-  }
-
-  // Stats Screen
-  if (activeView === 'stats') {
-    return (
-      <StatsScreen
-        onBack={() => {
-          setActiveView('chat-list');
-        }}
-      />
-    );
-  }
-
-  // Main Chat List Screen
   return (
-    <ChatListScreen
-      onOpenConversation={(conv) => {
-        setSelectedConversation(conv);
-        setActiveView('chat-room');
-      }}
-      onOpenProfile={() => {
-        setActiveView('profile');
-      }}
-      onOpenStats={() => {
-        setActiveView('stats');
-      }}
-    />
+    <View style={styles.root}>
+      <View
+        style={styles.baseLayer}
+        pointerEvents={overlayView === 'none' ? 'auto' : 'none'}
+      >
+        <ChatListScreen
+          activeConversationId={
+            overlayView === 'chat-room' ? selectedConversation?.id ?? null : null
+          }
+          onOpenConversation={handleOpenConversation}
+          onOpenProfile={handleOpenProfile}
+          onOpenStats={handleOpenStats}
+        />
+      </View>
+
+      {overlayView !== 'none' && (
+        <Animated.View
+          style={[
+            styles.overlayLayer,
+            { transform: [{ translateX }] },
+          ]}
+        >
+          {overlayMounted &&
+            (overlayView === 'chat-room' && selectedConversation ? (
+              <ChatRoomScreen
+                key={`room-${selectedConversation.id}`}
+                conversation={selectedConversation}
+                onBack={closeOverlay}
+              />
+            ) : overlayView === 'profile' ? (
+              <ProfileScreen onBack={closeOverlay} />
+            ) : overlayView === 'stats' ? (
+              <StatsScreen onBack={closeOverlay} />
+            ) : null)}
+        </Animated.View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  root: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  baseLayer: {
+    flex: 1,
+  },
+  overlayLayer: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: '#FFFFFF',
+  },
   splashContainer: {
     flex: 1,
     backgroundColor: Colors.headerBg,

@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { KeyboardSafeView } from './KeyboardSafeView';
 import { chatService } from '../services/chatService';
 import { Colors } from '../constants/theme';
 
@@ -51,7 +52,7 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardSafeView style={styles.overlay}>
         <View style={styles.card}>
           <Text style={styles.title}>إنهاء وتوثيق المحادثة</Text>
           <Text style={styles.subTitle}>
@@ -115,7 +116,7 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardSafeView>
     </Modal>
   );
 };

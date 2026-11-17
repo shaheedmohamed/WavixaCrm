@@ -27,7 +27,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
     return () => clearTimeout(timer);
   }, [onContinue]);
 
-  const firstName = user?.name ? user.name.split(' ')[0] : 'عزيزي الموظف';
   const roleLabel = isAgent ? 'موظف خدمة العملاء' : 'مدير النظام';
 
   return (

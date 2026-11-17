@@ -2481,6 +2481,7 @@ class CrmController extends Controller
             'reply_to_id' => 'nullable|string',
             'file' => 'nullable|file|max:51200', // max 50MB
             'media_url' => 'nullable|string',
+            'edit_spec' => 'nullable|string|max:200000',
         ]);
 
         $allowedSessionIds = $this->getAllowedSessionIds();
@@ -2540,6 +2541,38 @@ class CrmController extends Controller
             $storedName = 'crm_' . time() . '_' . Str::random(8) . '.' . $ext;
             $uploadedFile->move(public_path('storage/crm_media'), $storedName);
             $mediaUrl = '/storage/crm_media/' . $storedName;
+
+            if ($request->filled('edit_spec')) {
+                $editSpec = json_decode((string) $request->input('edit_spec'), true);
+                if (is_array($editSpec)) {
+                    $editor = app(\App\Services\CrmMediaEditService::class);
+                    $srcMediaPath = public_path('storage/crm_media/' . $storedName);
+                    if ($type === 'image' && $editor->hasImageChanges($editSpec)) {
+                        $edited = $editor->applyImageEdits($srcMediaPath, $editSpec, public_path('storage/crm_media'));
+                        if ($edited && is_file($edited['path'])) {
+                            @unlink($srcMediaPath);
+                            $storedName = $edited['name'];
+                            $mediaUrl = '/storage/crm_media/' . $storedName;
+                            $mimeType = $edited['mime'];
+                            $fileBytes = file_get_contents($edited['path']);
+                            $fileSize = strlen($fileBytes);
+                            $fileName = pathinfo((string) $fileName, PATHINFO_FILENAME) . '.jpg';
+                        }
+                    } elseif ($type === 'video' && $editor->hasVideoChanges($editSpec)) {
+                        $edited = $editor->applyVideoEdits($srcMediaPath, $editSpec, public_path('storage/crm_media'));
+                        if ($edited && is_file($edited['path'])) {
+                            @unlink($srcMediaPath);
+                            $storedName = $edited['name'];
+                            $mediaUrl = '/storage/crm_media/' . $storedName;
+                            $mimeType = $edited['mime'];
+                            $seconds = $edited['seconds'] ?? $seconds;
+                            $fileBytes = file_get_contents($edited['path']);
+                            $fileSize = strlen($fileBytes);
+                            $fileName = pathinfo((string) $fileName, PATHINFO_FILENAME) . '.mp4';
+                        }
+                    }
+                }
+            }
 
             // Browser MediaRecorder emits webm/opus but we label it .ogg —
             // WhatsApp rejects voice notes that aren't real ogg/opus (message
@@ -3674,7 +3707,13 @@ class CrmController extends Controller
             return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
         }
         $file = storage_path("app/avatars/{$conversation->id}.jpg");
+        $wantsDownload = $request->boolean('download');
         if (is_file($file)) {
+            if ($wantsDownload) {
+                return response()->download($file, "avatar_{$conversation->id}.jpg", [
+                    'Content-Type' => 'image/jpeg',
+                ]);
+            }
             return response()->file($file, [
                 'Content-Type' => 'image/jpeg',
                 'Cache-Control' => 'private, max-age=86400',
@@ -3682,6 +3721,18 @@ class CrmController extends Controller
         }
         // No local copy — fall back to whatever remote URL is stored.
         if ($conversation->contact_avatar && str_starts_with($conversation->contact_avatar, 'http')) {
+            if ($wantsDownload) {
+                try {
+                    $remote = \Illuminate\Support\Facades\Http::timeout(12)->get($conversation->contact_avatar);
+                    if ($remote->successful() && strlen($remote->body()) > 0) {
+                        return response($remote->body(), 200, [
+                            'Content-Type' => $remote->header('Content-Type') ?: 'image/jpeg',
+                            'Content-Disposition' => "attachment; filename=\"avatar_{$conversation->id}.jpg\"",
+                        ]);
+                    }
+                } catch (\Throwable $e) {
+                }
+            }
             return redirect()->away($conversation->contact_avatar);
         }
         return response()->json(['success' => false, 'message' => 'No avatar'], 404);
@@ -3706,6 +3757,13 @@ class CrmController extends Controller
         $base = rtrim(config('app.url'), '/');
 
         if ($message->media_url) {
+            if ($request->boolean('download') && !str_starts_with($message->media_url, 'http')) {
+                $localMedia = public_path(ltrim($message->media_url, '/'));
+                if (is_file($localMedia)) {
+                    $dlName = $message->media_meta['fileName'] ?? basename($localMedia);
+                    return response()->download($localMedia, $dlName);
+                }
+            }
             $url = str_starts_with($message->media_url, 'http')
                 ? $message->media_url
                 : $base . $message->media_url;

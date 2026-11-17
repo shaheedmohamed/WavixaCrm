@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
+import { AndroidImportance, AndroidNotificationVisibility } from 'expo-notifications';
 import * as Device from 'expo-device';
 import { apiClient } from './api';
 
@@ -39,11 +40,11 @@ const initNotificationsInternal = async (): Promise<boolean> => {
     try {
       await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
         name: 'رسائل العملاء',
-        importance: Notifications.AndroidImportance.HIGH,
+        importance: AndroidImportance.HIGH,
         sound: SOUND_NAME,
         vibrationPattern: [0, 250, 250, 250],
         lightColor: '#00A884',
-        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+        lockscreenVisibility: AndroidNotificationVisibility.PUBLIC,
         enableVibrate: true,
       });
     } catch (e) {
@@ -54,7 +55,7 @@ const initNotificationsInternal = async (): Promise<boolean> => {
       try {
         await Notifications.setNotificationChannelAsync(CHANNEL_ID, {
           name: 'رسائل العملاء',
-          importance: Notifications.AndroidImportance.HIGH,
+          importance: AndroidImportance.HIGH,
         });
       } catch (e2) {
         console.warn('[notifications] notification channel creation failed:', e2);

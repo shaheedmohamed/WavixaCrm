@@ -8,10 +8,9 @@ import {
   StyleSheet,
   ActivityIndicator,
   ScrollView,
-  KeyboardAvoidingView,
-  Platform,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { KeyboardSafeView } from './KeyboardSafeView';
 import { chatService } from '../services/chatService';
 import { SessionDevice } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -36,18 +35,20 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({
 
   useEffect(() => {
     if (visible) {
-      setPhone('');
-      setMessage('');
-      setError('');
-      chatService.getDevices().then((res) => {
-        if (res.success && res.devices?.length) {
-          const connected = res.devices.filter((d) => d.status === 'connected');
-          setDevices(connected.length ? connected : res.devices);
-          if (connected.length) {
-            setSelectedSessionId(connected[0].id);
+      Promise.resolve().then(() => {
+        setPhone('');
+        setMessage('');
+        setError('');
+        chatService.getDevices().then((res) => {
+          if (res.success && res.devices?.length) {
+            const connected = res.devices.filter((d) => d.status === 'connected');
+            setDevices(connected.length ? connected : res.devices);
+            if (connected.length) {
+              setSelectedSessionId(connected[0].id);
+            }
           }
-        }
-      }).catch(() => {});
+        }).catch(() => {});
+      });
     }
   }, [visible]);
 
@@ -78,10 +79,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        style={styles.overlay}
-      >
+      <KeyboardSafeView style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -155,7 +153,7 @@ export const NewChatModal: React.FC<NewChatModalProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardSafeView>
     </Modal>
   );
 };
@@ -174,7 +172,7 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
   },
   header: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,

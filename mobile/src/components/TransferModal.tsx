@@ -9,7 +9,8 @@ import {
   TextInput,
   ActivityIndicator,
 } from 'react-native';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Ionicons } from '@expo/vector-icons';
+import { KeyboardSafeView } from './KeyboardSafeView';
 import { chatService } from '../services/chatService';
 import { Agent } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -38,20 +39,21 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
   useEffect(() => {
     if (visible) {
-      setSelectedAgentId(null);
-      setNote('');
-      setError('');
-      setLoading(true);
-      chatService
-        .getAgents()
-        .then((res) => {
-          if (res.success && res.agents) {
-            // Filter out current agent
-            const filtered = res.agents.filter((a) => a.id !== currentAgentId);
-            setAgents(filtered);
-          }
-        })
-        .finally(() => setLoading(false));
+      Promise.resolve().then(() => {
+        setSelectedAgentId(null);
+        setNote('');
+        setError('');
+        setLoading(true);
+        chatService
+          .getAgents()
+          .then((res) => {
+            if (res.success && res.agents) {
+              const filtered = res.agents.filter((a) => a.id !== currentAgentId);
+              setAgents(filtered);
+            }
+          })
+          .finally(() => setLoading(false));
+      });
     }
   }, [visible, currentAgentId]);
 
@@ -81,7 +83,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardSafeView style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -160,7 +162,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             </TouchableOpacity>
           </View>
         </View>
-      </View>
+      </KeyboardSafeView>
     </Modal>
   );
 };
@@ -179,7 +181,7 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   header: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,

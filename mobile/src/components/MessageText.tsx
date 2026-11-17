@@ -2,6 +2,7 @@ import React, { useCallback } from 'react';
 import { Text, StyleSheet, Linking } from 'react-native';
 
 const URL_RE = /(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)/gi;
+const IS_URL_RE = /^(https?:\/\/[^\s<>"']+|www\.[^\s<>"']+)$/i;
 const TOKEN_RE = /(\*[^*\n]+\*|_[^_\n]+_|~[^~\n]+~|```[^`]+```)/g;
 
 interface Props {
@@ -66,8 +67,7 @@ const MessageTextComponent: React.FC<Props> = ({ text, isOutgoing = false, style
 
   parts.forEach((part, idx) => {
     if (!part) return;
-    if (URL_RE.test(part)) {
-      URL_RE.lastIndex = 0;
+    if (IS_URL_RE.test(part)) {
       nodes.push(
         <Text
           key={`url-${idx}`}

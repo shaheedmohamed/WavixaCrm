@@ -4,11 +4,11 @@ export const Config = {
   CRM_BASE_URL: 'https://crm.wavixa.net',
 
   // Media stream URLs with token
-  getMediaUrl: (mediaId: number | string, token: string) =>
-    `https://crm.wavixa.net/api/crm/media/${mediaId}?token=${encodeURIComponent(token)}`,
+  getMediaUrl: (mediaId: number | string, token: string, download = false) =>
+    `https://crm.wavixa.net/api/crm/media/${mediaId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}`,
 
-  getAvatarUrl: (convId: number | string, token: string) =>
-    `https://crm.wavixa.net/api/crm/avatar/${convId}?token=${encodeURIComponent(token)}`,
+  getAvatarUrl: (convId: number | string, token: string, download = false) =>
+    `https://crm.wavixa.net/api/crm/avatar/${convId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}`,
 
   // App Metadata
   appName: 'Wavixa CRM',

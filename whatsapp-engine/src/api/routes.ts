@@ -867,6 +867,27 @@ export function createRoutes(deps: RouteDependencies): express.Router {
    * lazily resolve media for history-synced messages — the mediaKey arrives
    * base64-encoded.
    */
+  router.post('/internal/prekeys/refresh', async (req: Request, res: Response) => {
+    const { sessionId: reqSessionId, userId, count } = req.body || {};
+    const sessionId = String(reqSessionId || userId || '');
+    if (!sessionId) {
+      res.status(400).json({ success: false, message: 'sessionId is required' });
+      return;
+    }
+    const session = activeSessions.get(sessionId);
+    const sessionState = session?.getState();
+    if (!session || !session.getClient() || (sessionState !== 'READY' && sessionState !== 'CONNECTED')) {
+      res.status(409).json({ success: false, message: 'Session is not connected to WhatsApp' });
+      return;
+    }
+    try {
+      const uploaded = await session.getClient()!.refreshServerPreKeys(count ? Number(count) : 812);
+      res.json({ success: true, uploaded });
+    } catch (err) {
+      res.status(500).json({ success: false, message: err instanceof Error ? err.message : 'Prekey refresh failed' });
+    }
+  });
+
   router.post('/internal/pin', async (req: Request, res: Response) => {
     const { sessionId: reqSessionId, userId, to, messageId, fromMe, participant, action, duration } = req.body || {};
     const sessionId = String(reqSessionId || userId || '');

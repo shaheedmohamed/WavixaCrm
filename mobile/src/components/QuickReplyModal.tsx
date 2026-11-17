@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { KeyboardSafeView } from './KeyboardSafeView';
 import { chatService } from '../services/chatService';
 import { QuickReply } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -31,16 +32,18 @@ export const QuickReplyModal: React.FC<QuickReplyModalProps> = ({
 
   useEffect(() => {
     if (visible) {
-      setSearch('');
-      setLoading(true);
-      chatService
-        .getQuickReplies()
-        .then((res) => {
-          if (res.success && res.quick_replies) {
-            setReplies(res.quick_replies);
-          }
-        })
-        .finally(() => setLoading(false));
+      Promise.resolve().then(() => {
+        setSearch('');
+        setLoading(true);
+        chatService
+          .getQuickReplies()
+          .then((res) => {
+            if (res.success && res.quick_replies) {
+              setReplies(res.quick_replies);
+            }
+          })
+          .finally(() => setLoading(false));
+      });
     }
   }, [visible]);
 
@@ -52,7 +55,7 @@ export const QuickReplyModal: React.FC<QuickReplyModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <KeyboardSafeView style={styles.overlay}>
         <View style={styles.sheet}>
           <View style={styles.header}>
             <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -109,7 +112,7 @@ export const QuickReplyModal: React.FC<QuickReplyModalProps> = ({
             />
           )}
         </View>
-      </View>
+      </KeyboardSafeView>
     </Modal>
   );
 };
@@ -128,7 +131,7 @@ const styles = StyleSheet.create({
     minHeight: 350,
   },
   header: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 16,

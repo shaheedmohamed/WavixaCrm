@@ -1,5 +1,14 @@
 import { apiClient } from './api';
-import { Conversation, Message, PinnedPreview, Agent, QuickReply, SessionDevice } from '../types/crm';
+import {
+  Conversation,
+  Message,
+  PinnedPreview,
+  Agent,
+  QuickReply,
+  SessionDevice,
+  ChatList,
+  MediaEditSpec,
+} from '../types/crm';
 
 export interface ConversationsParams {
   scope?: string;
@@ -59,7 +68,10 @@ export const chatService = {
     return response.data;
   },
 
-  async getMessages(conversationId: number, options: { before_id?: number; after_id?: number; limit?: number } = {}) {
+  async getMessages(
+    conversationId: number,
+    options: { before_id?: number; after_id?: number; around_id?: number | string; limit?: number } = {}
+  ) {
     const response = await apiClient.get<MessagesResponse>(`/crm/conversations/${conversationId}/messages`, {
       params: options,
     });
@@ -82,7 +94,13 @@ export const chatService = {
     conversationId: number,
     file: { uri: string; name?: string; mimeType?: string },
     type: 'image' | 'video' | 'audio' | 'voice' | 'document',
-    options: { caption?: string; sessionId?: number; replyToId?: string | null } = {}
+    options: {
+      caption?: string;
+      sessionId?: number;
+      replyToId?: string | null;
+      editSpec?: MediaEditSpec | null;
+      onUploadProgress?: (percent: number) => void;
+    } = {}
   ) {
     const formData = new FormData();
     formData.append('conversation_id', String(conversationId));
@@ -90,6 +108,7 @@ export const chatService = {
     if (options.caption) formData.append('caption', options.caption);
     if (options.sessionId) formData.append('session_id', String(options.sessionId));
     if (options.replyToId) formData.append('reply_to_id', options.replyToId);
+    if (options.editSpec) formData.append('edit_spec', JSON.stringify(options.editSpec));
 
     const filename = file.name || file.uri.split('/').pop() || (type === 'image' ? 'photo.jpg' : type === 'video' ? 'video.mp4' : 'upload.bin');
     let mime = file.mimeType;
@@ -121,8 +140,17 @@ export const chatService = {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
-      timeout: 120000,
+      timeout: 180000,
+      onUploadProgress: (progressEvent) => {
+        if (!options.onUploadProgress) return;
+        const total = progressEvent.total || 0;
+        if (total > 0) {
+          const pct = Math.min(99, Math.max(1, Math.round((progressEvent.loaded * 100) / total)));
+          options.onUploadProgress(pct);
+        }
+      },
     });
+    options.onUploadProgress?.(100);
     return response.data;
   },
 
@@ -135,8 +163,34 @@ export const chatService = {
   },
 
   async renameConversation(conversationId: number, contactName: string) {
-    const response = await apiClient.post(`/crm/conversations/${conversationId}/rename`, {
-      contact_name: contactName,
+    const response = await apiClient.put(`/crm/conversations/${conversationId}`, {
+      name: contactName,
+    });
+    return response.data;
+  },
+
+  async getChatLists(): Promise<{ success: boolean; lists: ChatList[] }> {
+    const response = await apiClient.get('/crm/chat-lists');
+    return response.data;
+  },
+
+  async saveChatList(payload: {
+    id?: number;
+    name: string;
+    conversation_ids?: number[];
+  }): Promise<{ success: boolean; list: ChatList }> {
+    const response = await apiClient.post('/crm/chat-lists', payload);
+    return response.data;
+  },
+
+  async deleteChatList(id: number): Promise<{ success: boolean }> {
+    const response = await apiClient.delete(`/crm/chat-lists/${id}`);
+    return response.data;
+  },
+
+  async removeChatListMembers(id: number, conversationIds: number[]): Promise<{ success: boolean }> {
+    const response = await apiClient.post(`/crm/chat-lists/${id}/remove-members`, {
+      conversation_ids: conversationIds,
     });
     return response.data;
   },
@@ -229,7 +283,16 @@ export const chatService = {
 
   async getQuickReplies(): Promise<{ success: boolean; quick_replies: QuickReply[] }> {
     const response = await apiClient.get('/crm/quick-replies');
-    return response.data;
+    const raw = response.data?.replies || response.data?.quick_replies || [];
+    const normalized: QuickReply[] = raw.map((r: any) => ({
+      id: r.id,
+      shortcut: r.shortcut || '',
+      message: r.body || r.message || '',
+    }));
+    return {
+      success: Boolean(response.data?.success),
+      quick_replies: normalized,
+    };
   },
 
   async getDevices(): Promise<{ success: boolean; devices: SessionDevice[] }> {
