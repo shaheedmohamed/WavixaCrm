@@ -1,13 +1,28 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { createAudioPlayer, AudioPlayer, AudioStatus } from 'expo-audio';
+import { createAudioPlayer, AudioPlayer, AudioStatus, setAudioModeAsync } from 'expo-audio';
 import { Message } from '../types/crm';
 import { Colors } from '../constants/theme';
 import { formatAudioSeconds, waveformBars } from '../services/media';
 
 // Only one voice note plays at a time — starting one pauses the previous.
 let activePlayer: { key: string; pause: () => void } | null = null;
+
+// On Android, expo-audio's play() first requests transient audio focus; if
+// the system denies or delays it the call silently does nothing and the
+// button looks dead. mixWithOthers skips that focus request entirely so a
+// tap always reaches the real player. Cached so it only costs once.
+let audioModePromise: Promise<void> | null = null;
+const ensureAudioMode = (): Promise<void> => {
+  if (!audioModePromise) {
+    audioModePromise = setAudioModeAsync({
+      playsInSilentMode: true,
+      interruptionMode: 'mixWithOthers',
+    }).catch(() => {});
+  }
+  return audioModePromise;
+};
 
 const SPEEDS = [1, 1.5, 2];
 const MAX_BARS = 72;
@@ -35,6 +50,9 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
   const key = String(message.id || message.message_id);
   const playerRef = useRef<AudioPlayer | null>(null);
   const subRef = useRef<{ remove: () => void } | null>(null);
+  // User intent to hear audio — survives the load/buffer gap where the
+  // player reports playing=false even though play() was issued.
+  const wantPlayRef = useRef(false);
   const rateRef = useRef(1);
   const [rate, setRate] = useState(1);
   const [status, setStatus] = useState<Pick<AudioStatus, 'playing' | 'currentTime' | 'duration' | 'isLoaded' | 'didJustFinish'>>({
@@ -88,8 +106,19 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
       } catch {}
       playerRef.current = p;
       subRef.current = p.addListener('playbackStatusUpdate', (s: AudioStatus) => {
+        if (s.error) {
+          wantPlayRef.current = false;
+          console.warn('[voice] playback error:', s.error);
+        }
+        if (s.didJustFinish) {
+          wantPlayRef.current = false;
+        } else if (wantPlayRef.current && s.isLoaded && !s.playing && !s.error) {
+          // play() issued before the remote file finished loading is a
+          // no-op — re-fire it the moment the player reports ready.
+          try { p.play(); } catch {}
+        }
         setStatus({
-          playing: s.playing,
+          playing: s.playing || wantPlayRef.current,
           currentTime: s.currentTime,
           duration: s.duration,
           isLoaded: s.isLoaded,
@@ -102,16 +131,29 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
 
   const toggle = () => {
     const p = ensurePlayer();
-    if (status.playing) {
-      p.pause();
+    if (status.playing || wantPlayRef.current) {
+      wantPlayRef.current = false;
+      try { p.pause(); } catch {}
       return;
     }
     if (activePlayer && activePlayer.key !== key) {
       try { activePlayer.pause(); } catch {}
     }
-    activePlayer = { key, pause: () => p.pause() };
-    if (status.didJustFinish) p.seekTo(0);
-    p.play();
+    activePlayer = { key, pause: () => { wantPlayRef.current = false; try { p.pause(); } catch {} } };
+    if (status.didJustFinish) {
+      try { p.seekTo(0); } catch {}
+    }
+    wantPlayRef.current = true;
+    // Flip to pause instantly — buffering a remote file can take a
+    // moment and an unchanged icon feels like the tap didn't register.
+    setStatus((prev) => ({ ...prev, playing: true }));
+    // Skip the Android audio-focus request before issuing play, so a
+    // denied/delayed focus grant can't silently swallow it.
+    ensureAudioMode().then(() => {
+      if (wantPlayRef.current) {
+        try { p.play(); } catch {}
+      }
+    });
   };
 
   const cycleRate = () => {
@@ -186,6 +228,7 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
       <WaveBars
         bars={bars}
         playedRatio={playedRatio}
+        showThumb={playedRatio > 0 || status.playing}
         played={accent}
         dim={dimColor}
         onSeek={seek}
@@ -233,10 +276,11 @@ const BAR_GAP = 2.5;
 const WaveBars: React.FC<{
   bars: number[];
   playedRatio: number;
+  showThumb: boolean;
   played: string;
   dim: string;
   onSeek: (evt: any, width: number) => void;
-}> = ({ bars, playedRatio, played, dim, onSeek }) => {
+}> = ({ bars, playedRatio, showThumb, played, dim, onSeek }) => {
   const [width, setWidth] = useState(0);
   // Fit as many bars as the real width allows — dense, even spacing,
   // never stretched apart.
@@ -258,7 +302,7 @@ const WaveBars: React.FC<{
           ]}
         />
       ))}
-      {width > 0 && playedRatio > 0 ? (
+      {width > 0 && showThumb ? (
         <View
           style={[
             styles.thumb,
