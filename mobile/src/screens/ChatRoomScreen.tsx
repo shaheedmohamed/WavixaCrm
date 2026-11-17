@@ -873,6 +873,28 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     [conversation.id, fetchLatestWindow]
   );
 
+  const handleDoubleTapLike = useCallback(
+    (m: Message) => {
+      if (m.client_temp_id || isDeadConversation) return;
+      const key = m.id || m.message_id;
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if ((msg.id || msg.message_id) !== key) return msg;
+          const reactions = Array.isArray(msg.reactions) ? [...msg.reactions] : [];
+          if (!reactions.some((r) => r.emoji === '👍')) {
+            reactions.push({ emoji: '👍' });
+          }
+          return { ...msg, reactions };
+        })
+      );
+      chatService
+        .sendReaction(conversation.id, m.message_id || m.id, '👍')
+        .then(() => fetchLatestWindow('poll'))
+        .catch(() => {});
+    },
+    [conversation.id, fetchLatestWindow, isDeadConversation]
+  );
+
   const handleUnpin = async () => {
     setPinnedMsg(null);
     try {
@@ -1046,6 +1068,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onPressQuoted={jumpToMessageKey}
               onRetry={handleRetryMessage}
               onDismissFailed={handleDismissFailed}
+              onDoubleTapLike={handleDoubleTapLike}
             />
           </SwipeableMessageRow>
         </View>
@@ -1064,6 +1087,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       jumpToMessageKey,
       handleRetryMessage,
       handleDismissFailed,
+      handleDoubleTapLike,
     ]
   );
 

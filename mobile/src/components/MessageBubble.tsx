@@ -1,5 +1,6 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
+  Animated,
   View,
   Text,
   StyleSheet,
@@ -36,6 +37,7 @@ interface MessageBubbleProps {
   onPressQuoted?: (replyToId: string) => void;
   onRetry?: (msg: Message) => void;
   onDismissFailed?: (msg: Message) => void;
+  onDoubleTapLike?: (msg: Message) => void;
 }
 
 const SENDER_COLORS = [
@@ -89,8 +91,45 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onPressQuoted,
   onRetry,
   onDismissFailed,
+  onDoubleTapLike,
 }) => {
   const { token, user } = useAuth();
+  const lastTapRef = useRef(0);
+  const [likePulse] = useState(() => new Animated.Value(1));
+
+  // Instant tactile feedback so the like feels immediate.
+  const pulseLike = () => {
+    likePulse.stopAnimation();
+    likePulse.setValue(1);
+    Animated.sequence([
+      Animated.spring(likePulse, {
+        toValue: 1.07,
+        useNativeDriver: true,
+        speed: 40,
+        bounciness: 10,
+      }),
+      Animated.spring(likePulse, {
+        toValue: 1,
+        useNativeDriver: true,
+        speed: 40,
+        bounciness: 10,
+      }),
+    ]).start();
+  };
+
+  // WhatsApp-style double tap → like. A single tap stays a no-op.
+  const handleBubblePress = () => {
+    const now = Date.now();
+    if (now - lastTapRef.current < 300) {
+      lastTapRef.current = 0;
+      if (onDoubleTapLike) {
+        pulseLike();
+        onDoubleTapLike(message);
+      }
+    } else {
+      lastTapRef.current = now;
+    }
+  };
   const isOutgoing = message.direction === 'outgoing';
   const showGroupSender = isGroup && !isOutgoing;
 
@@ -226,6 +265,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           </View>
         )}
 
+        <Animated.View style={{ transform: [{ scale: likePulse }] }}>
         <TouchableOpacity
           style={[
             styles.bubble,
@@ -233,6 +273,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             isFailed && styles.bubbleFailed,
           ]}
           onLongPress={() => !message.client_temp_id && onActions?.(message)}
+          onPress={handleBubblePress}
           activeOpacity={0.9}
           delayLongPress={240}
         >
@@ -328,12 +369,12 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                 avatarFallback={audioAvatarFallback}
                 footer={
                   <>
-                    {renderTicks()}
                     <Text style={styles.timeText}>
                       {message.status === 'pending' && !isUploading
                         ? 'جاري الإرسال...'
                         : formatTime(message.timestamp)}
                     </Text>
+                    {renderTicks()}
                     {message.starred_at ? (
                       <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
                     ) : null}
@@ -420,6 +461,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             </View>
           )}
         </TouchableOpacity>
+        </Animated.View>
       </View>
 
       {isFailed && (

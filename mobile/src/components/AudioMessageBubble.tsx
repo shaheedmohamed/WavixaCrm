@@ -144,9 +144,7 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
   const label =
     status.currentTime > 0 && !status.didJustFinish
       ? formatAudioSeconds(status.currentTime)
-      : duration > 0
-        ? formatAudioSeconds(duration)
-        : 'تسجيل صوتي';
+      : formatAudioSeconds(duration);
 
   const avatarOrSpeed = showSpeed ? (
     <Pressable
@@ -221,7 +219,9 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
           <MaterialCommunityIcons name="microphone" size={10} color="#8696A0" />
           <Text style={styles.durationText}>{label}</Text>
         </View>
-        {footer}
+        {/* Keep the time+ticks as ONE glued block so space-between
+            only splits duration vs. the whole footer group. */}
+        <View style={styles.footerRight}>{footer}</View>
       </View>
     </View>
   );
@@ -320,6 +320,11 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   durationWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+  },
+  footerRight: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
