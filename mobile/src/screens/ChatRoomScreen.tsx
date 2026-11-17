@@ -32,6 +32,7 @@ import { QuickReplyModal } from '../components/QuickReplyModal';
 import { TransferModal } from '../components/TransferModal';
 import { ResolveModal } from '../components/ResolveModal';
 import { PinDurationModal } from '../components/PinDurationModal';
+import { ReactionDetailsSheet } from '../components/ReactionDetailsSheet';
 import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs } from '../services/chatPrefs';
@@ -202,6 +203,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [resolveVisible, setResolveVisible] = useState(false);
   const [pinDurationVisible, setPinDurationVisible] = useState(false);
   const [selectedMsgForPin, setSelectedMsgForPin] = useState<Message | null>(null);
+  const [reactionSheetKey, setReactionSheetKey] = useState<string | number | null>(null);
   const [isDeadConversation, setIsDeadConversation] = useState(false);
 
   const flatListRef = useRef<FlatList<Message>>(null);
@@ -916,6 +918,45 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     [conversation.id, fetchLatestWindow, isDeadConversation]
   );
 
+  // Reactions badge tap → WhatsApp-style "who reacted" sheet. Keep the
+  // live message so removals reflect instantly and auto-close the sheet.
+  const reactionSheetMsg = useMemo(
+    () =>
+      reactionSheetKey != null
+        ? messages.find((m) => (m.id || m.message_id) === reactionSheetKey) || null
+        : null,
+    [reactionSheetKey, messages]
+  );
+
+  const handlePressReactions = useCallback((m: Message) => {
+    setReactionSheetKey(m.id || m.message_id);
+  }, []);
+
+  const handleRemoveMyReaction = useCallback(
+    (m: Message) => {
+      if (m.client_temp_id) return;
+      const key = m.id || m.message_id;
+      const sessionDigits = (conversation.session?.phone_number || '').replace(/\D/g, '');
+      if (sessionDigits) {
+        const remaining = (m.reactions || []).filter(
+          (r) => (r.from || '').replace(/\D/g, '') !== sessionDigits
+        );
+        if (remaining.length === 0) setReactionSheetKey(null);
+        setMessages((prev) =>
+          prev.map((msg) => {
+            if ((msg.id || msg.message_id) !== key) return msg;
+            return { ...msg, reactions: remaining };
+          })
+        );
+      }
+      chatService
+        .sendReaction(conversation.id, m.message_id || m.id, '')
+        .then(() => fetchLatestWindow('poll'))
+        .catch(() => fetchLatestWindow('poll'));
+    },
+    [conversation.id, conversation.session?.phone_number, fetchLatestWindow]
+  );
+
   const handleUnpin = async () => {
     setPinnedMsg(null);
     try {
@@ -1090,6 +1131,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onRetry={handleRetryMessage}
               onDismissFailed={handleDismissFailed}
               onDoubleTapLike={handleDoubleTapLike}
+              onPressReactions={handlePressReactions}
             />
           </SwipeableMessageRow>
         </View>
@@ -1109,6 +1151,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       handleRetryMessage,
       handleDismissFailed,
       handleDoubleTapLike,
+      handlePressReactions,
     ]
   );
 
@@ -1418,6 +1461,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           setConversation((prev) => ({ ...prev, contact_name: newName }));
           chatCache.patchConversationEverywhere(conversation.id, { contact_name: newName });
         }}
+      />
+
+      <ReactionDetailsSheet
+        conversation={conversation}
+        message={reactionSheetMsg}
+        contactTitle={contactTitle}
+        selfName={user?.name}
+        onClose={() => setReactionSheetKey(null)}
+        onRemoveMine={handleRemoveMyReaction}
       />
 
       <MessageActionsSheet

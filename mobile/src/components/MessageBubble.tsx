@@ -38,6 +38,7 @@ interface MessageBubbleProps {
   onRetry?: (msg: Message) => void;
   onDismissFailed?: (msg: Message) => void;
   onDoubleTapLike?: (msg: Message) => void;
+  onPressReactions?: (msg: Message) => void;
 }
 
 const SENDER_COLORS = [
@@ -92,6 +93,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onRetry,
   onDismissFailed,
   onDoubleTapLike,
+  onPressReactions,
 }) => {
   const { token, user } = useAuth();
   const lastTapRef = useRef(0);
@@ -488,18 +490,23 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
       )}
 
       {message.reactions && message.reactions.length > 0 ? (
-        <View
+        <TouchableOpacity
           style={[
             styles.reactionsRow,
             isOutgoing ? styles.reactionsOutgoing : styles.reactionsIncoming,
           ]}
+          activeOpacity={0.75}
+          onPress={() => onPressReactions?.(message)}
         >
           {message.reactions.map((r, i) => (
             <Text key={i} style={styles.reactionEmoji}>
               {r.emoji}
             </Text>
           ))}
-        </View>
+          {message.reactions.length > 1 ? (
+            <Text style={styles.reactionCount}>{message.reactions.length}</Text>
+          ) : null}
+        </TouchableOpacity>
       ) : null}
     </View>
   );
@@ -841,6 +848,13 @@ const styles = StyleSheet.create({
   },
   reactionEmoji: {
     fontSize: 12,
+  },
+  reactionCount: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    color: '#00A884',
+    alignSelf: 'center',
+    marginHorizontal: 2,
   },
 });
 
