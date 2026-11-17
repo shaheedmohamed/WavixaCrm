@@ -326,6 +326,19 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                 isOutgoing={isOutgoing}
                 avatarUri={audioAvatarUri}
                 avatarFallback={audioAvatarFallback}
+                footer={
+                  <>
+                    {renderTicks()}
+                    <Text style={styles.timeText}>
+                      {message.status === 'pending' && !isUploading
+                        ? 'جاري الإرسال...'
+                        : formatTime(message.timestamp)}
+                    </Text>
+                    {message.starred_at ? (
+                      <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
+                    ) : null}
+                  </>
+                }
               />
               {isUploading && (
                 <View style={styles.inlineUploadBarWrap}>
@@ -393,17 +406,19 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
 
           {showText ? <MessageText text={displayCaption!} isOutgoing={isOutgoing} /> : null}
 
-          <View style={styles.metaRow}>
-            {renderTicks()}
-            <Text style={styles.timeText}>
-              {message.status === 'pending' && !isUploading
-                ? 'جاري الإرسال...'
-                : formatTime(message.timestamp)}
-            </Text>
-            {message.starred_at ? (
-              <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
-            ) : null}
-          </View>
+          {isAudio && mediaUri ? null : (
+            <View style={styles.metaRow}>
+              {renderTicks()}
+              <Text style={styles.timeText}>
+                {message.status === 'pending' && !isUploading
+                  ? 'جاري الإرسال...'
+                  : formatTime(message.timestamp)}
+              </Text>
+              {message.starred_at ? (
+                <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
+              ) : null}
+            </View>
+          )}
         </TouchableOpacity>
       </View>
 

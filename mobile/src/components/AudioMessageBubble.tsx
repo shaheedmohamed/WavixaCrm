@@ -18,6 +18,7 @@ interface AudioMessageBubbleProps {
   isOutgoing: boolean;
   avatarUri?: string | null;
   avatarFallback?: string;
+  footer?: React.ReactNode;
 }
 
 /** WhatsApp voice-note look: play control on one end of the bubble, the
@@ -29,6 +30,7 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
   isOutgoing,
   avatarUri,
   avatarFallback,
+  footer,
 }) => {
   const key = String(message.id || message.message_id);
   const playerRef = useRef<AudioPlayer | null>(null);
@@ -57,11 +59,12 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
       const next = smooth[Math.min(smooth.length - 1, i + 1)];
       return (prev + h * 2 + next) / 4;
     });
-    // Rescale into a tidy 6–22px band so the wave reads as one shape.
+    // Rescale into an 8–26px band — tall enough to balance the 40px
+    // avatar instead of looking like a faint scratch beside it.
     const min = Math.min(...smooth2);
     const max = Math.max(...smooth2);
     const span = Math.max(1, max - min);
-    return smooth2.map((h) => 6 + ((h - min) / span) * 16);
+    return smooth2.map((h) => 8 + ((h - min) / span) * 18);
   }, [key]);
 
   useEffect(() => {
@@ -173,9 +176,9 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
   const playBtn = (
     <Pressable onPress={toggle} style={styles.playBtn} hitSlop={6}>
       {status.playing ? (
-        <Ionicons name="pause" size={26} color={iconColor} />
+        <Ionicons name="pause" size={28} color={iconColor} />
       ) : (
-        <Ionicons name="play" size={26} color={iconColor} style={{ marginLeft: 3 }} />
+        <Ionicons name="play" size={28} color={iconColor} style={{ marginLeft: 3 }} />
       )}
     </Pressable>
   );
@@ -189,36 +192,43 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
         dim={dimColor}
         onSeek={seek}
       />
-      <View style={styles.metaRow}>
-        <MaterialCommunityIcons name="microphone" size={10} color="#8696A0" />
-        <Text style={styles.durationText}>{label}</Text>
-      </View>
     </View>
   );
 
   return (
-    <View style={styles.row}>
-      {/* Play on one end, avatar/speed on the other — waveform fills
-          the middle like WhatsApp. */}
-      {isOutgoing ? (
-        <>
-          {playBtn}
-          {wave}
-          {avatarOrSpeed}
-        </>
-      ) : (
-        <>
-          {avatarOrSpeed}
-          {wave}
-          {playBtn}
-        </>
-      )}
+    <View>
+      <View style={styles.row}>
+        {/* Play on one end, avatar/speed on the other — waveform
+            fills the middle like WhatsApp. */}
+        {isOutgoing ? (
+          <>
+            {playBtn}
+            {wave}
+            {avatarOrSpeed}
+          </>
+        ) : (
+          <>
+            {avatarOrSpeed}
+            {wave}
+            {playBtn}
+          </>
+        )}
+      </View>
+
+      {/* Duration + send-time share one bottom line, like WhatsApp. */}
+      <View style={styles.footerRow}>
+        <View style={styles.durationWrap}>
+          <MaterialCommunityIcons name="microphone" size={10} color="#8696A0" />
+          <Text style={styles.durationText}>{label}</Text>
+        </View>
+        {footer}
+      </View>
     </View>
   );
 };
 
-const BAR_W = 2.5;
-const BAR_GAP = 2;
+const BAR_W = 3;
+const BAR_GAP = 2.5;
 
 const WaveBars: React.FC<{
   bars: number[];
@@ -267,14 +277,14 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     alignItems: 'center',
-    minWidth: 230,
+    minWidth: 235,
     maxWidth: 290,
     gap: 10,
     paddingVertical: 3,
   },
   playBtn: {
-    width: 32,
-    height: 40,
+    width: 36,
+    height: 44,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -286,7 +296,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: BAR_GAP,
-    height: 24,
+    height: 28,
     position: 'relative',
   },
   bar: {
@@ -295,7 +305,7 @@ const styles = StyleSheet.create({
   },
   thumb: {
     position: 'absolute',
-    top: 6.5,
+    top: 8.5,
     width: 11,
     height: 11,
     borderRadius: 5.5,
@@ -303,11 +313,16 @@ const styles = StyleSheet.create({
     borderColor: '#FFFFFF',
     elevation: 1,
   },
-  metaRow: {
+  footerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 2,
+  },
+  durationWrap: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 3,
-    marginTop: 1,
   },
   durationText: {
     fontSize: 10.5,
