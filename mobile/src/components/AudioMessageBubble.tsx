@@ -43,7 +43,26 @@ const AudioMessageBubbleComponent: React.FC<AudioMessageBubbleProps> = ({
     didJustFinish: false,
   });
 
-  const bars = useMemo(() => waveformBars(key, MAX_BARS), [key]);
+  // Smooth the raw bars so heights vary gradually — a real voice
+  // waveform silhouette instead of visual noise.
+  const bars = useMemo(() => {
+    const raw = waveformBars(key, MAX_BARS);
+    const smooth = raw.map((h, i) => {
+      const prev = raw[Math.max(0, i - 1)];
+      const next = raw[Math.min(raw.length - 1, i + 1)];
+      return (prev + h * 2 + next) / 4;
+    });
+    const smooth2 = smooth.map((h, i) => {
+      const prev = smooth[Math.max(0, i - 1)];
+      const next = smooth[Math.min(smooth.length - 1, i + 1)];
+      return (prev + h * 2 + next) / 4;
+    });
+    // Rescale into a tidy 6–22px band so the wave reads as one shape.
+    const min = Math.min(...smooth2);
+    const max = Math.max(...smooth2);
+    const span = Math.max(1, max - min);
+    return smooth2.map((h) => 6 + ((h - min) / span) * 16);
+  }, [key]);
 
   useEffect(() => {
     return () => {
