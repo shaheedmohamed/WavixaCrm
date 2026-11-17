@@ -174,7 +174,7 @@ export default function IndexPage() {
               <ChatRoomScreen
                 key={`room-${selectedConversation.id}`}
                 conversation={selectedConversation}
-                onBack={closeOverlay}
+                onBack={closeOverlay}ي
                 focusMessageId={focusMessageId}
               />
             ) : overlayView === 'starred' ? (
