@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
-  Dimensions,
   Easing,
   Keyboard,
   KeyboardEvent,
+  LayoutChangeEvent,
   Platform,
   StyleProp,
   StyleSheet,
@@ -19,70 +19,99 @@ interface KeyboardSafeViewProps {
   onKeyboardVisibleChange?: (visible: boolean) => void;
 }
 
+/**
+ * Universal keyboard-safe wrapper that guarantees the input is never
+ * covered by the soft keyboard on any device, screen size, or Android mode.
+ *
+ * Rather than guessing via window dimensions (which break on edge-to-edge
+ * and Android 13-15), it measures the container view's actual layout height
+ * against its unconstrained baseline. If the OS already shrank the view
+ * (adjustResize), it only applies the remaining difference. If the OS did not
+ * shrink the view (edge-to-edge / adjustPan / absoluteFill), it lifts by the
+ * full measured keyboard height + extraOffset.
+ */
 export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   children,
   style,
-  extraOffset = 8,
+  extraOffset = 4,
   onKeyboardVisibleChange,
 }) => {
   const [shiftAnim] = useState(() => new Animated.Value(0));
-  const kbRef = useRef({ visible: false, height: 0 });
-  // Window height captured while the keyboard is hidden. Comparing it
-  // against the current height at show-time tells us exactly how much
-  // of the keyboard the OS already absorbed via adjustResize — no
-  // inset guessing, works in every soft-input mode.
-  const baselineWinHRef = useRef(Dimensions.get('window').height);
+  const isKeyboardVisibleRef = useRef(false);
+  const kbHeightRef = useRef(0);
+  const containerHeightRef = useRef(0);
+  const unconstrainedHeightRef = useRef(0);
 
   const computeLift = useCallback(() => {
-    const kb = kbRef.current;
-    if (!kb.visible || kb.height <= 0) return 0;
+    if (!isKeyboardVisibleRef.current || kbHeightRef.current <= 0) {
+      return 0;
+    }
+    const kbH = kbHeightRef.current;
+    const currentH = containerHeightRef.current;
+    const unconstrainedH = unconstrainedHeightRef.current;
 
-    const winH = Dimensions.get('window').height;
-    const baseline = baselineWinHRef.current;
-    const resizedByOs = Math.max(0, baseline - winH);
-    const lift = Math.max(0, kb.height - resizedByOs);
-    // extraOffset always applies — keeps the input visibly above the
-    // keyboard even when the OS already resized the window for us.
-    return lift + extraOffset;
+    // How much the container actually shrank (if OS resized it via adjustResize)
+    const viewShrink =
+      unconstrainedH > 0 && currentH > 0
+        ? Math.max(0, unconstrainedH - currentH)
+        : 0;
+
+    // Lift whatever remaining portion of the keyboard the OS didn't absorb
+    const neededLift = Math.max(0, kbH - viewShrink) + extraOffset;
+    return neededLift;
   }, [extraOffset]);
 
-  const animateLift = useCallback(
-    (duration?: number) => {
+  const animateTo = useCallback(
+    (toValue: number, duration?: number) => {
       Animated.timing(shiftAnim, {
-        toValue: computeLift(),
-        duration: Platform.OS === 'ios' ? duration ?? 180 : Math.min(duration ?? 120, 120),
+        toValue,
+        duration: Platform.OS === 'ios' ? duration ?? 200 : Math.min(duration ?? 130, 130),
         easing: Easing.out(Easing.cubic),
         useNativeDriver: false,
       }).start();
     },
-    [computeLift, shiftAnim]
+    [shiftAnim]
   );
+
+  const updateLift = useCallback(
+    (duration?: number) => {
+      const lift = computeLift();
+      animateTo(lift, duration);
+    },
+    [computeLift, animateTo]
+  );
+
+  const handleLayout = (e: LayoutChangeEvent) => {
+    const h = e.nativeEvent.layout.height;
+    if (h <= 0) return;
+    containerHeightRef.current = h;
+
+    if (!isKeyboardVisibleRef.current) {
+      // Keyboard closed: record the true unconstrained baseline height
+      if (h > unconstrainedHeightRef.current) {
+        unconstrainedHeightRef.current = h;
+      }
+    } else {
+      // Keyboard open: layout changed (e.g. OS resize or orientation); recompute lift
+      updateLift(60);
+    }
+  };
 
   useEffect(() => {
     if (Platform.OS === 'web') return;
 
     const handleShow = (e: KeyboardEvent) => {
-      kbRef.current = {
-        visible: true,
-        height: e.endCoordinates?.height ?? 0,
-      };
+      isKeyboardVisibleRef.current = true;
+      kbHeightRef.current = e.endCoordinates?.height ?? 0;
       onKeyboardVisibleChange?.(true);
-      animateLift(e.duration);
-      // The window-resize 'change' event can land after the keyboard
-      // event — recompute once the layout has settled.
-      setTimeout(() => animateLift(0), 90);
-      setTimeout(() => animateLift(0), 280);
+      updateLift(Platform.OS === 'ios' ? e.duration : 120);
     };
 
     const handleHide = (e: KeyboardEvent) => {
-      kbRef.current = { visible: false, height: 0 };
+      isKeyboardVisibleRef.current = false;
+      kbHeightRef.current = 0;
       onKeyboardVisibleChange?.(false);
-      Animated.timing(shiftAnim, {
-        toValue: 0,
-        duration: Platform.OS === 'ios' ? e?.duration || 180 : 90,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: false,
-      }).start();
+      animateTo(0, Platform.OS === 'ios' ? e?.duration || 180 : 100);
     };
 
     const subs = [
@@ -96,30 +125,13 @@ export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
       subs.push(Keyboard.addListener('keyboardWillChangeFrame', handleShow));
     }
 
-    const dimSub = Dimensions.addEventListener('change', () => {
-      if (kbRef.current.visible) {
-        animateLift(0);
-      } else {
-        // Keyboard hidden — this is a true baseline window height.
-        baselineWinHRef.current = Dimensions.get('window').height;
-      }
-    });
-
     return () => {
       subs.forEach((s) => s.remove());
-      dimSub.remove();
     };
-  }, [animateLift, onKeyboardVisibleChange, shiftAnim]);
+  }, [animateTo, onKeyboardVisibleChange, updateLift]);
 
   return (
-    <View
-      style={[styles.outer, style]}
-      onLayout={() => {
-        if (!kbRef.current.visible) {
-          baselineWinHRef.current = Dimensions.get('window').height;
-        }
-      }}
-    >
+    <View style={[styles.outer, style]} onLayout={handleLayout}>
       <Animated.View style={[styles.inner, { paddingBottom: shiftAnim }]}>
         {children}
       </Animated.View>
