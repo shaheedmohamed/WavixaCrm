@@ -1,6 +1,22 @@
 import React, { useEffect } from 'react';
-import { Keyboard, Platform, StyleProp, StyleSheet, ViewStyle } from 'react-native';
-import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import {
+  Keyboard,
+  KeyboardAvoidingView as RNKeyboardAvoidingView,
+  Platform,
+  StyleProp,
+  StyleSheet,
+  TurboModuleRegistry,
+  ViewStyle,
+} from 'react-native';
+import { KeyboardAvoidingView as SyncedKeyboardAvoidingView } from 'react-native-keyboard-controller';
+
+// react-native-keyboard-controller only exists in dev builds / release
+// APKs — Expo Go does not bundle it. Probe the turbo module directly and
+// fall back to React Native's own KeyboardAvoidingView so the input is
+// never left buried under the keyboard there.
+export const HAS_KEYBOARD_SYNC =
+  Platform.OS !== 'web' &&
+  TurboModuleRegistry.get('KeyboardController') != null;
 
 interface KeyboardSafeViewProps {
   children: React.ReactNode;
@@ -10,17 +26,13 @@ interface KeyboardSafeViewProps {
 }
 
 /**
- * Keyboard-safe wrapper backed by react-native-keyboard-controller.
+ * Keyboard-safe wrapper.
  *
- * Unlike measuring layout changes in JS (which always trails the keyboard
- * by a frame or more), this drives the lift from the platform's own
- * WindowInsetsAnimation on Android and keyboard notifications on iOS, so
- * the content moves in the same frames as the keyboard itself.
- *
- * `behavior="padding"` shrinks the content area exactly the way
- * adjustResize would — message lists and inputs rise together — and the
- * library only applies the portion of the keyboard not already absorbed
- * by a system resize, so there is no double lift on any soft-input mode.
+ * With the native module present, the lift is driven by the platform's
+ * own WindowInsetsAnimation so content moves in the same frames as the
+ * keyboard (no chasing, no double-lift — it measures the real overlap).
+ * In Expo Go it degrades to RN's JS-driven avoiding view, which still
+ * lifts the input above the keyboard.
  */
 export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   children,
@@ -42,15 +54,27 @@ export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
     };
   }, [onKeyboardVisibleChange]);
 
+  if (HAS_KEYBOARD_SYNC) {
+    return (
+      <SyncedKeyboardAvoidingView
+        style={[styles.root, style]}
+        behavior="padding"
+        keyboardVerticalOffset={extraOffset}
+        automaticOffset
+      >
+        {children}
+      </SyncedKeyboardAvoidingView>
+    );
+  }
+
   return (
-    <KeyboardAvoidingView
+    <RNKeyboardAvoidingView
       style={[styles.root, style]}
-      behavior="padding"
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       keyboardVerticalOffset={extraOffset}
-      automaticOffset
     >
       {children}
-    </KeyboardAvoidingView>
+    </RNKeyboardAvoidingView>
   );
 };
 
