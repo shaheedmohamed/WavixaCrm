@@ -11,6 +11,7 @@ interface ChatListItemProps {
   conversation: Conversation;
   onPress: () => void;
   onPressIn?: () => void;
+  onAvatarPress?: () => void;
   onLongPress?: () => void;
   currentUserId?: number;
   isMuted?: boolean;
@@ -54,6 +55,7 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
   conversation,
   onPress,
   onPressIn,
+  onAvatarPress,
   onLongPress,
   currentUserId,
   isMuted = false,
@@ -117,9 +119,14 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
         </View>
       )}
 
-      <View style={styles.avatarContainer}>
+      <TouchableOpacity
+        style={styles.avatarContainer}
+        onPress={onAvatarPress}
+        activeOpacity={0.8}
+        disabled={!onAvatarPress}
+      >
         <ChatAvatar conversation={conversation} title={title} size={50} badge />
-      </View>
+      </TouchableOpacity>
 
       <View style={styles.centerInfo}>
         <View style={styles.topRow}>

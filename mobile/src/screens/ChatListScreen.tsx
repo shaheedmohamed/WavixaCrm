@@ -32,7 +32,11 @@ import { playIncomingMessage } from '../services/notifySound';
 import { initNotifications, notifyNewMessage } from '../services/notifications';
 import { useAuth } from '../context/AuthContext';
 import { ChatAvatar } from '../components/ChatAvatar';
-import { ChatList, Conversation, FilterScope, StarredMessageItem } from '../types/crm';
+import { AvatarPeekModal } from '../components/AvatarPeekModal';
+import { MediaViewerModal, GalleryMediaItem } from '../components/MediaViewerModal';
+import { ContactInfoModal } from '../components/ContactInfoModal';
+import { avatarSrc, mediaSrc } from '../services/media';
+import { ChatList, Conversation, FilterScope, Message, StarredMessageItem } from '../types/crm';
 import { Colors } from '../constants/theme';
 
 interface ChatListScreenProps {
@@ -59,7 +63,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStats,
   onOpenStarred,
 }) => {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const insets = useSafeAreaInsets();
   const isAgent = user?.crm_role === 'agent';
 
@@ -89,6 +93,9 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [peekConv, setPeekConv] = useState<Conversation | null>(null);
+  const [infoConv, setInfoConv] = useState<Conversation | null>(null);
+  const [avatarViewer, setAvatarViewer] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
 
   const reqSeq = useRef(0);
   const lastSeenIncoming = useRef<Map<number, string>>(new Map());
@@ -596,6 +603,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           onPress={() => handlePressItem(item)}
           onPressIn={() => chatCache.prefetchThread(item.id)}
           onLongPress={() => handleLongPressItem(item)}
+          onAvatarPress={() => setPeekConv(item)}
         />
       );
     },
@@ -728,6 +736,52 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       );
     },
     [onOpenConversation, debouncedSearch, highlightQuery, msgResultTime]
+  );
+
+  const peekTitle = peekConv
+    ? peekConv.contact_name ||
+      (peekConv.contact_username ? `@${peekConv.contact_username}` : null) ||
+      (peekConv.contact_phone ? `+${peekConv.contact_phone}` : 'عميل')
+    : '';
+
+  const handleExpandAvatar = useCallback(() => {
+    if (!peekConv || !token) return;
+    const uri = avatarSrc(peekConv, token);
+    if (!uri) return;
+    setAvatarViewer({
+      items: [
+        {
+          id: `avatar-${peekConv.id}`,
+          uri,
+          downloadUri: avatarSrc(peekConv, token, true),
+          kind: 'image',
+          senderName: peekTitle,
+        },
+      ],
+      index: 0,
+    });
+  }, [peekConv, token, peekTitle]);
+
+  const handleInfoViewMedia = useCallback(
+    (m: Message) => {
+      const uri = mediaSrc(m, token);
+      if (!uri) return;
+      setAvatarViewer({
+        items: [
+          {
+            id: m.id,
+            uri,
+            downloadUri: uri,
+            kind: m.message_type === 'video' ? 'video' : 'image',
+            caption: m.media_caption || m.message,
+            senderName: m.direction === 'outgoing' ? 'أنت' : m.sender_name || null,
+            timestamp: m.timestamp,
+          },
+        ],
+        index: 0,
+      });
+    },
+    [token]
   );
 
   const messageSection =
@@ -948,6 +1002,45 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onClaimToMine={handleClaimToMine}
         onToggleArchive={handleToggleArchive}
       />
+
+      <AvatarPeekModal
+        conversation={peekConv}
+        title={peekTitle}
+        onClose={() => setPeekConv(null)}
+        onExpand={handleExpandAvatar}
+        onOpenChat={() => {
+          const c = peekConv;
+          setPeekConv(null);
+          if (c) onOpenConversation(c);
+        }}
+        onOpenInfo={() => {
+          setInfoConv(peekConv);
+          setPeekConv(null);
+        }}
+      />
+
+      <MediaViewerModal
+        visible={!!avatarViewer}
+        items={avatarViewer?.items || []}
+        initialIndex={avatarViewer?.index || 0}
+        onClose={() => setAvatarViewer(null)}
+      />
+
+      {infoConv ? (
+        <ContactInfoModal
+          visible={!!infoConv}
+          conversation={infoConv}
+          onClose={() => setInfoConv(null)}
+          onViewMedia={handleInfoViewMedia}
+          onContactRenamed={(newName) => {
+            setInfoConv((prev) => (prev ? { ...prev, contact_name: newName } : prev));
+            setConversations((prev) =>
+              prev.map((c) => (c.id === infoConv.id ? { ...c, contact_name: newName } : c))
+            );
+            chatCache.patchConversationEverywhere(infoConv.id, { contact_name: newName });
+          }}
+        />
+      ) : null}
     </View>
   );
 };
