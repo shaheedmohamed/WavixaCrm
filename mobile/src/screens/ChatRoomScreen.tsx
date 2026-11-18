@@ -16,6 +16,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
 import * as DocumentPicker from 'expo-document-picker';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { MessageBubble } from '../components/MessageBubble';
 import { SwipeableMessageRow } from '../components/SwipeableMessageRow';
 import { ChatAvatar } from '../components/ChatAvatar';
@@ -24,6 +25,7 @@ import { KeyboardSafeView } from '../components/KeyboardSafeView';
 import { ChatInputBar, ChatInputBarHandle } from '../components/ChatInputBar';
 import { AttachmentSheet, AttachmentKind } from '../components/AttachmentSheet';
 import { MediaComposerModal, PendingMedia } from '../components/MediaComposerModal';
+import { CameraCaptureModal } from '../components/CameraCaptureModal';
 import { MediaViewerModal, GalleryMediaItem } from '../components/MediaViewerModal';
 import { MessageActionsSheet } from '../components/MessageActionsSheet';
 import { ContactInfoModal } from '../components/ContactInfoModal';
@@ -49,17 +51,15 @@ interface ChatRoomScreenProps {
   focusMessageId?: number | string | null;
 }
 
-let cachedCameraPerm = false;
 let cachedMediaPerm = false;
 
 export const prewarmMediaPermissions = async () => {
   try {
-    const [c, m] = await Promise.all([
-      ImagePicker.getCameraPermissionsAsync(),
+    const [m, ml] = await Promise.all([
       ImagePicker.getMediaLibraryPermissionsAsync(),
+      MediaLibrary.getPermissionsAsync(),
     ]);
-    if (c.granted) cachedCameraPerm = true;
-    if (m.granted) cachedMediaPerm = true;
+    if (m.granted || ml.granted) cachedMediaPerm = true;
   } catch {}
 };
 
@@ -227,6 +227,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
 
   const [attachVisible, setAttachVisible] = useState(false);
+  const [cameraVisible, setCameraVisible] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [viewerState, setViewerState] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
@@ -735,38 +736,21 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     setMessages((prev) => prev.filter((m) => m.client_temp_id !== msg.client_temp_id));
   }, []);
 
-  const pickMedia = useCallback(async (useCamera = false) => {
+  const pickMedia = useCallback(async () => {
     try {
-      let result: ImagePicker.ImagePickerResult;
-      if (useCamera) {
-        if (!cachedCameraPerm) {
-          const perm = await ImagePicker.requestCameraPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول للكاميرا لالتقاط الصور والفيديو');
-            return;
-          }
-          cachedCameraPerm = true;
+      if (!cachedMediaPerm) {
+        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!perm.granted) {
+          Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول لمعرض الصور والفيديو');
+          return;
         }
-        result = await ImagePicker.launchCameraAsync({
-          mediaTypes: ['images', 'videos'],
-          allowsEditing: false,
-          quality: 1,
-        });
-      } else {
-        if (!cachedMediaPerm) {
-          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-          if (!perm.granted) {
-            Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول لمعرض الصور والفيديو');
-            return;
-          }
-          cachedMediaPerm = true;
-        }
-        result = await ImagePicker.launchImageLibraryAsync({
-          mediaTypes: ['images', 'videos'],
-          allowsEditing: false,
-          quality: 1,
-        });
+        cachedMediaPerm = true;
       }
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'],
+        allowsEditing: false,
+        quality: 1,
+      });
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
@@ -826,9 +810,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         if (kind === 'document') {
           pickDocument();
         } else if (kind === 'camera') {
-          pickMedia(true);
+          setCameraVisible(true);
         } else {
-          pickMedia(false);
+          pickMedia();
         }
       }, 16);
     },
@@ -1432,7 +1416,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             onSendText={handleSendText}
             onSendVoice={handleSendVoice}
             onOpenAttach={() => setAttachVisible(true)}
-            onOpenCameraQuick={() => pickMedia(true)}
+            onOpenCameraQuick={() => setCameraVisible(true)}
             onOpenQuickReplies={() => setQuickRepliesVisible(true)}
           />
         </KeyboardSafeView>
@@ -1479,6 +1463,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         visible={attachVisible}
         onClose={() => setAttachVisible(false)}
         onSelect={handleAttachSelect}
+      />
+
+      <CameraCaptureModal
+        visible={cameraVisible}
+        onClose={() => setCameraVisible(false)}
+        onCaptured={(media) => {
+          setCameraVisible(false);
+          setPendingMedia(media);
+        }}
       />
 
       <MediaComposerModal

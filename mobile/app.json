@@ -57,6 +57,21 @@
           "cameraPermission": "اسمح لتطبيق Wavixa CRM باستخدام الكاميرا لالتقاط الصور والفيديو."
         }
       ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "اسمح لتطبيق Wavixa CRM باستخدام الكاميرا لالتقاط الصور والفيديو وإرسالها.",
+          "microphonePermission": "اسمح لتطبيق Wavixa CRM بتسجيل الصوت أثناء تصوير الفيديو."
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "اسمح لتطبيق Wavixa CRM بالوصول إلى صورك وفيديوهاتك لإرسالها في المحادثات.",
+          "savePhotosPermission": "اسمح لتطبيق Wavixa CRM بحفظ الصور والفيديو في معرضك.",
+          "granularPermissions": ["photo", "video"]
+        }
+      ],
       "expo-document-picker",
       "expo-status-bar"
     ],

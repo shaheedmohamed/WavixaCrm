@@ -1452,7 +1452,7 @@ const styles = StyleSheet.create({
     zIndex: 18,
   },
   subToolbarScroll: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     paddingHorizontal: 14,
     gap: 8,
   },
@@ -1503,7 +1503,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   paletteRow: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     gap: 10,
     paddingVertical: 2,
