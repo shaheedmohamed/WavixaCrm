@@ -8,6 +8,7 @@ import {
   SessionDevice,
   ChatList,
   MediaEditSpec,
+  StarredMessageItem,
 } from '../types/crm';
 
 export interface ConversationsParams {
@@ -269,6 +270,14 @@ export const chatService = {
 
   async getStarredMessages() {
     const response = await apiClient.get('/crm/starred-messages');
+    return response.data;
+  },
+
+  async searchMessages(q: string) {
+    const response = await apiClient.get<{ success: boolean; messages: StarredMessageItem[] }>(
+      '/crm/search/messages',
+      { params: { q } }
+    );
     return response.data;
   },
 

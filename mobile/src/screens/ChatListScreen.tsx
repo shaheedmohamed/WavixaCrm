@@ -31,12 +31,13 @@ import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
 import { playIncomingMessage } from '../services/notifySound';
 import { initNotifications, notifyNewMessage } from '../services/notifications';
 import { useAuth } from '../context/AuthContext';
-import { ChatList, Conversation, FilterScope } from '../types/crm';
+import { ChatAvatar } from '../components/ChatAvatar';
+import { ChatList, Conversation, FilterScope, StarredMessageItem } from '../types/crm';
 import { Colors } from '../constants/theme';
 
 interface ChatListScreenProps {
   activeConversationId?: number | null;
-  onOpenConversation: (conversation: Conversation) => void;
+  onOpenConversation: (conversation: Conversation, focusMessageId?: number | string | null) => void;
   onOpenProfile: () => void;
   onOpenStats: () => void;
   onOpenStarred?: () => void;
@@ -70,6 +71,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [msgResults, setMsgResults] = useState<StarredMessageItem[]>([]);
+  const msgSearchSeq = useRef(0);
   const [selectedScope, setSelectedScope] = useState<FilterScope>('chats');
   const [activeTab, setActiveTab] = useState<BottomTabType>('chats');
   const [prefsTick, setPrefsTick] = useState(0);
@@ -103,6 +106,29 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     }, 220);
     return () => clearTimeout(t);
   }, [searchQuery]);
+
+  // WhatsApp-style global search: while the conversation filter runs on the
+  // server via the `search` param, this parallel query finds matches inside
+  // message bodies, media captions and file names.
+  useEffect(() => {
+    const q = debouncedSearch;
+    // Bump the sequence on every change — an empty query simply never
+    // renders msgResults, and stale async replies are discarded.
+    const seq = ++msgSearchSeq.current;
+    if (!q) return;
+    let alive = true;
+    chatService
+      .searchMessages(q)
+      .then((res) => {
+        if (alive && seq === msgSearchSeq.current && res?.success) {
+          setMsgResults(res.messages || []);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [debouncedSearch]);
 
   const loadChatLists = useCallback(async () => {
     try {
@@ -584,6 +610,134 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     ]
   );
 
+  const highlightQuery = useCallback((text: string, q: string): React.ReactNode => {
+    const needle = q.toLowerCase();
+    if (!needle) return text;
+    const lower = text.toLowerCase();
+    const parts: React.ReactNode[] = [];
+    let i = 0;
+    while (i < text.length) {
+      const idx = lower.indexOf(needle, i);
+      if (idx === -1) {
+        parts.push(text.slice(i));
+        break;
+      }
+      if (idx > i) parts.push(text.slice(i, idx));
+      parts.push(
+        <Text key={`h-${idx}`} style={styles.msgHit}>
+          {text.slice(idx, idx + needle.length)}
+        </Text>
+      );
+      i = idx + needle.length;
+    }
+    return parts;
+  }, []);
+
+  const msgResultTime = useCallback((iso?: string | null): string => {
+    if (!iso) return '';
+    try {
+      const date = new Date(iso);
+      const now = new Date();
+      const isToday =
+        date.getDate() === now.getDate() &&
+        date.getMonth() === now.getMonth() &&
+        date.getFullYear() === now.getFullYear();
+      if (isToday) {
+        let hours = date.getHours();
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const ampm = hours >= 12 ? 'م' : 'ص';
+        hours = hours % 12 || 12;
+        return `${hours}:${minutes} ${ampm}`;
+      }
+      const diffDays = Math.floor((now.getTime() - date.getTime()) / 86400000);
+      if (diffDays === 1) return 'أمس';
+      if (diffDays >= 0 && diffDays < 7) {
+        const days = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+        return days[date.getDay()];
+      }
+      return `${date.getDate()}/${date.getMonth() + 1}`;
+    } catch {
+      return '';
+    }
+  }, []);
+
+  const renderMessageResult = useCallback(
+    (item: StarredMessageItem) => {
+      const conv = item.conversation;
+      if (!conv) return null;
+      const title =
+        conv.contact_name ||
+        (conv.contact_username ? `@${conv.contact_username}` : null) ||
+        (conv.contact_phone ? `+${conv.contact_phone}` : 'عميل');
+      const typeLabel =
+        item.message_type === 'image'
+          ? { icon: 'image-outline' as const, label: 'صورة' }
+          : item.message_type === 'video'
+            ? { icon: 'videocam-outline' as const, label: 'فيديو' }
+            : item.message_type === 'audio' || item.message_type === 'voice'
+              ? { icon: 'mic-outline' as const, label: 'رسالة صوتية' }
+              : item.message_type === 'document'
+                ? { icon: 'document-outline' as const, label: 'مستند' }
+                : item.message_type === 'sticker'
+                  ? { icon: 'happy-outline' as const, label: 'ملصق' }
+                  : null;
+      const body = (item.message || '').trim();
+      const isPlaceholder = !!typeLabel && /^\[.+\]$/.test(body);
+      const text = isPlaceholder
+        ? (item.media_caption || '').trim() || typeLabel!.label
+        : body || (item.media_caption || '').trim() || 'رسالة';
+
+      return (
+        <TouchableOpacity
+          key={`msg-${item.id}`}
+          style={styles.msgRow}
+          activeOpacity={0.65}
+          onPress={() => onOpenConversation(conv, item.id)}
+        >
+          <ChatAvatar conversation={conv} title={title} size={46} />
+          <View style={styles.msgRowBody}>
+            <View style={styles.msgRowTop}>
+              <Text style={styles.msgRowTitle} numberOfLines={1}>
+                {title}
+              </Text>
+              <Text style={styles.msgRowTime}>{msgResultTime(item.timestamp)}</Text>
+            </View>
+            <View style={styles.msgRowPreview}>
+              {typeLabel ? (
+                <Ionicons
+                  name={typeLabel.icon}
+                  size={14}
+                  color="#8696A0"
+                  style={{ marginLeft: 3 }}
+                />
+              ) : null}
+              {item.direction === 'outgoing' ? (
+                <Ionicons
+                  name="checkmark-done"
+                  size={14}
+                  color="#8696A0"
+                  style={{ marginLeft: 3 }}
+                />
+              ) : null}
+              <Text style={styles.msgRowText} numberOfLines={2}>
+                {highlightQuery(text, debouncedSearch)}
+              </Text>
+            </View>
+          </View>
+        </TouchableOpacity>
+      );
+    },
+    [onOpenConversation, debouncedSearch, highlightQuery, msgResultTime]
+  );
+
+  const messageSection =
+    debouncedSearch.length > 0 && msgResults.length > 0 ? (
+      <View style={styles.msgSection}>
+        <Text style={styles.msgSectionTitle}>الرسائل</Text>
+        {msgResults.slice(0, 40).map(renderMessageResult)}
+      </View>
+    ) : null;
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
@@ -627,7 +781,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
             <ActivityIndicator size="large" color={Colors.primary} />
             <Text style={styles.loadingText}>جاري تحميل المحادثات...</Text>
           </View>
-        ) : displayedConversations.length === 0 ? (
+        ) : displayedConversations.length === 0 && !messageSection ? (
           <View style={styles.emptyContainer}>
             <MaterialCommunityIcons
               name={selectedScope === 'favorites' ? 'heart-outline' : 'chat-outline'}
@@ -662,6 +816,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
               index,
             })}
             renderItem={renderItem}
+            ListFooterComponent={messageSection ?? undefined}
             refreshControl={
               <RefreshControl
                 refreshing={refreshing}
@@ -834,6 +989,66 @@ const styles = StyleSheet.create({
     color: '#667781',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  msgSection: {
+    borderTopWidth: 8,
+    borderTopColor: '#F0F2F5',
+    paddingTop: 6,
+    paddingBottom: 12,
+  },
+  msgSectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#8696A0',
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    textAlign: 'right',
+  },
+  msgRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    gap: 10,
+  },
+  msgRowBody: {
+    flex: 1,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E9EDEF',
+    paddingBottom: 8,
+  },
+  msgRowTop: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  msgRowTitle: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111B21',
+    textAlign: 'right',
+  },
+  msgRowTime: {
+    fontSize: 11.5,
+    color: '#8696A0',
+  },
+  msgRowPreview: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    marginTop: 2,
+  },
+  msgRowText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#667781',
+    textAlign: 'right',
+    lineHeight: 18,
+  },
+  msgHit: {
+    color: '#00A884',
+    fontWeight: '800',
   },
   selectionBar: {
     flexDirection: 'row-reverse',
