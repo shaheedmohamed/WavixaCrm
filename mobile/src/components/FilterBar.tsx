@@ -129,13 +129,13 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   scrollContent: {
-    flexDirection: 'row-reverse',
+    flexDirection: 'row',
     paddingHorizontal: 12,
     alignItems: 'center',
     gap: 6,
   },
   chip: {
-    flexDirection: 'row-reverse',
+    flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 11,
     height: 31,
@@ -176,7 +176,7 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
   },
   addListChip: {
-    flexDirection: 'row-reverse',
+    flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 10,
     height: 31,
