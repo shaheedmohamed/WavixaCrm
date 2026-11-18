@@ -22,15 +22,28 @@ export const mediaSrc = (m: Message | null | undefined, token?: string | null): 
 };
 
 // Contact avatar — always ride the backend resolver so signed WhatsApp CDN
-// links never 403 on the device: it serves the locally stored copy first and
-// only redirects to the remote URL when nothing is cached.
+// links never 403 on the device: it serves the locally stored copy first,
+// redirects to the remote URL when nothing is cached, and re-resolves
+// expired/missing pictures through the engine on demand. The request goes
+// out even when contact_avatar is empty — a throttled backend check may
+// find a picture the contact uploaded after the last sync.
 export const avatarSrc = (
   conv: Pick<Conversation, 'id' | 'contact_avatar'> | null | undefined,
   token?: string | null,
   download = false
 ): string | null => {
-  if (!conv?.id || !token || !conv.contact_avatar) return null;
-  return Config.getAvatarUrl(conv.id, token, download);
+  if (!conv?.id || !token) return null;
+  // The endpoint URL never changes, but the picture behind it does — tag the
+  // request with the stored avatar marker so a healed/refreshed row busts
+  // both the RN image cache and any stale failure state.
+  let v = '0';
+  const marker = conv.contact_avatar || '';
+  if (marker) {
+    let h = 0;
+    for (let i = 0; i < marker.length; i++) h = (h * 31 + marker.charCodeAt(i)) | 0;
+    v = String(h);
+  }
+  return Config.getAvatarUrl(conv.id, token, download, v);
 };
 
 // Documents picked under a loose button used to be stored as 'audio' with a

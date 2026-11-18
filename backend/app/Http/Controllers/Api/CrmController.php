@@ -1271,11 +1271,17 @@ class CrmController extends Controller
 
                 // Chats whose own device is offline can't reach the picture
                 // IQ — let any connected session refresh their missing or
-                // expired avatars instead, or they stay blank forever.
+                // expired avatars instead, or they stay blank forever. The
+                // fallback is global on purpose: owners whose only device is
+                // disconnected still deserve healed avatars.
                 $resolverSession = WhatsAppSession::whereIn('id', $allowedSessionIds)
                     ->where('status', 'connected')
                     ->whereNotNull('session_token')
-                    ->first();
+                    ->first()
+                    ?? WhatsAppSession::where('status', 'connected')
+                        ->whereNotNull('session_token')
+                        ->inRandomOrder()
+                        ->first();
                 if ($resolverSession) {
                     $offlineIds = WhatsAppSession::whereIn('id', $allowedSessionIds)
                         ->where('status', '!=', 'connected')
@@ -3719,6 +3725,38 @@ class CrmController extends Controller
                 'Cache-Control' => 'private, max-age=86400',
             ]);
         }
+        // Signed CDN links carry an `oe` expiry — past it they are guaranteed
+        // to 403, so heal through the engine (throttled per conversation) and
+        // serve the fresh local copy instead of a dead redirect.
+        $expired = $conversation->contact_avatar
+            && preg_match('/oe=([0-9A-Fa-f]+)/', $conversation->contact_avatar, $m)
+            && hexdec($m[1]) <= time();
+        $noUrl = !$conversation->contact_avatar
+            || !str_starts_with($conversation->contact_avatar, 'http');
+
+        if (($expired || $noUrl) && $conversation->contact_jid
+            && Cache::add("avatar_heal:{$conversation->id}", 1, $expired ? 600 : 3600)) {
+            $local = app(\App\Services\WhatsAppLidResolver::class)
+                ->refreshConversationAvatar($conversation);
+            if ($local && is_file($file)) {
+                if ($wantsDownload) {
+                    return response()->download($file, "avatar_{$conversation->id}.jpg", [
+                        'Content-Type' => 'image/jpeg',
+                    ]);
+                }
+                return response()->file($file, [
+                    'Content-Type' => 'image/jpeg',
+                    'Cache-Control' => 'private, max-age=86400',
+                ]);
+            }
+            if ($expired) {
+                // The dead link is known-bad — don't send the client to it.
+                return response()->json(['success' => false, 'message' => 'No avatar'], 404);
+            }
+        } elseif ($expired) {
+            return response()->json(['success' => false, 'message' => 'No avatar'], 404);
+        }
+
         // No local copy — fall back to whatever remote URL is stored.
         if ($conversation->contact_avatar && str_starts_with($conversation->contact_avatar, 'http')) {
             if ($wantsDownload) {

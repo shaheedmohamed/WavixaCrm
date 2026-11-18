@@ -22,8 +22,11 @@ const ChatAvatarComponent: React.FC<ChatAvatarProps> = ({
   badge = false,
 }) => {
   const { token } = useAuth();
-  const [failed, setFailed] = useState(false);
+  // Track which uri failed rather than a boolean — when the backend heals the
+  // avatar the versioned url changes and the placeholder auto-retries.
+  const [failedUri, setFailedUri] = useState<string | null>(null);
   const uri = avatarSrc(conversation, token);
+  const failed = uri !== null && uri === failedUri;
 
   const isGroup = conversation.contact_jid?.includes('@g.us');
   const initial = (title || ' ').trim().charAt(0).toUpperCase();
@@ -36,7 +39,7 @@ const ChatAvatarComponent: React.FC<ChatAvatarProps> = ({
         <Image
           source={{ uri }}
           style={{ width: size, height: size, borderRadius: radius, backgroundColor: '#E9EDEF' }}
-          onError={() => setFailed(true)}
+          onError={() => setFailedUri(uri)}
         />
       ) : (
         <View

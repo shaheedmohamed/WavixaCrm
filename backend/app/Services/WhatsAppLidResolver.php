@@ -240,6 +240,65 @@ class WhatsAppLidResolver
         }
     }
 
+    /**
+     * Re-resolve one conversation's avatar on demand via any connected
+     * session, download it into local storage and update the row.
+     * Returns the app-relative local path, or null when it can't be healed.
+     */
+    public function refreshConversationAvatar(WhatsAppConversation $conv): ?string
+    {
+        if (!$conv->contact_jid || str_contains($conv->contact_jid, '@broadcast')) {
+            return null;
+        }
+
+        // Different devices get different picture-IQ results (contacts
+        // privacy), so walk every connected session until one resolves.
+        $sessions = WhatsAppSession::where('status', 'connected')
+            ->whereNotNull('session_token')
+            ->get();
+        if ($sessions->isEmpty()) {
+            return null;
+        }
+
+        $engineUrl = rtrim(config('services.whatsapp.url', 'http://127.0.0.1:3005'), '/');
+        $apiKey = config('services.whatsapp.api_key', 'wavixa-local-api-key-2026');
+
+        foreach ($sessions as $session) {
+            try {
+                $res = Http::withHeaders(['Authorization' => 'Bearer ' . $apiKey])
+                    ->timeout(8)
+                    ->post("{$engineUrl}/internal/picture/resolve", [
+                        'sessionId' => $session->session_token,
+                        'jids' => [$conv->contact_jid],
+                    ]);
+
+                // JIDs contain dots (`x@s.whatsapp.net`) — `json()` dot-path
+                // lookup would always miss, use array access like fetchAvatars.
+                $pictures = $res->ok() ? ($res->json('pictures') ?: []) : [];
+                $url = $pictures[$conv->contact_jid] ?? null;
+                if (!$url) {
+                    continue;
+                }
+
+                $local = $this->storeAvatarLocally($conv->id, $url);
+                $conv->update(['contact_avatar' => $local ?: $url]);
+
+                return $local;
+            } catch (\Throwable $e) {
+                Log::warning('On-demand avatar refresh failed: ' . $e->getMessage());
+            }
+        }
+
+        // A transient picture-IQ miss must not bury a conversation that used
+        // to have a picture — keep the stale URL so the hourly expired-URL
+        // pass retries it, and only stamp the miss marker on rows that never
+        // had one.
+        if ($conv->contact_avatar === null) {
+            $conv->update(['contact_avatar' => '']);
+        }
+        return null;
+    }
+
     /** Download a signed CDN avatar once into local storage; returns the
      *  app-relative path to store (null when the download fails). */
     private function storeAvatarLocally(int $convId, string $url): ?string

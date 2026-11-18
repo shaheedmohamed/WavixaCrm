@@ -7,8 +7,8 @@ export const Config = {
   getMediaUrl: (mediaId: number | string, token: string, download = false) =>
     `https://crm.wavixa.net/api/crm/media/${mediaId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}`,
 
-  getAvatarUrl: (convId: number | string, token: string, download = false) =>
-    `https://crm.wavixa.net/api/crm/avatar/${convId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}`,
+  getAvatarUrl: (convId: number | string, token: string, download = false, version?: string) =>
+    `https://crm.wavixa.net/api/crm/avatar/${convId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}${version ? `&v=${encodeURIComponent(version)}` : ''}`,
 
   // App Metadata
   appName: 'Wavixa CRM',
