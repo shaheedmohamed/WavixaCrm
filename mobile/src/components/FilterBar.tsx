@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { ScrollView, TouchableOpacity, Text, StyleSheet, View } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { Colors } from '../constants/theme';
@@ -27,6 +27,9 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
   onLongPressCustomList,
 }) {
   const customLists = chatLists.filter((l) => l.name !== FAVORITES_LIST_NAME);
+
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const userScrolledRef = useRef(false);
 
   const baseFilters: {
     id: FilterScope;
@@ -64,9 +67,23 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
   return (
     <View style={styles.wrapper}>
       <ScrollView
+        ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
+        onContentSizeChange={() => {
+          // row-reverse pins the first chip (الشاتات) to the content's
+          // right edge, but offset 0 shows the left edge (المؤرشفة). Keep
+          // the visual start anchored until the user scrolls manually.
+          if (!userScrolledRef.current) {
+            requestAnimationFrame(() =>
+              scrollRef.current?.scrollToEnd({ animated: false })
+            );
+          }
+        }}
+        onScrollBeginDrag={() => {
+          userScrolledRef.current = true;
+        }}
       >
         {baseFilters.map((item) => {
           const isActive = selectedScope === item.id;
@@ -129,13 +146,13 @@ const styles = StyleSheet.create({
     paddingVertical: 7,
   },
   scrollContent: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     paddingHorizontal: 12,
     alignItems: 'center',
     gap: 6,
   },
   chip: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     paddingHorizontal: 11,
     height: 31,
@@ -176,7 +193,7 @@ const styles = StyleSheet.create({
     color: Colors.primaryDark,
   },
   addListChip: {
-    flexDirection: 'row',
+    flexDirection: 'row-reverse',
     alignItems: 'center',
     paddingHorizontal: 10,
     height: 31,
