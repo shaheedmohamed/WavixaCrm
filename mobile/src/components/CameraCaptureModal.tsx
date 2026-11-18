@@ -33,6 +33,7 @@ interface RecentItem {
 
 interface CameraCaptureModalProps {
   visible: boolean;
+  paused?: boolean;
   onClose: () => void;
   onCaptured: (media: PendingMedia) => void;
 }
@@ -93,20 +94,24 @@ const RecentThumb = React.memo(function RecentThumb({
 
 export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   visible,
+  paused = false,
   onClose,
   onCaptured,
 }) => {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      {visible && <CameraCaptureBody onClose={onClose} onCaptured={onCaptured} />}
+      {visible && (
+        <CameraCaptureBody paused={paused} onClose={onClose} onCaptured={onCaptured} />
+      )}
     </Modal>
   );
 };
 
 const CameraCaptureBody: React.FC<{
+  paused: boolean;
   onClose: () => void;
   onCaptured: (media: PendingMedia) => void;
-}> = ({ onClose, onCaptured }) => {
+}> = ({ paused, onClose, onCaptured }) => {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
 
@@ -196,6 +201,15 @@ const CameraCaptureBody: React.FC<{
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Freeze the live preview while the composer sits on top — resumes the
+  // instant it closes, so returning feels instant like WhatsApp.
+  useEffect(() => {
+    const cam = cameraRef.current;
+    if (!cam) return;
+    if (paused) cam.pausePreview().catch(() => {});
+    else cam.resumePreview().catch(() => {});
+  }, [paused]);
 
   const emitCaptured = useCallback(
     (media: PendingMedia) => {

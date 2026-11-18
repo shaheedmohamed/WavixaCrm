@@ -228,6 +228,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const [attachVisible, setAttachVisible] = useState(false);
   const [cameraVisible, setCameraVisible] = useState(false);
+  const [cameraPaused, setCameraPaused] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
   const [viewerState, setViewerState] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
@@ -806,15 +807,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const handleAttachSelect = useCallback(
     (kind: AttachmentKind) => {
       setAttachVisible(false);
-      setTimeout(() => {
-        if (kind === 'document') {
-          pickDocument();
-        } else if (kind === 'camera') {
-          setCameraVisible(true);
-        } else {
-          pickMedia();
-        }
-      }, 16);
+      if (kind === 'document') {
+        pickDocument();
+      } else if (kind === 'camera') {
+        // Slides up over the fading sheet — chat never flashes between steps.
+        setCameraVisible(true);
+      } else {
+        pickMedia();
+      }
     },
     [pickDocument, pickMedia]
   );
@@ -1467,9 +1467,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
       <CameraCaptureModal
         visible={cameraVisible}
-        onClose={() => setCameraVisible(false)}
-        onCaptured={(media) => {
+        paused={cameraPaused}
+        onClose={() => {
           setCameraVisible(false);
+          setCameraPaused(false);
+        }}
+        onCaptured={(media) => {
+          // Camera stays mounted underneath — the composer fades in over it
+          // with zero chat flash, and cancelling returns to a live camera.
+          setCameraPaused(true);
           setPendingMedia(media);
         }}
       />
@@ -1477,11 +1483,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       <MediaComposerModal
         media={pendingMedia}
         recipientName={contactTitle}
-        onClose={() => setPendingMedia(null)}
+        onClose={() => {
+          setPendingMedia(null);
+          setCameraPaused(false);
+        }}
         onSend={(caption, editSpec) => {
           if (pendingMedia) {
             enqueueOptimisticMedia(pendingMedia, caption, editSpec);
           }
+          setCameraVisible(false);
+          setCameraPaused(false);
         }}
       />
 
