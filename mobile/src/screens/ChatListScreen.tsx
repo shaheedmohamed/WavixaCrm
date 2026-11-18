@@ -569,15 +569,15 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const handleBottomTabPress = useCallback(
     (tab: BottomTabType) => {
       setActiveTab(tab);
-      if (tab === 'filters') {
-        setSelectedScope((prev) => (prev === 'unread' ? 'chats' : 'unread'));
-      } else if (tab === 'stats') {
-        onOpenStats();
+      if (tab === 'starred') {
+        onOpenStarred?.();
+      } else if (tab === 'replies') {
+        setQuickRepliesVisible(true);
       } else if (tab === 'settings') {
         onOpenProfile();
       }
     },
-    [onOpenStats, onOpenProfile]
+    [onOpenStarred, onOpenProfile]
   );
 
   const renderItem = useCallback(
@@ -894,6 +894,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onOpenNewChat={() => setNewChatVisible(true)}
         onOpenQuickReplies={() => setQuickRepliesVisible(true)}
         onOpenStarred={onOpenStarred}
+        onOpenStats={onOpenStats}
         onOpenArchived={!isAgent ? () => setSelectedScope('archived') : undefined}
         onOpenProfile={onOpenProfile}
       />

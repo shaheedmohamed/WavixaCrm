@@ -1,10 +1,10 @@
 import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { MaterialCommunityIcons, Ionicons, Feather } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/theme';
 
-export type BottomTabType = 'chats' | 'filters' | 'stats' | 'settings';
+export type BottomTabType = 'chats' | 'starred' | 'replies' | 'settings';
 
 interface BottomNavProps {
   activeTab: BottomTabType;
@@ -55,26 +55,26 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {activeTab === 'chats' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
-      {/* 2. Filters */}
+      {/* 2. Starred messages */}
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => onTabPress('filters')}
+        onPress={() => onTabPress('starred')}
         activeOpacity={0.7}
       >
-        <Feather
-          name="filter"
-          size={20}
-          color={activeTab === 'filters' ? Colors.primary : '#8696A0'}
+        <Ionicons
+          name={activeTab === 'starred' ? 'star' : 'star-outline'}
+          size={21}
+          color={activeTab === 'starred' ? Colors.primary : '#8696A0'}
         />
         <Text
           style={[
             styles.tabLabel,
-            activeTab === 'filters' && styles.tabLabelActive,
+            activeTab === 'starred' && styles.tabLabelActive,
           ]}
         >
-          الفلاتر
+          المميزة
         </Text>
-        {activeTab === 'filters' && <View style={styles.activeIndicator} />}
+        {activeTab === 'starred' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
       {/* 3. Center Floating Action Button (New Chat) */}
@@ -88,26 +88,26 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* 4. Stats */}
+      {/* 4. Quick replies */}
       <TouchableOpacity
         style={styles.tabItem}
-        onPress={() => onTabPress('stats')}
+        onPress={() => onTabPress('replies')}
         activeOpacity={0.7}
       >
-        <Ionicons
-          name={activeTab === 'stats' ? 'bar-chart' : 'bar-chart-outline'}
-          size={20}
-          color={activeTab === 'stats' ? Colors.primary : '#8696A0'}
+        <MaterialCommunityIcons
+          name={activeTab === 'replies' ? 'reply-all' : 'reply-all-outline'}
+          size={21}
+          color={activeTab === 'replies' ? Colors.primary : '#8696A0'}
         />
         <Text
           style={[
             styles.tabLabel,
-            activeTab === 'stats' && styles.tabLabelActive,
+            activeTab === 'replies' && styles.tabLabelActive,
           ]}
         >
-          الإحصائيات
+          ردود سريعة
         </Text>
-        {activeTab === 'stats' && <View style={styles.activeIndicator} />}
+        {activeTab === 'replies' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
       {/* 5. Settings */}

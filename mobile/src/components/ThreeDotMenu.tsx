@@ -20,6 +20,7 @@ interface ThreeDotMenuProps {
   onOpenProfile?: () => void;
   onOpenNewChat?: () => void;
   onOpenStarred?: () => void;
+  onOpenStats?: () => void;
 }
 
 export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
@@ -31,6 +32,7 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
   onOpenProfile,
   onOpenNewChat,
   onOpenStarred,
+  onOpenStats,
 }) => {
   const { user, logout, isAgent } = useAuth();
 
@@ -108,6 +110,16 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
                 >
                   <Ionicons name="star-outline" size={20} color="#111B21" />
                   <Text style={styles.menuItemText}>الرسائل المميزة</Text>
+                </TouchableOpacity>
+              )}
+
+              {onOpenStats && (
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => handleAction(onOpenStats)}
+                >
+                  <Ionicons name="bar-chart-outline" size={20} color="#111B21" />
+                  <Text style={styles.menuItemText}>الإحصائيات</Text>
                 </TouchableOpacity>
               )}
 
