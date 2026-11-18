@@ -24,6 +24,7 @@ import { NewChatModal } from '../components/NewChatModal';
 import { QuickReplyModal } from '../components/QuickReplyModal';
 import { ChatContextMenuModal } from '../components/ChatContextMenuModal';
 import { AddToListModal } from '../components/AddToListModal';
+import { prewarmMediaPermissions } from './ChatRoomScreen';
 import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
@@ -125,6 +126,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       if (cached && cached.length > 0) {
         setConversations((prev) => (prev.length === 0 ? cached : prev));
         setInitialLoading(false);
+        chatCache.prefetchConversations(cached.slice(0, 10).map((c) => c.id));
       }
       const cachedLists = chatCache.getChatLists();
       if (cachedLists.length > 0) {
@@ -139,6 +141,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     initNotifications().then((ok) => {
       notifReady.current = ok;
     });
+    prewarmMediaPermissions().catch(() => {});
     return () => {
       alive = false;
       unsub();
@@ -217,6 +220,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           firstSyncDone.current = true;
 
           chatCache.setConversations(cacheKey, res.conversations);
+          chatCache.prefetchConversations(res.conversations.slice(0, 15).map((c) => c.id));
 
           setConversations((prev) => {
             if (prev.length !== res.conversations.length) return res.conversations;
@@ -564,6 +568,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           selectionMode={selectionMode}
           isSelected={selectedIds.has(item.id)}
           onPress={() => handlePressItem(item)}
+          onPressIn={() => chatCache.prefetchThread(item.id)}
           onLongPress={() => handleLongPressItem(item)}
         />
       );

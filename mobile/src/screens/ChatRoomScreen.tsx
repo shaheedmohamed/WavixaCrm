@@ -49,6 +49,20 @@ interface ChatRoomScreenProps {
   focusMessageId?: number | string | null;
 }
 
+let cachedCameraPerm = false;
+let cachedMediaPerm = false;
+
+export const prewarmMediaPermissions = async () => {
+  try {
+    const [c, m] = await Promise.all([
+      ImagePicker.getCameraPermissionsAsync(),
+      ImagePicker.getMediaLibraryPermissionsAsync(),
+    ]);
+    if (c.granted) cachedCameraPerm = true;
+    if (m.granted) cachedMediaPerm = true;
+  } catch {}
+};
+
 const dayKey = (t?: string | null) => {
   if (!t) return '';
   const d = new Date(t);
@@ -173,7 +187,25 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const cachedThread = useMemo(() => chatCache.getThread(initialConv.id), [initialConv.id]);
 
   const [conversation, setConversation] = useState<Conversation>(initialConv);
-  const [messages, setMessages] = useState<Message[]>(() => cachedThread?.messages || []);
+  const [messages, setMessages] = useState<Message[]>(() => {
+    if (cachedThread?.messages && cachedThread.messages.length > 0) {
+      return cachedThread.messages;
+    }
+    if (initialConv.last_message) {
+      const synthetic: Message = {
+        id: initialConv.pinned_message_id || -1,
+        message_id: `last-${initialConv.id}`,
+        conversation_id: initialConv.id,
+        direction: initialConv.last_message_direction || 'incoming',
+        message_type: initialConv.last_message_type || 'text',
+        message: initialConv.last_message,
+        timestamp: initialConv.last_message_at || new Date().toISOString(),
+        status: initialConv.last_message_status || 'read',
+      };
+      return [synthetic];
+    }
+    return [];
+  });
   const [pinnedMsg, setPinnedMsg] = useState<PinnedPreview | null>(
     () => cachedThread?.pinned || null
   );
@@ -181,7 +213,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     () => cachedThread?.hasMore ?? false
   );
   const [loadingOlder, setLoadingOlder] = useState(false);
-  const [initialLoading, setInitialLoading] = useState(() => !cachedThread?.messages?.length);
+  const [initialLoading, setInitialLoading] = useState(
+    () => !cachedThread?.messages?.length && !initialConv.last_message
+  );
 
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
   const [highlightedMsgKey, setHighlightedMsgKey] = useState<string | number | null>(null);
@@ -692,6 +726,10 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     [executeTextSend, executeMediaUpload]
   );
 
+  useEffect(() => {
+    prewarmMediaPermissions();
+  }, []);
+
   const handleDismissFailed = useCallback((msg: Message) => {
     if (!msg.client_temp_id) return;
     setMessages((prev) => prev.filter((m) => m.client_temp_id !== msg.client_temp_id));
@@ -701,24 +739,32 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     try {
       let result: ImagePicker.ImagePickerResult;
       if (useCamera) {
-        const perm = await ImagePicker.requestCameraPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول للكاميرا لالتقاط الصور والفيديو');
-          return;
+        if (!cachedCameraPerm) {
+          const perm = await ImagePicker.requestCameraPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول للكاميرا لالتقاط الصور والفيديو');
+            return;
+          }
+          cachedCameraPerm = true;
         }
         result = await ImagePicker.launchCameraAsync({
           mediaTypes: ['images', 'videos'],
-          quality: 0.88,
+          allowsEditing: false,
+          quality: 1,
         });
       } else {
-        const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-        if (!perm.granted) {
-          Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول لمعرض الصور والفيديو');
-          return;
+        if (!cachedMediaPerm) {
+          const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+          if (!perm.granted) {
+            Alert.alert('الصلاحية مطلوبة', 'يرجى السماح بالوصول لمعرض الصور والفيديو');
+            return;
+          }
+          cachedMediaPerm = true;
         }
         result = await ImagePicker.launchImageLibraryAsync({
           mediaTypes: ['images', 'videos'],
-          quality: 0.88,
+          allowsEditing: false,
+          quality: 1,
         });
       }
 
@@ -756,7 +802,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: '*/*',
-        copyToCacheDirectory: true,
+        copyToCacheDirectory: false,
       });
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
@@ -774,15 +820,17 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   }, []);
 
   const handleAttachSelect = useCallback(
-    async (kind: AttachmentKind) => {
+    (kind: AttachmentKind) => {
       setAttachVisible(false);
-      if (kind === 'document') {
-        await pickDocument();
-      } else if (kind === 'camera') {
-        await pickMedia(true);
-      } else {
-        await pickMedia(false);
-      }
+      setTimeout(() => {
+        if (kind === 'document') {
+          pickDocument();
+        } else if (kind === 'camera') {
+          pickMedia(true);
+        } else {
+          pickMedia(false);
+        }
+      }, 16);
     },
     [pickDocument, pickMedia]
   );
@@ -1264,51 +1312,51 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           onKeyboardVisibleChange={setIsKeyboardVisible}
         >
           {initialLoading && invertedMessages.length === 0 ? (
-            <View style={styles.centerLoading}>
-              <ActivityIndicator color={Colors.primary} size="large" />
-              <Text style={styles.loadingText}>جاري تحميل الرسائل...</Text>
+            <View style={styles.topSyncPill}>
+              <ActivityIndicator color={Colors.primary} size="small" />
+              <Text style={styles.topSyncText}>جاري مزامنة المحادثة...</Text>
             </View>
-          ) : (
-            <FlatList
-              ref={flatListRef}
-              data={invertedMessages}
-              inverted
-              keyExtractor={(item) => String(item.client_temp_id || item.id || item.message_id)}
-              contentContainerStyle={styles.messagesList}
-              keyboardShouldPersistTaps="handled"
-              keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
-              removeClippedSubviews={false}
-              maxToRenderPerBatch={12}
-              windowSize={9}
-              initialNumToRender={14}
-              onEndReached={handleLoadOlder}
-              onEndReachedThreshold={0.35}
-              onScrollToIndexFailed={(info) => {
-                flatListRef.current?.scrollToOffset({
-                  offset: info.averageItemLength * info.index,
-                  animated: true,
-                });
-              }}
-              ListFooterComponent={
-                loadingOlder ? (
-                  <View style={styles.olderLoaderWrap}>
-                    <ActivityIndicator size="small" color={Colors.primary} />
-                  </View>
-                ) : undefined
+          ) : null}
+
+          <FlatList
+            ref={flatListRef}
+            data={invertedMessages}
+            inverted
+            keyExtractor={(item) => String(item.client_temp_id || item.id || item.message_id)}
+            contentContainerStyle={styles.messagesList}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'none'}
+            removeClippedSubviews={false}
+            maxToRenderPerBatch={12}
+            windowSize={9}
+            initialNumToRender={14}
+            onEndReached={handleLoadOlder}
+            onEndReachedThreshold={0.35}
+            onScrollToIndexFailed={(info) => {
+              flatListRef.current?.scrollToOffset({
+                offset: info.averageItemLength * info.index,
+                animated: true,
+              });
+            }}
+            ListFooterComponent={
+              loadingOlder ? (
+                <View style={styles.olderLoaderWrap}>
+                  <ActivityIndicator size="small" color={Colors.primary} />
+                </View>
+              ) : undefined
+            }
+            onScroll={(e) => {
+              const y = e.nativeEvent.contentOffset.y;
+              const up = y > 220;
+              if (up !== scrolledUpRef.current) {
+                scrolledUpRef.current = up;
+                setShowScrollBottom(up);
+                if (!up) setNewBelowCount(0);
               }
-              onScroll={(e) => {
-                const y = e.nativeEvent.contentOffset.y;
-                const up = y > 220;
-                if (up !== scrolledUpRef.current) {
-                  scrolledUpRef.current = up;
-                  setShowScrollBottom(up);
-                  if (!up) setNewBelowCount(0);
-                }
-              }}
-              scrollEventThrottle={64}
-              renderItem={renderMessageItem}
-            />
-          )}
+            }}
+            scrollEventThrottle={64}
+            renderItem={renderMessageItem}
+          />
 
           {showScrollBottom && (
             <TouchableOpacity
@@ -1623,6 +1671,28 @@ const styles = StyleSheet.create({
   },
   keyboardArea: {
     flex: 1,
+  },
+  topSyncPill: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.92)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    marginTop: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 3,
+    zIndex: 10,
+  },
+  topSyncText: {
+    fontSize: 12,
+    color: '#008069',
+    fontWeight: '600',
   },
   centerLoading: {
     flex: 1,

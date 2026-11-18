@@ -46,7 +46,6 @@ export const AttachmentSheet: React.FC<AttachmentSheetProps> = ({ visible, onClo
                 key={item.kind}
                 style={styles.item}
                 onPress={() => {
-                  onClose();
                   onSelect(item.kind);
                 }}
                 activeOpacity={0.7}

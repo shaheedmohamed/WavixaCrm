@@ -37,7 +37,7 @@ export default function IndexPage() {
     (next: OverlayView, conv: Conversation | null = null) => {
       if (conv) setSelectedConversation(conv);
       setOverlayView(next);
-      setOverlayMounted(false);
+      setOverlayMounted(true);
       slideAnim.setValue(1);
       Animated.timing(slideAnim, {
         toValue: 0,
@@ -45,11 +45,6 @@ export default function IndexPage() {
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start();
-      // Mount the heavy screen a couple of frames later so the slide-in
-      // starts on a free JS thread instead of competing with the mount.
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => setOverlayMounted(true));
-      });
     },
     [slideAnim]
   );

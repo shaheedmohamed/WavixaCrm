@@ -1,11 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { ChatList, Conversation, Message, PinnedPreview } from '../types/crm';
+import { chatService } from './chatService';
 
 const CONVS_STORAGE_KEY = 'wavixa_cache_convs_v1';
 const MSGS_STORAGE_KEY = 'wavixa_cache_msgs_v1';
 const LISTS_STORAGE_KEY = 'wavixa_cache_lists_v1';
 
-interface CachedThread {
+export interface CachedThread {
   messages: Message[];
   pinned: PinnedPreview | null;
   hasMore: boolean;
@@ -14,6 +15,9 @@ interface CachedThread {
 
 const convsMemory = new Map<string, Conversation[]>();
 const msgsMemory = new Map<number, CachedThread>();
+const inFlightPrefetches = new Map<number, Promise<CachedThread | null>>();
+let prefetchQueue: number[] = [];
+let isQueueRunning = false;
 let listsMemory: ChatList[] = [];
 let hydrated = false;
 let hydratePromise: Promise<void> | null = null;
@@ -107,7 +111,7 @@ export const chatCache = {
     saveMsgsTimer = setTimeout(() => {
       const entries = Array.from(msgsMemory.entries())
         .sort((a, b) => b[1].updatedAt - a[1].updatedAt)
-        .slice(0, 35);
+        .slice(0, 50);
       const serializable: Record<string, CachedThread> = {};
       for (const [id, thread] of entries) {
         serializable[String(id)] = {
@@ -127,5 +131,82 @@ export const chatCache = {
   setChatLists(lists: ChatList[]) {
     listsMemory = lists;
     AsyncStorage.setItem(LISTS_STORAGE_KEY, JSON.stringify(lists)).catch(() => {});
+  },
+
+  async prefetchThread(
+    conversationId: number,
+    options?: { force?: boolean }
+  ): Promise<CachedThread | null> {
+    if (!conversationId) return null;
+    const existing = msgsMemory.get(conversationId);
+    const now = Date.now();
+    // Return cached thread if fresh (within 90s) unless forced
+    if (!options?.force && existing && existing.messages.length > 0 && now - existing.updatedAt < 90000) {
+      return existing;
+    }
+    // Deduplicate in-flight requests
+    const inFlight = inFlightPrefetches.get(conversationId);
+    if (inFlight) return inFlight;
+
+    const promise = (async () => {
+      try {
+        const res = await chatService.getMessages(conversationId, { limit: 30 });
+        if (res?.success && Array.isArray(res.messages)) {
+          chatCache.setThread(conversationId, {
+            messages: res.messages,
+            pinned: res.pinned ?? null,
+            hasMore: Boolean(res.has_more),
+          });
+          return msgsMemory.get(conversationId) || null;
+        }
+      } catch {
+        // Silently catch background prefetch errors
+      } finally {
+        inFlightPrefetches.delete(conversationId);
+      }
+      return msgsMemory.get(conversationId) || null;
+    })();
+
+    inFlightPrefetches.set(conversationId, promise);
+    return promise;
+  },
+
+  prefetchConversations(conversationIds: number[]) {
+    const now = Date.now();
+    const needed = conversationIds
+      .filter((id) => {
+        if (!id) return false;
+        const cached = msgsMemory.get(id);
+        if (!cached || cached.messages.length === 0) return true;
+        return now - cached.updatedAt > 120000;
+      })
+      .slice(0, 20);
+
+    if (needed.length === 0) return;
+
+    for (const id of needed) {
+      if (!prefetchQueue.includes(id)) {
+        prefetchQueue.push(id);
+      }
+    }
+
+    if (!isQueueRunning) {
+      this._runPrefetchQueue();
+    }
+  },
+
+  async _runPrefetchQueue() {
+    if (isQueueRunning) return;
+    isQueueRunning = true;
+    try {
+      while (prefetchQueue.length > 0) {
+        const batch = prefetchQueue.splice(0, 2);
+        await Promise.all(batch.map((id) => this.prefetchThread(id)));
+        // Brief yield to avoid holding the JS thread
+        await new Promise((r) => setTimeout(r, 80));
+      }
+    } finally {
+      isQueueRunning = false;
+    }
   },
 };

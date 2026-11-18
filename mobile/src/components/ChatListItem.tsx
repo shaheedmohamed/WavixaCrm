@@ -10,6 +10,7 @@ export const CHAT_LIST_ITEM_HEIGHT = 78;
 interface ChatListItemProps {
   conversation: Conversation;
   onPress: () => void;
+  onPressIn?: () => void;
   onLongPress?: () => void;
   currentUserId?: number;
   isMuted?: boolean;
@@ -52,6 +53,7 @@ const formatTime = (isoString?: string | null) => {
 const ChatListItemComponent: React.FC<ChatListItemProps> = ({
   conversation,
   onPress,
+  onPressIn,
   onLongPress,
   currentUserId,
   isMuted = false,
@@ -104,6 +106,7 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
     <TouchableOpacity
       style={[styles.card, isSelected && styles.cardSelected]}
       onPress={onPress}
+      onPressIn={onPressIn}
       onLongPress={onLongPress}
       delayLongPress={260}
       activeOpacity={0.72}

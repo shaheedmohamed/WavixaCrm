@@ -10,6 +10,7 @@ import {
   GestureResponderEvent,
   ScrollView,
   Platform,
+  Dimensions,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
@@ -97,7 +98,10 @@ const MediaComposerBody: React.FC<{
     w: media.width && media.width > 0 ? media.width : 1000,
     h: media.height && media.height > 0 ? media.height : 1000,
   }));
-  const [stageSize, setStageSize] = useState<{ w: number; h: number }>({ w: 360, h: 480 });
+  const [stageSize, setStageSize] = useState<{ w: number; h: number }>(() => {
+    const { width, height } = Dimensions.get('window');
+    return { w: width, h: Math.max(300, height - 200) };
+  });
 
   const [rotation, setRotation] = useState(0);
   const [appliedCrop, setAppliedCrop] = useState<CropRect>(DEFAULT_CROP);
