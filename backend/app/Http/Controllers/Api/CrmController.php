@@ -1783,7 +1783,13 @@ class CrmController extends Controller
             }
             $resolvedPhone = $resolved[$digits] ?? $digits;
             $bookName = $resolvedPhone ? ($book[substr($resolvedPhone, -10)] ?? null) : null;
-            $m->sender_name = $bookName ?: ($pushnames[$m->from] ?? $m->sender_name);
+            $name = $bookName ?: ($pushnames[$m->from] ?? $m->sender_name);
+            // Bare diacritics (e.g. a stored pushname of just 'ْ') read as a
+            // broken sender label — fall back to the phone number instead.
+            if ($name && !preg_match('/[\p{L}\p{N}]/u', (string) $name)) {
+                $name = null;
+            }
+            $m->sender_name = $name;
             $m->sender_phone = $resolvedPhone ?: null;
         });
     }
