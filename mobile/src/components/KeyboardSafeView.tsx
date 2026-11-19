@@ -1,18 +1,18 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Keyboard,
-  KeyboardAvoidingView as RNKeyboardAvoidingView,
   Platform,
   StyleProp,
   StyleSheet,
   TurboModuleRegistry,
+  useWindowDimensions,
+  View,
   ViewStyle,
 } from 'react-native';
 
 // react-native-keyboard-controller only exists in dev builds / release
-// APKs — Expo Go does not bundle it. Probe the turbo module directly and
-// fall back to React Native's own KeyboardAvoidingView so the input is
-// never left buried under the keyboard there.
+// APKs — Expo Go does not bundle it. Probe the turbo module directly so
+// _layout can skip the provider there.
 export const HAS_KEYBOARD_SYNC =
   Platform.OS !== 'web' &&
   TurboModuleRegistry.get('KeyboardController') != null;
@@ -25,18 +25,17 @@ interface KeyboardSafeViewProps {
 }
 
 /**
- * Keyboard-safe wrapper.
+ * Keyboard-safe wrapper — pure geometric measurement, no KAV library.
  *
- * Uses RN's own KeyboardAvoidingView (height on Android, padding on
- * iOS). RN's Keyboard events come from the global layout listener —
- * independent of the keyboard-controller event pipeline, so they fire
- * on every device. 'height' measures the real view-vs-keyboard overlap:
- * when the window is already resized (adjustResize, non-edge-to-edge)
- * the overlap is zero and it stays out of the way; under edge-to-edge
- * it shrinks the container by the IME height.
+ * When the keyboard shows we measure this view's bottom edge on the
+ * screen and compare it to the keyboard's top edge (`screenY`). The
+ * overlap is exactly how much we need to lift:
  *
- * The root KeyboardProvider stays mounted with enabled={false} so the
- * lib's animated pipeline can't suppress the resize margin path.
+ * - Edge-to-edge → our bottom edge sits at the screen bottom, overlap =
+ *   full IME height → we pad up ourselves.
+ * - adjustResize active → the window already shrank, our bottom edge is
+ *   at/above the keyboard top, overlap = 0 → we do nothing (no double
+ *   lift, whatever the OS/OEM decides).
  */
 export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   children,
@@ -44,28 +43,76 @@ export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   extraOffset = 4,
   onKeyboardVisibleChange,
 }) => {
+  const rootRef = useRef<React.ComponentRef<typeof View>>(null);
+  const [lift, setLift] = useState(0);
+  // Recompute the lift if the window geometry itself changes (resize
+  // finishing after the keyboard event, rotation, split-screen…).
+  const { height: windowH } = useWindowDimensions();
+  const lastKbTop = useRef<number | null>(null);
+
   useEffect(() => {
-    if (!onKeyboardVisibleChange || Platform.OS === 'web') return;
-    const showSub = Keyboard.addListener('keyboardDidShow', () =>
-      onKeyboardVisibleChange(true)
-    );
-    const hideSub = Keyboard.addListener('keyboardDidHide', () =>
-      onKeyboardVisibleChange(false)
-    );
+    if (Platform.OS === 'web') return;
+    const measureLift = () => {
+      const top = lastKbTop.current;
+      if (top == null) return;
+      // Defer one frame so an in-flight window resize settles into layout.
+      requestAnimationFrame(() => {
+        rootRef.current?.measure(
+          (_x: number, _y: number, _w: number, h: number, _pageX: number, pageY: number) => {
+            const overlap = Math.max(0, pageY + h - top);
+            setLift(overlap);
+          }
+        );
+      });
+    };
+
+    const show = (e: { endCoordinates: { screenY: number } }) => {
+      lastKbTop.current = e.endCoordinates.screenY;
+      onKeyboardVisibleChange?.(true);
+      measureLift();
+    };
+    const hide = () => {
+      lastKbTop.current = null;
+      setLift(0);
+      onKeyboardVisibleChange?.(false);
+    };
+    const subs = [
+      Keyboard.addListener('keyboardDidShow', show),
+      Keyboard.addListener('keyboardDidHide', hide),
+      // iOS (and newer Android RN) fire the Will events — harmless
+      // duplicates that let the lift start a beat earlier.
+      Keyboard.addListener('keyboardWillShow', show),
+      Keyboard.addListener('keyboardWillHide', hide),
+    ];
     return () => {
-      showSub.remove();
-      hideSub.remove();
+      subs.forEach((s) => s.remove());
     };
   }, [onKeyboardVisibleChange]);
 
+  // Window changed while the keyboard is open (delayed resize, rotation,
+  // split-screen drag) → the earlier overlap math is stale; re-measure.
+  useEffect(() => {
+    if (lastKbTop.current == null) return;
+    const id = setTimeout(() => {
+      const top = lastKbTop.current;
+      rootRef.current?.measure((_x: number, _y: number, _w: number, h: number, _px: number, py: number) => {
+        setLift(top == null ? 0 : Math.max(0, py + h - top));
+      });
+    }, 60);
+    return () => clearTimeout(id);
+  }, [windowH]);
+
   return (
-    <RNKeyboardAvoidingView
-      style={[styles.root, style]}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      keyboardVerticalOffset={extraOffset}
+    <View
+      ref={rootRef}
+      style={[
+        styles.root,
+        style,
+        { paddingBottom: lift > 0 ? lift + extraOffset : 0 },
+      ]}
     >
       {children}
-    </RNKeyboardAvoidingView>
+    </View>
   );
 };
 
