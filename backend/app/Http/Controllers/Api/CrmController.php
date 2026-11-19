@@ -1337,19 +1337,15 @@ class CrmController extends Controller
                 $isGroupsScope = $scope === 'groups' || $request->boolean('groups_only');
 
                 if ($isGroupsScope) {
-                    $query->where('contact_jid', 'like', '%@g.us')
-                          ->where('unread_count', '>', 0);
+                    // Groups are collaborative — every agent sees all of them,
+                    // not just ones carrying unread traffic.
+                    $query->where('contact_jid', 'like', '%@g.us');
                 } else {
                     $query->where(function ($q) use ($request) {
                         $q->whereNull('contact_jid')
                           ->orWhere('contact_jid', 'not like', '%@g.us');
                         if ($request->boolean('include_groups')) {
-                            // Merge-in-groups pref: agents still only see the
-                            // groups their 'groups' scope would surface (unread).
-                            $q->orWhere(function ($g) {
-                                $g->where('contact_jid', 'like', '%@g.us')
-                                  ->where('unread_count', '>', 0);
-                            });
+                            $q->orWhere('contact_jid', 'like', '%@g.us');
                         }
                     });
 
@@ -1362,13 +1358,18 @@ class CrmController extends Controller
                                 $q->whereNull('assigned_agent_id')
                                   ->orWhere('assigned_agent_id', $user->id);
                             }),
-                        default => $query->where(function ($q) use ($user) {
+                        default => $query->where(function ($q) use ($user, $request) {
                             // 1) Unclaimed chats with unread messages
                             // 2) Chats currently handled by this agent
                             $q->where(function ($u) {
                                 $u->whereNull('assigned_agent_id')
                                   ->where('unread_count', '>', 0);
                             })->orWhere('assigned_agent_id', $user->id);
+                            if ($request->boolean('include_groups')) {
+                                // Groups merged into chats: collaborative —
+                                // they bypass the claim/unread gating.
+                                $q->orWhere('contact_jid', 'like', '%@g.us');
+                            }
                         }),
                     };
                 }
