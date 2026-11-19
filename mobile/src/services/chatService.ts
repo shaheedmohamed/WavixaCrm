@@ -16,6 +16,7 @@ export interface ConversationsParams {
   scope?: string;
   unread_only?: boolean;
   groups_only?: boolean;
+  include_groups?: boolean;
   archived?: boolean;
   session_id?: number;
   search?: string;
@@ -44,6 +45,9 @@ export const chatService = {
     }
     if (params.groups_only) {
       queryParams.groups_only = 1;
+    }
+    if (params.include_groups) {
+      queryParams.include_groups = 1;
     }
     if (params.archived) {
       queryParams.archived = 1;

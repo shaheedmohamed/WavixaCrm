@@ -12,6 +12,7 @@ interface FilterBarProps {
   favoritesCount?: number;
   chatLists?: ChatList[];
   isAgent?: boolean;
+  hideGroups?: boolean;
   onPressCreateList?: () => void;
   onLongPressCustomList?: (list: ChatList) => void;
 }
@@ -23,6 +24,7 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
   favoritesCount = 0,
   chatLists = [],
   isAgent = false,
+  hideGroups = false,
   onPressCreateList,
   onLongPressCustomList,
 }) {
@@ -46,7 +48,9 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
       icon: 'heart-outline',
       badge: favoritesCount > 0 ? favoritesCount : undefined,
     },
-    { id: 'groups', label: 'المجموعات', icon: 'account-group-outline' },
+    ...(hideGroups
+      ? []
+      : [{ id: 'groups' as FilterScope, label: 'المجموعات', icon: 'account-group-outline' }]),
     { id: 'mine', label: 'محادثاتي', icon: 'account-outline' },
     { id: 'unassigned', label: 'جديد / متاح', icon: 'account-plus-outline' },
     ...customLists.map((l) => ({

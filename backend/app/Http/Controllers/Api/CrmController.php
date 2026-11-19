@@ -1340,9 +1340,17 @@ class CrmController extends Controller
                     $query->where('contact_jid', 'like', '%@g.us')
                           ->where('unread_count', '>', 0);
                 } else {
-                    $query->where(function ($q) {
+                    $query->where(function ($q) use ($request) {
                         $q->whereNull('contact_jid')
                           ->orWhere('contact_jid', 'not like', '%@g.us');
+                        if ($request->boolean('include_groups')) {
+                            // Merge-in-groups pref: agents still only see the
+                            // groups their 'groups' scope would surface (unread).
+                            $q->orWhere(function ($g) {
+                                $g->where('contact_jid', 'like', '%@g.us')
+                                  ->where('unread_count', '>', 0);
+                            });
+                        }
                     });
 
                     match ($scope) {
@@ -1375,9 +1383,13 @@ class CrmController extends Controller
         } else {
             // Owners and admins keep full visibility across all conversations and tabs.
             match ($scope) {
-                'chats' => $query->where(function ($q) {
-                    $q->whereNull('contact_jid')->orWhere('contact_jid', 'not like', '%@g.us');
-                })->whereNull('resolved_at'),
+                'chats' => $query->when(
+                    !$request->boolean('include_groups'),
+                    fn ($q) => $q->where(function ($w) {
+                        $w->whereNull('contact_jid')
+                          ->orWhere('contact_jid', 'not like', '%@g.us');
+                    })
+                )->whereNull('resolved_at'),
                 'groups' => $query->where('contact_jid', 'like', '%@g.us'),
                 'unassigned', 'available' => $query->whereNull('assigned_agent_id')->whereNull('resolved_at'),
                 'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),

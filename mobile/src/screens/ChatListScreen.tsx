@@ -82,6 +82,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [selectedScope, setSelectedScope] = useState<FilterScope>('chats');
   const [activeTab, setActiveTab] = useState<BottomTabType>('chats');
   const [prefsTick, setPrefsTick] = useState(0);
+  const [groupsInChats, setGroupsInChats] = useState(() => chatPrefs.isGroupsInChats());
 
   const [menuVisible, setMenuVisible] = useState(false);
   const [newChatVisible, setNewChatVisible] = useState(false);
@@ -171,7 +172,15 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       }
       setPrefsTick((n) => n + 1);
     });
-    const unsub = chatPrefs.subscribe(() => setPrefsTick((n) => n + 1));
+    const unsub = chatPrefs.subscribe(() => {
+      setPrefsTick((n) => n + 1);
+      setGroupsInChats(chatPrefs.isGroupsInChats());
+      // Groups-merged-into-chats hides the dedicated chip — drop back to the
+      // chats tab if it was selected when the pref flipped on.
+      setSelectedScope((prev) =>
+        chatPrefs.isGroupsInChats() && prev === 'groups' ? 'chats' : prev
+      );
+    });
     Promise.resolve().then(() => {
       loadChatLists();
     });
@@ -228,6 +237,10 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           delete params.scope;
         } else if (isCustomList || isFavoritesScope) {
           delete params.scope;
+        }
+
+        if (selectedScope === 'chats' && groupsInChats) {
+          params.include_groups = true;
         }
 
         const res = await chatService.getConversations(params);
@@ -292,7 +305,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         }
       }
     },
-    [selectedScope, debouncedSearch, buildScopeCacheKey]
+    [selectedScope, debouncedSearch, buildScopeCacheKey, groupsInChats]
   );
 
   useEffect(() => {
@@ -818,6 +831,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         favoritesCount={favoritesCount}
         chatLists={chatLists}
         isAgent={isAgent}
+        hideGroups={groupsInChats}
         onPressCreateList={() =>
           setListModalState({ visible: true, convs: [], createOnly: true })
         }

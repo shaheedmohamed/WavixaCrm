@@ -7,12 +7,14 @@ interface StoredPrefs {
   mutedUntil: Record<string, number>;
   markedUnread: number[];
   favoriteIds: number[];
+  groupsInChats: boolean;
 }
 
 let state: StoredPrefs = {
   mutedUntil: {},
   markedUnread: [],
   favoriteIds: [],
+  groupsInChats: false,
 };
 
 let loaded = false;
@@ -41,6 +43,7 @@ export const chatPrefs = {
           mutedUntil: parsed.mutedUntil || {},
           markedUnread: Array.isArray(parsed.markedUnread) ? parsed.markedUnread : [],
           favoriteIds: Array.isArray(parsed.favoriteIds) ? parsed.favoriteIds : [],
+          groupsInChats: parsed.groupsInChats === true,
         };
       }
     } catch {
@@ -81,6 +84,17 @@ export const chatPrefs = {
     const next = { ...state.mutedUntil };
     delete next[String(conversationId)];
     state.mutedUntil = next;
+    persist();
+    emit();
+  },
+
+  isGroupsInChats(): boolean {
+    return state.groupsInChats === true;
+  },
+
+  setGroupsInChats(enabled: boolean) {
+    if (state.groupsInChats === enabled) return;
+    state.groupsInChats = enabled;
     persist();
     emit();
   },

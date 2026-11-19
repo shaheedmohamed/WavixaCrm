@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,12 +7,14 @@ import {
   Image,
   ScrollView,
   Alert,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
 import { Colors } from '../constants/theme';
 import { Config } from '../constants/config';
+import { chatPrefs } from '../services/chatPrefs';
 
 interface ProfileScreenProps {
   onBack: () => void;
@@ -21,6 +23,7 @@ interface ProfileScreenProps {
 export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
   const { user, logout, isAgent } = useAuth();
   const insets = useSafeAreaInsets();
+  const [groupsInChats, setGroupsInChats] = useState(() => chatPrefs.isGroupsInChats());
 
   const handleLogout = () => {
     Alert.alert('تسجيل الخروج', 'هل تريد بالتأكيد تسجيل الخروج من التطبيق؟', [
@@ -94,6 +97,34 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
             <Text style={styles.infoValue}>{Config.appVersion}</Text>
             <Text style={styles.infoLabel}>إصدار التطبيق:</Text>
           </View>
+        </View>
+
+        {/* Display Settings */}
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>إعدادات العرض</Text>
+
+          <View style={styles.actionRow}>
+            <Switch
+              value={groupsInChats}
+              onValueChange={(v) => {
+                setGroupsInChats(v);
+                chatPrefs.setGroupsInChats(v);
+              }}
+              trackColor={{ false: '#D1D5DB', true: Colors.primary }}
+              thumbColor="#FFFFFF"
+            />
+            <View style={styles.actionRight}>
+              <Text style={styles.actionText}>إظهار المجموعات ضمن الشاتات</Text>
+              <MaterialCommunityIcons
+                name="account-group-outline"
+                size={20}
+                color={Colors.primary}
+              />
+            </View>
+          </View>
+          <Text style={styles.settingHint}>
+            لما يتفعل، محادثات المجموعات تظهر جوه فلتر الشاتات بدل فلتر منفصل
+          </Text>
         </View>
 
         {/* Action Buttons */}
@@ -265,5 +296,12 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '600',
     color: '#111B21',
+  },
+  settingHint: {
+    fontSize: 11.5,
+    color: '#8696A0',
+    textAlign: 'right',
+    marginTop: 6,
+    lineHeight: 17,
   },
 });
