@@ -35,6 +35,8 @@ import { ChatAvatar } from '../components/ChatAvatar';
 import { AvatarPeekModal } from '../components/AvatarPeekModal';
 import { MediaViewerModal, GalleryMediaItem } from '../components/MediaViewerModal';
 import { ContactInfoModal } from '../components/ContactInfoModal';
+import { TransferModal } from '../components/TransferModal';
+import { ResolveModal } from '../components/ResolveModal';
 import { avatarSrc, mediaSrc } from '../services/media';
 import { ChatList, Conversation, FilterScope, Message, StarredMessageItem } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -85,6 +87,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [newChatVisible, setNewChatVisible] = useState(false);
   const [quickRepliesVisible, setQuickRepliesVisible] = useState(false);
   const [contextConv, setContextConv] = useState<Conversation | null>(null);
+  const [transferConvId, setTransferConvId] = useState<number | null>(null);
+  const [resolveConvId, setResolveConvId] = useState<number | null>(null);
   const [listModalState, setListModalState] = useState<{
     visible: boolean;
     convs: Conversation[];
@@ -974,6 +978,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         isFavorite={contextConv ? chatPrefs.isFavorite(contextConv.id) : false}
         isMarkedUnread={contextConv ? chatPrefs.isMarkedUnread(contextConv.id) : false}
         canArchive={!isAgent}
+        currentUserId={user?.id}
+        isAgent={isAgent}
         onClose={() => setContextConv(null)}
         onTogglePin={handleTogglePin}
         onToggleArchive={handleToggleArchive}
@@ -984,6 +990,30 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           setListModalState({ visible: true, convs: [conv], createOnly: false })
         }
         onEnterSelectMode={handleEnterSelectMode}
+        onClaim={handleClaimToMine}
+        onTransfer={(conv) => setTransferConvId(conv.id)}
+        onResolve={(conv) => setResolveConvId(conv.id)}
+      />
+
+      <TransferModal
+        visible={transferConvId !== null}
+        conversationId={transferConvId ?? 0}
+        currentAgentId={user?.id}
+        onClose={() => setTransferConvId(null)}
+        onTransferred={() => {
+          setTransferConvId(null);
+          fetchConversations('silent');
+        }}
+      />
+
+      <ResolveModal
+        visible={resolveConvId !== null}
+        conversationId={resolveConvId ?? 0}
+        onClose={() => setResolveConvId(null)}
+        onResolved={() => {
+          setResolveConvId(null);
+          fetchConversations('silent');
+        }}
       />
 
       <AddToListModal

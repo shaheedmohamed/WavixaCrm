@@ -43,12 +43,17 @@ export interface Conversation {
   assigned_agent_id?: number | null;
   assigned_at?: string | null;
   resolved_at?: string | null;
+  resolved_by?: number | null;
   transferred_by?: number | null;
+  last_outgoing_user_id?: number | null;
   rating?: number | null;
   rating_note?: string | null;
   session?: SessionDevice | null;
   assigned_agent?: { id: number; name: string } | null;
   transferred_by_user?: { id: number; name: string } | null;
+  transferred_by_agent?: { id: number; name: string } | null;
+  resolved_by_agent?: { id: number; name: string } | null;
+  last_outgoing_user?: { id: number; name: string } | null;
 }
 
 export interface PinnedPreview {
@@ -177,6 +182,10 @@ export interface QuickReply {
   id: number;
   shortcut: string;
   message: string;
+  is_shared?: boolean;
+  owner_id?: number;
+  owner_name?: string | null;
+  mine?: boolean;
 }
 
 export interface Agent {

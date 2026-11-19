@@ -4197,12 +4197,39 @@ class CrmController extends Controller
         return response()->json(['success' => true, 'messages' => $messages]);
     }
 
-    /** The agent's saved quick replies (WhatsApp Business style). */
+    /** The agent's saved quick replies plus replies teammates shared. */
     public function getQuickReplies(Request $request)
     {
-        $replies = \App\Models\CrmQuickReply::where('owner_id', $request->user()->id)
+        $user = $request->user();
+        // Team = the account root plus every agent under it — shared replies
+        // must never leak across tenants.
+        $rootId = $user->crm_role === 'agent' && $user->crm_parent_id
+            ? $user->crm_parent_id
+            : $user->id;
+        $teamIds = User::where('id', $rootId)
+            ->orWhere('crm_parent_id', $rootId)
+            ->pluck('id');
+
+        $replies = \App\Models\CrmQuickReply::with('owner:id,name')
+            ->where(function ($q) use ($user, $teamIds) {
+                $q->where('owner_id', $user->id)
+                  ->orWhere(fn ($q2) => $q2->where('is_shared', true)
+                                           ->whereIn('owner_id', $teamIds));
+            })
             ->orderBy('sort_order')->orderBy('id')->get();
-        return response()->json(['success' => true, 'replies' => $replies]);
+
+        $items = $replies->map(fn ($r) => [
+            'id' => $r->id,
+            'shortcut' => $r->shortcut,
+            'body' => $r->body,
+            'sort_order' => $r->sort_order,
+            'is_shared' => (bool) $r->is_shared,
+            'owner_id' => $r->owner_id,
+            'owner_name' => $r->owner?->name,
+            'mine' => $r->owner_id === $user->id,
+        ])->values();
+
+        return response()->json(['success' => true, 'replies' => $items]);
     }
 
     public function saveQuickReply(Request $request)
@@ -4211,11 +4238,20 @@ class CrmController extends Controller
             'id' => 'nullable|integer',
             'shortcut' => 'nullable|string|max:50',
             'body' => 'required|string|max:4000',
+            'is_shared' => 'nullable|boolean',
         ]);
         $reply = !empty($data['id'])
             ? \App\Models\CrmQuickReply::where('owner_id', $request->user()->id)->findOrFail($data['id'])
             : new \App\Models\CrmQuickReply(['owner_id' => $request->user()->id]);
-        $reply->fill(['shortcut' => $data['shortcut'] ?? null, 'body' => $data['body']]);
+        $reply->fill([
+            'shortcut' => $data['shortcut'] ?? null,
+            'body' => $data['body'],
+            // Keep the flag untouched when an older client (e.g. the web UI)
+            // edits a reply without sending it.
+            'is_shared' => $request->has('is_shared')
+                ? $request->boolean('is_shared')
+                : ($reply->is_shared ?? false),
+        ]);
         $reply->save();
         return response()->json(['success' => true, 'reply' => $reply]);
     }

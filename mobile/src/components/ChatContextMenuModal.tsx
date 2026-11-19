@@ -19,6 +19,8 @@ interface ChatContextMenuModalProps {
   isFavorite: boolean;
   isMarkedUnread: boolean;
   canArchive: boolean;
+  currentUserId?: number;
+  isAgent?: boolean;
   onClose: () => void;
   onTogglePin: (conv: Conversation) => void;
   onToggleArchive: (conv: Conversation) => void;
@@ -27,6 +29,9 @@ interface ChatContextMenuModalProps {
   onToggleUnread: (conv: Conversation) => void;
   onOpenAddToList: (conv: Conversation) => void;
   onEnterSelectMode: (conv: Conversation) => void;
+  onClaim?: (conv: Conversation) => void;
+  onTransfer?: (conv: Conversation) => void;
+  onResolve?: (conv: Conversation) => void;
 }
 
 export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
@@ -43,6 +48,11 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
   onToggleUnread,
   onOpenAddToList,
   onEnterSelectMode,
+  onClaim,
+  onTransfer,
+  onResolve,
+  currentUserId,
+  isAgent,
 }) => {
   const insets = useSafeAreaInsets();
   const [showMuteStep, setShowMuteStep] = useState(false);
@@ -63,6 +73,15 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
   const isArchived = Boolean(conversation.archived_at);
   const isPinned = Boolean(conversation.is_pinned);
   const hasUnread = (conversation.unread_count || 0) > 0 || isMarkedUnread;
+
+  // Distribution actions — same rules as the web desk: groups are never
+  // exclusively held; agents claim unassigned work and can only act on the
+  // chats they hold, while owners can manage anything.
+  const isGroup = Boolean(conversation.is_group);
+  const heldByMe = Boolean(currentUserId && conversation.assigned_agent_id === currentUserId);
+  const canClaim = Boolean(isAgent && !conversation.assigned_agent_id && !isGroup && onClaim);
+  const canTransfer = Boolean(!isGroup && onTransfer && (!isAgent || heldByMe));
+  const canResolve = Boolean(!isGroup && onResolve && (!isAgent || heldByMe));
 
   const muteDurations: { label: string; sub: string; value: number | 'forever' }[] = [
     { label: '٨ ساعات', sub: 'كتم الإشعارات مؤقتاً خلال الدوام', value: 8 * 3600 * 1000 },
@@ -131,6 +150,68 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
             </View>
           ) : (
             <View style={styles.actionsList}>
+              {canClaim && (
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={() => {
+                    onClose();
+                    onClaim?.(conversation);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconBox, { backgroundColor: '#E8F8F5' }]}>
+                    <MaterialCommunityIcons
+                      name="hand-back-right-outline"
+                      size={20}
+                      color={Colors.primaryDark}
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>استلام المحادثة</Text>
+                </TouchableOpacity>
+              )}
+
+              {canTransfer && (
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={() => {
+                    onClose();
+                    onTransfer?.(conversation);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
+                    <MaterialCommunityIcons
+                      name="account-switch-outline"
+                      size={20}
+                      color="#4F46E5"
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>تحويل لموظف</Text>
+                </TouchableOpacity>
+              )}
+
+              {canResolve && (
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={() => {
+                    onClose();
+                    onResolve?.(conversation);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconBox, { backgroundColor: '#ECFDF5' }]}>
+                    <MaterialCommunityIcons
+                      name="check-circle-outline"
+                      size={20}
+                      color="#059669"
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>إنهاء المحادثة (مكتمل)</Text>
+                </TouchableOpacity>
+              )}
+
+              {(canClaim || canTransfer || canResolve) && <View style={styles.divider} />}
+
               <TouchableOpacity
                 style={styles.actionRow}
                 onPress={() => {

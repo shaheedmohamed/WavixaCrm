@@ -103,6 +103,14 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
   };
 
   const isAssignedToMe = Boolean(currentUserId && conversation.assigned_agent_id === currentUserId);
+  // The list payload exposes the transferer as `transferred_by_agent` (and
+  // realtime broadcasts as `transferred_by_user`); accept either.
+  const transferredFrom =
+    conversation.transferred_by_agent?.name || conversation.transferred_by_user?.name || null;
+  const lastSenderName =
+    conversation.last_message_direction === 'outgoing' && conversation.last_outgoing_user
+      ? conversation.last_outgoing_user.name
+      : null;
 
   return (
     <TouchableOpacity
@@ -175,6 +183,30 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
                 numberOfLines={1}
               >
                 {isAssignedToMe ? 'معي' : conversation.assigned_agent.name}
+              </Text>
+            </View>
+          ) : null}
+
+          {transferredFrom && (
+            <View style={styles.transferredTag}>
+              <Text style={styles.transferredTagText} numberOfLines={1}>
+                ↩ محولة من {transferredFrom}
+              </Text>
+            </View>
+          )}
+
+          {lastSenderName ? (
+            <View style={styles.repliedTag}>
+              <Text style={styles.repliedTagText} numberOfLines={1}>
+                رد: {lastSenderName}
+              </Text>
+            </View>
+          ) : null}
+
+          {conversation.resolved_at ? (
+            <View style={styles.resolvedTag}>
+              <Text style={styles.resolvedTagText} numberOfLines={1}>
+                ✓ مكتمل
               </Text>
             </View>
           ) : null}
@@ -340,6 +372,41 @@ const styles = StyleSheet.create({
   },
   agentTagTextOther: {
     color: '#D97706',
+  },
+  transferredTag: {
+    backgroundColor: '#FFF7ED',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+    maxWidth: 110,
+  },
+  transferredTagText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#EA580C',
+  },
+  repliedTag: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+    maxWidth: 90,
+  },
+  repliedTagText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  resolvedTag: {
+    backgroundColor: '#F0F2F5',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+  },
+  resolvedTagText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#667781',
   },
   listTag: {
     backgroundColor: '#F3E8FF',

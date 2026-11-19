@@ -302,11 +302,30 @@ export const chatService = {
       id: r.id,
       shortcut: r.shortcut || '',
       message: r.body || r.message || '',
+      is_shared: Boolean(r.is_shared),
+      owner_id: r.owner_id,
+      owner_name: r.owner_name ?? null,
+      mine: r.mine !== undefined ? Boolean(r.mine) : true,
     }));
     return {
       success: Boolean(response.data?.success),
       quick_replies: normalized,
     };
+  },
+
+  async saveQuickReply(payload: {
+    id?: number;
+    shortcut: string;
+    body: string;
+    is_shared: boolean;
+  }): Promise<{ success: boolean }> {
+    const response = await apiClient.post('/crm/quick-replies', payload);
+    return { success: Boolean(response.data?.success) };
+  },
+
+  async deleteQuickReply(id: number): Promise<{ success: boolean }> {
+    const response = await apiClient.delete(`/crm/quick-replies/${id}`);
+    return { success: Boolean(response.data?.success) };
   },
 
   async getDevices(): Promise<{ success: boolean; devices: SessionDevice[] }> {
