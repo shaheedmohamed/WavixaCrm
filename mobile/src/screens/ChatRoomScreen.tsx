@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
+import * as Clipboard from 'expo-clipboard';
 import * as DocumentPicker from 'expo-document-picker';
 import * as MediaLibrary from 'expo-media-library/legacy';
 import { MessageBubble } from '../components/MessageBubble';
@@ -42,7 +43,13 @@ import { mediaSrc, isPlaceholderText } from '../services/media';
 import { Config } from '../constants/config';
 import { playIncomingMessage } from '../services/notifySound';
 import { useAuth } from '../context/AuthContext';
-import { Conversation, MediaEditSpec, Message, PinnedPreview } from '../types/crm';
+import {
+  Conversation,
+  MediaEditSpec,
+  Message,
+  MessageReaction,
+  PinnedPreview,
+} from '../types/crm';
 import { Colors } from '../constants/theme';
 
 interface ChatRoomScreenProps {
@@ -230,9 +237,33 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [cameraVisible, setCameraVisible] = useState(false);
   const [cameraPaused, setCameraPaused] = useState(false);
   const [pendingMedia, setPendingMedia] = useState<PendingMedia | null>(null);
+  const [mediaQueue, setMediaQueue] = useState<PendingMedia[]>([]);
+  const [mediaQueueTotal, setMediaQueueTotal] = useState(0);
   const [viewerState, setViewerState] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
   const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
+  const [forwardTargets, setForwardTargets] = useState<Message[]>([]);
+
+  // WhatsApp-style multi-select: entered from the actions sheet ("تحديد") —
+  // then every tap toggles the message until the bar is cleared.
+  const msgKeyOf = (m: Message) => m.client_temp_id || m.id || m.message_id;
+  const selectionMode = selectedIds.size > 0;
+  const toggleSelect = useCallback((m: Message) => {
+    const key = msgKeyOf(m);
+    if (key == null) return;
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+  const selectedMessages = useMemo(
+    () => messages.filter((m) => selectedIds.has(msgKeyOf(m) as any)),
+    [messages, selectedIds]
+  );
 
   const [quickRepliesVisible, setQuickRepliesVisible] = useState(false);
   const [transferVisible, setTransferVisible] = useState(false);
@@ -762,34 +793,42 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        orderedSelection: true,
         quality: 1,
       });
 
       if (result.canceled || !result.assets || result.assets.length === 0) return;
 
-      const asset = result.assets[0];
-      const isVideo = asset.type === 'video';
-      const filename =
-        asset.fileName ||
-        asset.uri.split('/').pop() ||
-        (isVideo ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`);
-      const mime = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
-      const durSec = asset.duration
-        ? asset.duration > 1000
-          ? asset.duration / 1000
-          : asset.duration
-        : undefined;
+      const toPending = (asset: ImagePicker.ImagePickerAsset, idx: number): PendingMedia => {
+        const isVideo = asset.type === 'video';
+        const filename =
+          asset.fileName ||
+          asset.uri.split('/').pop() ||
+          (isVideo ? `video_${Date.now()}_${idx}.mp4` : `photo_${Date.now()}_${idx}.jpg`);
+        const mime = asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg');
+        const durSec = asset.duration
+          ? asset.duration > 1000
+            ? asset.duration / 1000
+            : asset.duration
+          : undefined;
+        return {
+          uri: asset.uri,
+          name: filename,
+          mimeType: mime,
+          type: isVideo ? 'video' : 'image',
+          width: asset.width,
+          height: asset.height,
+          durationSec: durSec,
+          fileSize: asset.fileSize,
+        };
+      };
 
-      setPendingMedia({
-        uri: asset.uri,
-        name: filename,
-        mimeType: mime,
-        type: isVideo ? 'video' : 'image',
-        width: asset.width,
-        height: asset.height,
-        durationSec: durSec,
-        fileSize: asset.fileSize,
-      });
+      const all = result.assets.map(toPending);
+      setPendingMedia(all[0]);
+      setMediaQueue(all.slice(1));
+      setMediaQueueTotal(all.length);
     } catch (err: any) {
       Alert.alert('خطأ', err.message || 'تعذر اختيار الملف');
     }
@@ -930,14 +969,72 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     [conversation.id, fetchLatestWindow]
   );
 
+  const handleBulkDelete = useCallback(() => {
+    const sel = selectedMessages;
+    if (sel.length === 0) return;
+    const allOutgoing = sel.every((m) => m.direction === 'outgoing');
+    const doLocal = async () => {
+      const ids = new Set(sel.map((m) => m.id));
+      setMessages((prev) => prev.filter((x) => !ids.has(x.id)));
+      clearSelection();
+      for (const m of sel) {
+        try {
+          await chatService.deleteMessage(m.id, conversation.id, false);
+        } catch {}
+      }
+    };
+    const buttons: any[] = [
+      { text: 'إلغاء', style: 'cancel' },
+      { text: 'حذف لدي فقط', style: 'destructive', onPress: doLocal },
+    ];
+    if (allOutgoing) {
+      buttons.push({
+        text: 'حذف لدى الجميع',
+        style: 'destructive',
+        onPress: async () => {
+          clearSelection();
+          for (const m of sel) {
+            try {
+              await chatService.deleteMessage(m.id, conversation.id, true);
+            } catch {}
+          }
+          fetchLatestWindow('poll');
+        },
+      });
+    }
+    Alert.alert('حذف الرسائل', `حذف ${sel.length} رسالة؟`, buttons);
+  }, [selectedMessages, conversation.id, clearSelection, fetchLatestWindow]);
+
   const handleActionReaction = useCallback(
     async (m: Message, emoji: string | null) => {
+      const key = msgKeyOf(m);
+      const sessionDigits = (conversation.session?.phone_number || '').replace(/\D/g, '');
+      // Optimistic: flip our own reaction locally so the badge appears
+      // instantly; the poll response reconciles the full reactor list.
+      // The backend stores our reactor id as the session phone — match it,
+      // plus the 'me' placeholder the double-tap path seeds.
+      const isMine = (r: MessageReaction) => {
+        const d = (r.from || '').replace(/\D/g, '');
+        return r.from === 'me' || (sessionDigits !== '' && d === sessionDigits);
+      };
+      setMessages((prev) =>
+        prev.map((x) => {
+          if (msgKeyOf(x) !== key) return x;
+          const rest = (x.reactions || []).filter((r) => !isMine(r));
+          return {
+            ...x,
+            reactions: emoji
+              ? [...rest, { emoji, from: sessionDigits || 'me', timestamp: Date.now() / 1000 }]
+              : rest,
+          };
+        })
+      );
       try {
         await chatService.sendReaction(conversation.id, m.message_id || m.id, emoji);
         fetchLatestWindow('poll');
       } catch {}
     },
-    [conversation.id, fetchLatestWindow]
+    [conversation.id, conversation.session?.phone_number, fetchLatestWindow]
   );
 
   const handleDoubleTapLike = useCallback(
@@ -1187,6 +1284,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onDismissFailed={handleDismissFailed}
               onDoubleTapLike={handleDoubleTapLike}
               onPressReactions={handlePressReactions}
+              selectionMode={selectionMode}
+              isSelected={selectedIds.has(rowKey)}
+              onToggleSelect={toggleSelect}
             />
           </SwipeableMessageRow>
         </View>
@@ -1207,6 +1307,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       handleDismissFailed,
       handleDoubleTapLike,
       handlePressReactions,
+      selectionMode,
+      selectedIds,
+      toggleSelect,
     ]
   );
 
@@ -1215,6 +1318,66 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       <StatusBar style="light" />
 
       <View style={[styles.header, { paddingTop: Math.max(insets.top + 6, 16) }]}>
+        {selectionMode ? (
+        <>
+        <View style={styles.headerRight}>
+          <TouchableOpacity
+            onPress={clearSelection}
+            style={styles.backBtn}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <Ionicons name="close" size={24} color="#FFFFFF" />
+          </TouchableOpacity>
+          <Text style={styles.selectionCount}>{selectedIds.size} محدد</Text>
+        </View>
+        <View style={styles.headerActions}>
+          {selectedIds.size === 1 ? (
+            <TouchableOpacity
+              onPress={() => {
+                const m = selectedMessages[0];
+                clearSelection();
+                if (m) handleActionReply(m);
+              }}
+              style={styles.actionIconBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="arrow-undo-outline" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          ) : null}
+          {selectedMessages.some((m) => !m.message) ? null : (
+            <TouchableOpacity
+              onPress={() => {
+                const text = selectedMessages
+                  .map((m) => m.message)
+                  .filter(Boolean)
+                  .join('\n');
+                Clipboard.setStringAsync(text).catch(() => {});
+                clearSelection();
+              }}
+              style={styles.actionIconBtn}
+              hitSlop={8}
+            >
+              <Ionicons name="copy-outline" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
+          )}
+          <TouchableOpacity
+            onPress={() => setForwardTargets(selectedMessages)}
+            style={styles.actionIconBtn}
+            hitSlop={8}
+          >
+            <Ionicons name="arrow-redo-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={handleBulkDelete}
+            style={styles.actionIconBtn}
+            hitSlop={8}
+          >
+            <Ionicons name="trash-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+        </View>
+        </>
+      ) : (
+        <>
         <View style={styles.headerRight}>
           <TouchableOpacity
             onPress={onBack}
@@ -1275,6 +1438,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             <MaterialCommunityIcons name="check-circle-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
         </View>
+        </>
+      )}
       </View>
 
       {pinnedMsg && (
@@ -1500,22 +1665,39 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           // with zero chat flash, and cancelling returns to a live camera.
           setCameraPaused(true);
           setPendingMedia(media);
+          setMediaQueue([]);
+          setMediaQueueTotal(1);
+        }}
+        onCapturedQueue={(items) => {
+          setMediaQueue(items);
+          setMediaQueueTotal(items.length + 1);
         }}
       />
 
       <MediaComposerModal
         media={pendingMedia}
         recipientName={contactTitle}
+        queueIndex={mediaQueueTotal - mediaQueue.length - 1}
+        queueLength={mediaQueueTotal}
         onClose={() => {
+          // Cancel drops the whole batch — WhatsApp does the same.
           setPendingMedia(null);
+          setMediaQueue([]);
+          setMediaQueueTotal(0);
           setCameraPaused(false);
         }}
         onSend={(caption, editSpec) => {
           if (pendingMedia) {
             enqueueOptimisticMedia(pendingMedia, caption, editSpec);
           }
-          setCameraVisible(false);
-          setCameraPaused(false);
+          const [next, ...rest] = mediaQueue;
+          setPendingMedia(next ?? null);
+          setMediaQueue(rest);
+          if (!next) {
+            setMediaQueueTotal(0);
+            setCameraVisible(false);
+            setCameraPaused(false);
+          }
         }}
       />
 
@@ -1556,13 +1738,19 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         onPin={handleActionPin}
         onStar={handleActionStar}
         onDelete={handleActionDelete}
+        onSelect={toggleSelect}
       />
 
       <ForwardModal
-        visible={!!forwardTarget}
+        visible={!!forwardTarget || forwardTargets.length > 0}
         message={forwardTarget}
+        messages={forwardTargets}
         currentConversationId={conversation.id}
-        onClose={() => setForwardTarget(null)}
+        onClose={() => {
+          setForwardTarget(null);
+          setForwardTargets([]);
+          clearSelection();
+        }}
       />
     </View>
   );
@@ -1636,6 +1824,12 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  selectionCount: {
+    color: '#FFFFFF',
+    fontSize: 17,
+    fontWeight: '700',
+    marginRight: 10,
   },
   pinnedBanner: {
     flexDirection: 'row-reverse',

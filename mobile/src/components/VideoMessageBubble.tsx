@@ -9,6 +9,7 @@ interface VideoMessageBubbleProps {
   fileName?: string | null;
   posterUri?: string | null;
   onPress: () => void;
+  onLongPress?: () => void;
   disabled?: boolean;
 }
 
@@ -17,11 +18,18 @@ const VideoMessageBubbleComponent: React.FC<VideoMessageBubbleProps> = ({
   fileName,
   posterUri,
   onPress,
+  onLongPress,
   disabled = false,
 }) => {
   const [posterFailed, setPosterFailed] = React.useState(false);
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={styles.wrap}>
+    <Pressable
+      onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={240}
+      disabled={disabled}
+      style={styles.wrap}
+    >
       <View style={styles.CinemaBackdrop}>
         <MaterialCommunityIcons
           name="movie-open-play-outline"

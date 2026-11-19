@@ -44,6 +44,11 @@ interface MessageBubbleProps {
   onDismissFailed?: (msg: Message) => void;
   onDoubleTapLike?: (msg: Message) => void;
   onPressReactions?: (msg: Message) => void;
+  // WhatsApp-style multi-select: while a selection is active every tap
+  // toggles the message instead of opening media/like actions.
+  selectionMode?: boolean;
+  isSelected?: boolean;
+  onToggleSelect?: (msg: Message) => void;
 }
 
 const SENDER_COLORS = [
@@ -100,6 +105,9 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onDismissFailed,
   onDoubleTapLike,
   onPressReactions,
+  selectionMode = false,
+  isSelected = false,
+  onToggleSelect,
 }) => {
   const { token, user, isAgent } = useAuth();
   const lastTapRef = useRef(0);
@@ -127,6 +135,10 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
 
   // WhatsApp-style double tap → like. A single tap stays a no-op.
   const handleBubblePress = () => {
+    if (selectionMode) {
+      onToggleSelect?.(message);
+      return;
+    }
     const now = Date.now();
     if (now - lastTapRef.current < 300) {
       lastTapRef.current = 0;
@@ -304,11 +316,25 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             isOutgoing ? styles.bubbleOutgoing : styles.bubbleIncoming,
             isFailed && styles.bubbleFailed,
           ]}
-          onLongPress={() => !message.client_temp_id && onActions?.(message)}
+          onLongPress={() => {
+            if (message.client_temp_id) return;
+            if (selectionMode) onToggleSelect?.(message);
+            else onActions?.(message);
+          }}
           onPress={handleBubblePress}
           activeOpacity={0.9}
           delayLongPress={240}
         >
+          {isSelected ? (
+            <View style={styles.selectedOverlay}>
+              <Ionicons
+                name="checkmark-circle"
+                size={22}
+                color={Colors.primary}
+                style={styles.selectedCheck}
+              />
+            </View>
+          ) : null}
           {showGroupSender && senderDisplayName ? (
             <Text style={[styles.senderName, { color: senderColor }]}>{senderDisplayName}</Text>
           ) : null}
@@ -359,7 +385,16 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           {isImage && mediaUri ? (
             <TouchableOpacity
               style={type === 'sticker' ? styles.stickerWrap : styles.imageWrap}
-              onPress={() => !isUploading && onViewMedia?.(message, 'image')}
+              onPress={() =>
+                selectionMode
+                  ? onToggleSelect?.(message)
+                  : !isUploading && onViewMedia?.(message, 'image')
+              }
+              onLongPress={() =>
+                !message.client_temp_id &&
+                (selectionMode ? onToggleSelect?.(message) : onActions?.(message))
+              }
+              delayLongPress={240}
               activeOpacity={0.9}
             >
               <Image
@@ -386,7 +421,15 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                 fileName={message.media_meta?.fileName}
                 posterUri={videoPosterUri}
                 disabled={isUploading}
-                onPress={() => !isUploading && onViewMedia?.(message, 'video')}
+                onPress={() =>
+                  selectionMode
+                    ? onToggleSelect?.(message)
+                    : !isUploading && onViewMedia?.(message, 'video')
+                }
+                onLongPress={() =>
+                  !message.client_temp_id &&
+                  (selectionMode ? onToggleSelect?.(message) : onActions?.(message))
+                }
               />
               {renderMediaUploadOverlay()}
             </View>
@@ -438,7 +481,14 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             <View>
               <TouchableOpacity
                 style={styles.docCard}
-                onPress={openDoc}
+                onPress={() =>
+                  selectionMode ? onToggleSelect?.(message) : openDoc()
+                }
+                onLongPress={() =>
+                  !message.client_temp_id &&
+                  (selectionMode ? onToggleSelect?.(message) : onActions?.(message))
+                }
+                delayLongPress={240}
                 disabled={!mediaUri || isUploading}
                 activeOpacity={0.8}
               >
@@ -575,6 +625,22 @@ const styles = StyleSheet.create({
   },
   bubbleRowIncoming: {
     justifyContent: 'flex-start',
+  },
+  selectedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,168,132,0.14)',
+    borderRadius: 10,
+    justifyContent: 'flex-start',
+    alignItems: 'flex-start',
+  },
+  selectedCheck: {
+    margin: 4,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 11,
   },
   groupAvatarWrap: {
     paddingBottom: 2,

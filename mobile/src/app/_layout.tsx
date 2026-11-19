@@ -31,11 +31,16 @@ export default function RootLayout() {
 
 // KeyboardProvider renders a native view that does not exist in Expo Go —
 // skip it there while keeping full keyboard-sync in real builds.
+// enabled={false}: with an active provider the lib suppresses the window's
+// own adjustResize margins and leaves lifting to its animated hooks — on
+// devices where those events misbehave the composer ends up buried under
+// the keyboard. Disabled, the view applies resize margins itself (native
+// WindowInsets path) so the input is always above the keyboard.
 const MaybeKeyboardProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) =>
   HAS_KEYBOARD_SYNC ? (
-    <KeyboardProvider statusBarTranslucent navigationBarTranslucent>
+    <KeyboardProvider statusBarTranslucent navigationBarTranslucent enabled={false}>
       {children}
     </KeyboardProvider>
   ) : (

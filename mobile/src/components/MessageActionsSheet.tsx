@@ -16,6 +16,8 @@ interface MessageActionsSheetProps {
   onPin: (msg: Message) => void;
   onStar: (msg: Message) => void;
   onDelete: (msg: Message) => void;
+  /** Enter WhatsApp-style multi-select starting with this message. */
+  onSelect: (msg: Message) => void;
 }
 
 /** WhatsApp-style long-press action sheet — emoji reaction row on top,
@@ -30,6 +32,7 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   onPin,
   onStar,
   onDelete,
+  onSelect,
 }) => {
   const insets = useSafeAreaInsets();
   if (!message) return null;
@@ -72,6 +75,11 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
           },
         ]
       : []),
+    {
+      icon: <Ionicons name="checkmark-circle-outline" size={19} color="#54656F" />,
+      label: 'تحديد',
+      onPress: () => onSelect(message),
+    },
     {
       icon: <Ionicons name="trash-outline" size={19} color="#EF4444" />,
       label: 'حذف الرسالة',

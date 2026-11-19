@@ -36,6 +36,9 @@ interface CameraCaptureModalProps {
   paused?: boolean;
   onClose: () => void;
   onCaptured: (media: PendingMedia) => void;
+  /** Multi-pick from the in-camera gallery — first item via onCaptured,
+   *  the rest through here so the caller can queue them. */
+  onCapturedQueue?: (items: PendingMedia[]) => void;
 }
 
 const MAX_VIDEO_SEC = 300;
@@ -97,11 +100,17 @@ export const CameraCaptureModal: React.FC<CameraCaptureModalProps> = ({
   paused = false,
   onClose,
   onCaptured,
+  onCapturedQueue,
 }) => {
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       {visible && (
-        <CameraCaptureBody paused={paused} onClose={onClose} onCaptured={onCaptured} />
+        <CameraCaptureBody
+          paused={paused}
+          onClose={onClose}
+          onCaptured={onCaptured}
+          onCapturedQueue={onCapturedQueue}
+        />
       )}
     </Modal>
   );
@@ -111,7 +120,8 @@ const CameraCaptureBody: React.FC<{
   paused: boolean;
   onClose: () => void;
   onCaptured: (media: PendingMedia) => void;
-}> = ({ paused, onClose, onCaptured }) => {
+  onCapturedQueue?: (items: PendingMedia[]) => void;
+}> = ({ paused, onClose, onCaptured, onCapturedQueue }) => {
   const insets = useSafeAreaInsets();
   const cameraRef = useRef<CameraView>(null);
 
@@ -329,30 +339,37 @@ const CameraCaptureBody: React.FC<{
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images', 'videos'],
         allowsEditing: false,
+        allowsMultipleSelection: true,
+        selectionLimit: 30,
+        orderedSelection: true,
         quality: 1,
       });
       if (result.canceled || !result.assets?.length) return;
-      const asset = result.assets[0];
-      const isVideo = asset.type === 'video';
-      emitCaptured({
-        uri: asset.uri,
-        name:
-          asset.fileName ||
-          asset.uri.split('/').pop() ||
-          (isVideo ? `video_${Date.now()}.mp4` : `photo_${Date.now()}.jpg`),
-        mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
-        type: isVideo ? 'video' : 'image',
-        width: asset.width,
-        height: asset.height,
-        durationSec: asset.duration
-          ? asset.duration > 1000
-            ? asset.duration / 1000
-            : asset.duration
-          : undefined,
-        fileSize: asset.fileSize,
-      });
+      const toPending = (asset: ImagePicker.ImagePickerAsset, idx: number): PendingMedia => {
+        const isVideo = asset.type === 'video';
+        return {
+          uri: asset.uri,
+          name:
+            asset.fileName ||
+            asset.uri.split('/').pop() ||
+            (isVideo ? `video_${Date.now()}_${idx}.mp4` : `photo_${Date.now()}_${idx}.jpg`),
+          mimeType: asset.mimeType || (isVideo ? 'video/mp4' : 'image/jpeg'),
+          type: isVideo ? 'video' : 'image',
+          width: asset.width,
+          height: asset.height,
+          durationSec: asset.duration
+            ? asset.duration > 1000
+              ? asset.duration / 1000
+              : asset.duration
+            : undefined,
+          fileSize: asset.fileSize,
+        };
+      };
+      const all = result.assets.map(toPending);
+      emitCaptured(all[0]);
+      if (all.length > 1) onCapturedQueue?.(all.slice(1));
     } catch {}
-  }, [emitCaptured]);
+  }, [emitCaptured, onCapturedQueue]);
 
   const flashIcon =
     flash === 'on' ? 'flash' : flash === 'auto' ? 'flash-outline' : 'flash-off';

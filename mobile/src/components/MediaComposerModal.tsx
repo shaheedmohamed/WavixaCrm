@@ -39,6 +39,10 @@ export interface PendingMedia {
 interface MediaComposerModalProps {
   media: PendingMedia | null;
   recipientName?: string;
+  /** 0-based position inside a multi-pick batch (0 when single). */
+  queueIndex?: number;
+  /** Total items in the batch (0/1 when single). */
+  queueLength?: number;
   onClose: () => void;
   onSend: (caption: string, editSpec: MediaEditSpec | null) => void;
 }
@@ -67,6 +71,8 @@ const DEFAULT_CROP: CropRect = { x: 0, y: 0, w: 1, h: 1 };
 export const MediaComposerModal: React.FC<MediaComposerModalProps> = ({
   media,
   recipientName,
+  queueIndex = 0,
+  queueLength = 0,
   onClose,
   onSend,
 }) => {
@@ -77,6 +83,8 @@ export const MediaComposerModal: React.FC<MediaComposerModalProps> = ({
         key={media.uri}
         media={media}
         recipientName={recipientName}
+        queueIndex={queueIndex}
+        queueLength={queueLength}
         onClose={onClose}
         onSend={onSend}
       />
@@ -87,9 +95,11 @@ export const MediaComposerModal: React.FC<MediaComposerModalProps> = ({
 const MediaComposerBody: React.FC<{
   media: PendingMedia;
   recipientName?: string;
+  queueIndex?: number;
+  queueLength?: number;
   onClose: () => void;
   onSend: (caption: string, editSpec: MediaEditSpec | null) => void;
-}> = ({ media, recipientName, onClose, onSend }) => {
+}> = ({ media, recipientName, queueIndex = 0, queueLength = 0, onClose, onSend }) => {
   const insets = useSafeAreaInsets();
   const [caption, setCaption] = useState('');
   const [activeTool, setActiveTool] = useState<EditorTool>('none');
@@ -358,6 +368,14 @@ const MediaComposerBody: React.FC<{
         <TouchableOpacity onPress={onClose} style={styles.topCircleBtn} hitSlop={8}>
           <Ionicons name="close" size={24} color="#FFFFFF" />
         </TouchableOpacity>
+
+        {queueLength > 1 && (
+          <View style={styles.queueBadge}>
+            <Text style={styles.queueBadgeText}>
+              {queueIndex + 1} من {queueLength}
+            </Text>
+          </View>
+        )}
 
         {media.type === 'image' && activeTool !== 'text' && (
           <View style={styles.toolsRow}>
@@ -1402,6 +1420,24 @@ const styles = StyleSheet.create({
   root: {
     flex: 1,
     backgroundColor: '#0B141A',
+  },
+  queueBadge: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 0,
+    alignItems: 'center',
+    paddingTop: 14,
+  },
+  queueBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    overflow: 'hidden',
   },
   topBar: {
     flexDirection: 'row-reverse',

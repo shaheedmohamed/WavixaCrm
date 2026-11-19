@@ -2841,6 +2841,26 @@ class CrmController extends Controller
         $dest = $this->resolveDestJid($conversation);
         $emoji = trim($request->emoji ?? '');
 
+        // Group reactions must carry key.participant = the original sender's
+        // JID or WhatsApp silently drops the stanza. `from` stores bare digits
+        // — LID digits when the sender arrived via @lid, phone digits
+        // otherwise — so resolve the right domain through the lid map.
+        $participant = null;
+        $isGroup = $this->isGroupConv($conversation);
+        if ($isGroup && $message->direction !== 'outgoing') {
+            $digits = preg_replace('/\D/', '', (string) ($message->from ?? ''));
+            if ($digits !== '') {
+                $lid = $digits . '@lid';
+                // LIDs are stored as bare digits in `from` — recognize them by
+                // the lid map, or by their characteristic length (> 13 digits,
+                // always longer than an international phone number).
+                $known = DB::table('whatsapp_lid_mappings')->where('lid', $lid)->exists();
+                $participant = ($known || strlen($digits) > 13)
+                    ? $lid
+                    : $digits . '@s.whatsapp.net';
+            }
+        }
+
         try {
             $this->engineClient()->post("{$this->engineUrl}/api/whatsapp/send-reaction", [
                 'sessionId' => $token,
@@ -2848,6 +2868,7 @@ class CrmController extends Controller
                 'messageId' => $message->message_id,
                 'emoji' => $emoji,
                 'fromMe' => $message->direction === 'outgoing',
+                'participant' => $participant,
             ]);
 
             // Update reactions in DB

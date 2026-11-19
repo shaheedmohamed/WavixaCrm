@@ -20,6 +20,8 @@ import { Colors } from '../constants/theme';
 interface ForwardModalProps {
   visible: boolean;
   message: Message | null;
+  /** Multi-select forward — when set, overrides `message`. */
+  messages?: Message[];
   currentConversationId?: number;
   onClose: () => void;
 }
@@ -29,6 +31,7 @@ interface ForwardModalProps {
 export const ForwardModal: React.FC<ForwardModalProps> = ({
   visible,
   message,
+  messages,
   currentConversationId,
   onClose,
 }) => {
@@ -79,15 +82,22 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
     (c.contact_phone ? `+${c.contact_phone}` : 'عميل واتساب');
 
   const forward = async (conv: Conversation) => {
-    if (!message || sending) return;
+    const list = messages && messages.length > 0 ? messages : message ? [message] : [];
+    if (list.length === 0 || sending) return;
     setSending(true);
     try {
-      const res = await chatService.forwardMessage(message.message_id || message.id, [conv.id]);
-      if (res.success) {
-        Alert.alert('تم', 'تمت إعادة توجيه الرسالة');
+      let ok = 0;
+      for (const m of list) {
+        try {
+          const res = await chatService.forwardMessage(m.message_id || m.id, [conv.id]);
+          if (res.success) ok += 1;
+        } catch {}
+      }
+      if (ok > 0) {
+        Alert.alert('تم', list.length > 1 ? `تمت إعادة توجيه ${ok} رسالة` : 'تمت إعادة توجيه الرسالة');
         onClose();
       } else {
-        Alert.alert('فشل', res.message || 'تعذر إعادة التوجيه');
+        Alert.alert('فشل', 'تعذر إعادة التوجيه');
       }
     } catch (err: any) {
       Alert.alert('فشل', err.response?.data?.message || 'تعذر إعادة التوجيه');
