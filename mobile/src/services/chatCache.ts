@@ -150,7 +150,7 @@ export const chatCache = {
 
     const promise = (async () => {
       try {
-        const res = await chatService.getMessages(conversationId, { limit: 30 });
+        const res = await chatService.getMessages(conversationId, { limit: 30, peek: true });
         if (res?.success && Array.isArray(res.messages)) {
           chatCache.setThread(conversationId, {
             messages: res.messages,

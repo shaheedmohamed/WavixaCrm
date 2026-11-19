@@ -71,7 +71,7 @@ export const chatService = {
 
   async getMessages(
     conversationId: number,
-    options: { before_id?: number; after_id?: number; around_id?: number | string; limit?: number } = {}
+    options: { before_id?: number; after_id?: number; around_id?: number | string; limit?: number; peek?: boolean } = {}
   ) {
     const response = await apiClient.get<MessagesResponse>(`/crm/conversations/${conversationId}/messages`, {
       params: options,

@@ -1441,8 +1441,13 @@ class CrmController extends Controller
             ->where('id', $conversationId)
             ->firstOrFail();
 
+        // A `peek` fetch (mobile background prefetch for instant chat opening)
+        // must be side-effect free: no auto-claim, no unread reset, no read
+        // receipts to WhatsApp. The real open omits it and keeps all of that.
+        $peek = $request->boolean('peek');
+
         $caller = $request->user();
-        if ($caller && $caller->crm_role === 'agent') {
+        if (!$peek && $caller && $caller->crm_role === 'agent') {
             if ($locker = $this->conversationLocker($conversation, $caller)) {
                 return $this->lockedResponse($locker);
             }
@@ -1466,7 +1471,7 @@ class CrmController extends Controller
 
         // Mark unread count to 0 when opened — and tell WhatsApp the messages
         // were read (blue ticks for the sender), fire-and-forget.
-        if ($conversation->unread_count > 0) {
+        if (!$peek && $conversation->unread_count > 0) {
             $conversation->update(['unread_count' => 0]);
             $this->sendReadReceipts($conversation);
             // Other open tabs/agents must see the badge clear too, not just
