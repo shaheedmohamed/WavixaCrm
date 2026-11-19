@@ -46,6 +46,26 @@ export const avatarSrc = (
   return Config.getAvatarUrl(conv.id, token, download, v);
 };
 
+// Group-sender avatar — each participant's JID resolves through the backend
+// (picture fetched once per JID, then served from local storage).
+export const senderAvatarSrc = (
+  m: Message | null | undefined,
+  sessionId: number | string | null | undefined,
+  token?: string | null,
+  groupDigits?: string
+): string | null => {
+  const jid = m?.from || '';
+  if (!jid || !sessionId || !token || jid.includes('@g.us') || jid.includes('broadcast')) return null;
+  // Rows ingested before the LID fix carry the group id itself as `from` —
+  // no point resolving the group's own digits as a member avatar.
+  if (groupDigits && jid.replace(/\D/g, '') === groupDigits) return null;
+  return Config.getSenderAvatarUrl(sessionId, jid, token);
+};
+
+// Poster frame for video bubbles — the backend extracts it lazily with ffmpeg.
+export const videoThumbSrc = (m: Message | null | undefined, token?: string | null): string | null =>
+  m?.id && token && m.message_type === 'video' ? Config.getVideoThumbUrl(m.id, token) : null;
+
 // Documents picked under a loose button used to be stored as 'audio' with a
 // non-audio mime — same guard the web bubble uses.
 export const isDocMessage = (m: Message): boolean =>

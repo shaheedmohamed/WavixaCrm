@@ -22,6 +22,8 @@ import {
   isDocMessage,
   isPlaceholderText,
   mediaSrc,
+  senderAvatarSrc,
+  videoThumbSrc,
 } from '../services/media';
 import { Conversation, Message } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -29,7 +31,10 @@ import { Colors } from '../constants/theme';
 interface MessageBubbleProps {
   message: Message;
   isGroup?: boolean;
-  conversation?: Pick<Conversation, 'id' | 'contact_jid' | 'contact_avatar'> | null;
+  // First message of a consecutive same-sender run in a group — controls the
+  // avatar + name header (WhatsApp only shows it there, others just indent).
+  isFirstInRun?: boolean;
+  conversation?: Pick<Conversation, 'id' | 'contact_jid' | 'contact_avatar' | 'session_id'> | null;
   contactTitle?: string;
   quoted?: Message | null;
   onActions?: (msg: Message) => void;
@@ -84,6 +89,7 @@ const quotedLabel = (m: Message): string => {
 const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   message,
   isGroup = false,
+  isFirstInRun = false,
   conversation,
   contactTitle,
   quoted,
@@ -140,7 +146,10 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
     isOutgoing && !isAgent && message.status !== 'failed'
       ? message.sent_by?.name || 'من الواتساب'
       : null;
-  const showGroupSender = isGroup && !isOutgoing;
+  // WhatsApp shows the sender's avatar + name only on the first message of
+  // a consecutive run; later ones just get the avatar-width indent.
+  const isGroupIncoming = isGroup && !isOutgoing;
+  const showGroupSender = isGroupIncoming && isFirstInRun;
 
   const senderColor =
     SENDER_COLORS[
@@ -159,6 +168,11 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
       ? `+${message.from}`
       : null);
   const senderInitials = (senderDisplayName || 'ع').slice(0, 1).toUpperCase();
+  const [senderAvatarFailed, setSenderAvatarFailed] = useState(false);
+  const senderAvatarUri = isGroupIncoming
+    ? senderAvatarSrc(message, conversation?.session_id, token, groupDigits)
+    : null;
+  const videoPosterUri = videoThumbSrc(message, token);
 
   const mediaUri = mediaSrc(message, token);
   const contactAvatarUri = avatarSrc(conversation, token);
@@ -266,11 +280,20 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           isOutgoing ? styles.bubbleRowOutgoing : styles.bubbleRowIncoming,
         ]}
       >
-        {showGroupSender && (
+        {isGroupIncoming && (
           <View style={styles.groupAvatarWrap}>
-            <View style={[styles.groupAvatar, { backgroundColor: senderColor }]}>
-              <Text style={styles.groupAvatarText}>{senderInitials}</Text>
-            </View>
+            {showGroupSender ? (
+              <View style={[styles.groupAvatar, { backgroundColor: senderColor }]}>
+                <Text style={styles.groupAvatarText}>{senderInitials}</Text>
+                {senderAvatarUri && !senderAvatarFailed ? (
+                  <Image
+                    source={{ uri: senderAvatarUri }}
+                    style={StyleSheet.absoluteFill}
+                    onError={() => setSenderAvatarFailed(true)}
+                  />
+                ) : null}
+              </View>
+            ) : null}
           </View>
         )}
 
@@ -361,6 +384,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                 uri={mediaUri}
                 durationSeconds={message.media_meta?.seconds}
                 fileName={message.media_meta?.fileName}
+                posterUri={videoPosterUri}
                 disabled={isUploading}
                 onPress={() => !isUploading && onViewMedia?.(message, 'video')}
               />
@@ -554,12 +578,14 @@ const styles = StyleSheet.create({
   },
   groupAvatarWrap: {
     paddingBottom: 2,
+    width: 26,
   },
   groupAvatar: {
     width: 26,
     height: 26,
     borderRadius: 13,
     alignItems: 'center',
+    overflow: 'hidden',
     justifyContent: 'center',
   },
   groupAvatarText: {

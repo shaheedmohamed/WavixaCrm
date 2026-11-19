@@ -10,6 +10,14 @@ export const Config = {
   getAvatarUrl: (convId: number | string, token: string, download = false, version?: string) =>
     `https://crm.wavixa.net/api/crm/avatar/${convId}?token=${encodeURIComponent(token)}${download ? '&download=1' : ''}${version ? `&v=${encodeURIComponent(version)}` : ''}`,
 
+  // Group participant avatars — resolved + cached lazily by the backend.
+  getSenderAvatarUrl: (sessionId: number | string, jid: string, token: string) =>
+    `https://crm.wavixa.net/api/crm/sender-avatar?session_id=${encodeURIComponent(sessionId)}&jid=${encodeURIComponent(jid)}&token=${encodeURIComponent(token)}`,
+
+  // ffmpeg-extracted first frame for stored video bubbles.
+  getVideoThumbUrl: (messageId: number | string, token: string) =>
+    `https://crm.wavixa.net/api/crm/video-thumb/${messageId}?token=${encodeURIComponent(token)}`,
+
   // App Metadata
   appName: 'Wavixa CRM',
   appVersion: '1.0.0',

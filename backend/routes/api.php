@@ -147,6 +147,8 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     // Authorization headers; the sanctum token is validated from ?token=.
     Route::get('/crm/media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamMedia']);
     Route::get('/crm/avatar/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamAvatar']);
+    Route::get('/crm/sender-avatar', [\App\Http\Controllers\Api\CrmController::class, 'streamSenderAvatar']);
+    Route::get('/crm/video-thumb/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamVideoThumb']);
     Route::get('/crm/status-media/{id}', [\App\Http\Controllers\Api\CrmController::class, 'streamStatusMedia']);
     // Call-bridge pairing QR — ?token= auth like the media routes; the
     // browser cannot send Authorization on a plain <img>/page load.

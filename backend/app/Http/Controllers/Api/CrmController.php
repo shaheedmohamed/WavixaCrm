@@ -3789,6 +3789,161 @@ class CrmController extends Controller
         return response()->json(['success' => false, 'message' => 'No avatar'], 404);
     }
 
+    /**
+     * Group-member avatar: the sender JID on group messages isn't a
+     * conversation, so avatars resolve lazily here — fetch the profile pic
+     * through any connected session once, keep a permanent local copy, and
+     * serve it on every render after that.
+     * GET /api/crm/sender-avatar?session_id=&jid=&token=
+     */
+    public function streamSenderAvatar(Request $request)
+    {
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));
+        $user = $accessToken?->tokenable;
+        if (!$user instanceof User) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+        $sessionId = (int) $request->query('session_id');
+        $jid = trim((string) $request->query('jid'));
+        if (!$sessionId || !$jid) {
+            return response()->json(['success' => false, 'message' => 'Missing params'], 422);
+        }
+        $allowed = $this->getAllowedSessionIds($user);
+        if ($user->crm_role !== 'admin' && !in_array($sessionId, $allowed)) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+
+        $dir = storage_path('app/avatars/senders');
+        $key = sha1($sessionId . '|' . $jid);
+        $file = "{$dir}/{$key}.jpg";
+        if (is_file($file)) {
+            return response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'private, max-age=86400']);
+        }
+        if (Cache::has("sender_avatar_miss:{$key}")) {
+            return response()->json(['success' => false, 'message' => 'No avatar'], 404);
+        }
+
+        // Strip the :N device suffix and swap @lid for its phone-number form —
+        // the picture endpoint only resolves JIDs WhatsApp still tracks.
+        $normJid = preg_replace('/:\d+@/', '@', $jid);
+        if (!str_contains($normJid, '@')) {
+            // Bare digits travel as `from` in the DB — 15+ digit ids are LIDs,
+            // shorter ones are real phone numbers.
+            $normJid = strlen(preg_replace('/\D/', '', $normJid)) >= 15
+                ? $normJid . '@lid'
+                : $normJid . '@s.whatsapp.net';
+        }
+        $candidates = [$normJid];
+        if (str_ends_with($normJid, '@lid')) {
+            $pn = DB::table('whatsapp_lid_mappings')->where('lid', $normJid)->value('pn');
+            if ($pn && str_ends_with($pn, '@s.whatsapp.net')) {
+                array_unshift($candidates, $pn);
+            }
+        }
+
+        $picUrl = null;
+        $connected = WhatsAppSession::where('status', 'connected')
+            ->when($user->crm_role !== 'admin', fn ($q) => $q->whereIn('id', $allowed))
+            ->get();
+        foreach ($connected as $sess) {
+            $token = $sess->session_token ?: (string) $sess->id;
+            try {
+                $res = $this->engineClient()->timeout(12)->post("{$this->engineUrl}/internal/picture/resolve", [
+                    'sessionId' => $token,
+                    'jids' => $candidates,
+                ]);
+                $pictures = $res->ok() ? ($res->json('pictures') ?: []) : [];
+                foreach ($candidates as $c) {
+                    if (!empty($pictures[$c])) { $picUrl = $pictures[$c]; break; }
+                }
+            } catch (\Throwable $e) { continue; }
+            if ($picUrl) break;
+        }
+
+        if ($picUrl && str_starts_with($picUrl, 'http')) {
+            try {
+                $dl = \Illuminate\Support\Facades\Http::timeout(15)->get($picUrl);
+                if ($dl->successful() && strlen($dl->body()) > 200) {
+                    if (!is_dir($dir)) mkdir($dir, 0755, true);
+                    file_put_contents($file, $dl->body());
+                    return response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'private, max-age=86400']);
+                }
+            } catch (\Throwable $e) {}
+        }
+
+        Cache::add("sender_avatar_miss:{$key}", 1, 3600);
+        return response()->json(['success' => false, 'message' => 'No avatar'], 404);
+    }
+
+    /**
+     * Video poster frame — WhatsApp shows the clip's first frame in the
+     * bubble; our stored blobs have none, so ffmpeg extracts frame 1 lazily
+     * and the jpg is cached forever next to other thumbs.
+     * GET /api/crm/video-thumb/{messageId}?token=
+     */
+    public function streamVideoThumb(Request $request, $id)
+    {
+        $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));
+        $user = $accessToken?->tokenable;
+        if (!$user instanceof User) {
+            return response()->json(['success' => false, 'message' => 'Unauthenticated.'], 401);
+        }
+        $msg = WhatsAppMessage::findOrFail($id);
+        if ($msg->session_id
+            && $user->crm_role !== 'admin'
+            && !in_array($msg->session_id, $this->getAllowedSessionIds($user))) {
+            return response()->json(['success' => false, 'message' => 'Forbidden'], 403);
+        }
+
+        $dir = storage_path('app/thumbs');
+        $file = "{$dir}/{$msg->id}.jpg";
+        if (is_file($file)) {
+            return response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'private, max-age=86400']);
+        }
+
+        // Incoming media may live in the main backend's storage (the engine
+        // posts webhooks there too) or the CRM's own public storage.
+        $local = null;
+        $url = (string) ($msg->media_url ?? '');
+        if ($url) {
+            $path = ltrim(
+                str_starts_with($url, 'http') ? (parse_url($url, PHP_URL_PATH) ?: '') : $url,
+                '/'
+            );
+            $rel = preg_replace('#^storage/#', '', $path);
+            foreach ([
+                public_path($path),
+                storage_path('app/public/' . $rel),
+                "/var/www/Wavixa/backend/public/{$path}",
+                "/var/www/Wavixa/backend/storage/app/public/{$rel}",
+            ] as $candidate) {
+                if (is_file($candidate)) { $local = $candidate; break; }
+            }
+        }
+        if (!$local) {
+            return response()->json(['success' => false, 'message' => 'No media'], 404);
+        }
+
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+        $cmd = sprintf(
+            'ffmpeg -y -loglevel error -ss 0.5 -i %s -frames:v 1 -vf "scale=480:-2" -q:v 4 %s 2>&1',
+            escapeshellarg($local),
+            escapeshellarg($file)
+        );
+        exec($cmd, $out, $code);
+        if ($code !== 0 || !is_file($file)) {
+            // Corrupt/odd encodings: try frame 0 without seek.
+            exec(sprintf(
+                'ffmpeg -y -loglevel error -i %s -frames:v 1 -vf "scale=480:-2" -q:v 4 %s 2>&1',
+                escapeshellarg($local), escapeshellarg($file)
+            ), $out2, $code2);
+        }
+        if (!is_file($file)) {
+            return response()->json(['success' => false, 'message' => 'No thumb'], 404);
+        }
+        return response()->file($file, ['Content-Type' => 'image/jpeg', 'Cache-Control' => 'private, max-age=86400']);
+    }
+
     public function streamMedia(Request $request, $id)
     {
         $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));

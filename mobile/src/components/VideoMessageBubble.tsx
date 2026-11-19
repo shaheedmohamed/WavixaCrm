@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { formatAudioSeconds } from '../services/media';
 
@@ -7,6 +7,7 @@ interface VideoMessageBubbleProps {
   uri: string;
   durationSeconds?: number | null;
   fileName?: string | null;
+  posterUri?: string | null;
   onPress: () => void;
   disabled?: boolean;
 }
@@ -14,9 +15,11 @@ interface VideoMessageBubbleProps {
 const VideoMessageBubbleComponent: React.FC<VideoMessageBubbleProps> = ({
   durationSeconds,
   fileName,
+  posterUri,
   onPress,
   disabled = false,
 }) => {
+  const [posterFailed, setPosterFailed] = React.useState(false);
   return (
     <Pressable onPress={onPress} disabled={disabled} style={styles.wrap}>
       <View style={styles.CinemaBackdrop}>
@@ -26,8 +29,16 @@ const VideoMessageBubbleComponent: React.FC<VideoMessageBubbleProps> = ({
           color="rgba(255,255,255,0.16)"
         />
       </View>
+      {posterUri && !posterFailed ? (
+        <Image
+          source={{ uri: posterUri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          onError={() => setPosterFailed(true)}
+        />
+      ) : null}
 
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, posterUri && !posterFailed && styles.overlayOnPoster]}>
         <View style={styles.playCircle}>
           <Ionicons name="play" size={24} color="#FFFFFF" style={{ marginLeft: 3 }} />
         </View>
@@ -72,6 +83,9 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFill,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  overlayOnPoster: {
+    backgroundColor: 'rgba(0,0,0,0.18)',
   },
   playCircle: {
     width: 48,

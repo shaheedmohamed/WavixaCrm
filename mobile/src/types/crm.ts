@@ -210,3 +210,32 @@ export type FilterScope =
   | 'archived'
   | 'all'
   | `list:${number}`;
+
+export interface GroupMember {
+  jid: string;
+  phone?: string | null;
+  lid?: string | null;
+  name?: string | null;
+  admin?: boolean;
+  superadmin?: boolean;
+}
+
+export interface GroupPastMember {
+  jid: string;
+  phone?: string | null;
+  lid?: string | null;
+  name?: string | null;
+  leave_reason?: number;
+  leave_ts?: number;
+}
+
+export interface GroupMembersResponse {
+  success: boolean;
+  subject?: string;
+  owner?: string | null;
+  created_at?: number | null;
+  announce?: boolean | null;
+  restrict?: boolean | null;
+  members: GroupMember[];
+  past: GroupPastMember[];
+}

@@ -18,7 +18,8 @@ import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-ico
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
-import { Conversation, Message } from '../types/crm';
+import { Conversation, Message, GroupMembersResponse, GroupMember } from '../types/crm';
+import { Config } from '../constants/config';
 import { ChatAvatar } from './ChatAvatar';
 import { ZoomableImage } from './ZoomableImage';
 import { KeyboardSafeView } from './KeyboardSafeView';
@@ -54,6 +55,9 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
   );
   const [savingName, setSavingName] = useState(false);
   const [avatarViewerOpen, setAvatarViewerOpen] = useState(false);
+  const [groupInfo, setGroupInfo] = useState<GroupMembersResponse | null>(null);
+  const [loadingMembers, setLoadingMembers] = useState(false);
+  const isGroup = Boolean(conversation.contact_jid?.includes('@g.us'));
 
   const fullAvatarUri = avatarSrc(conversation, token, false);
   const downloadAvatarUri = avatarSrc(conversation, token, true);
@@ -78,8 +82,19 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
       setIsEditingName(false);
       setAvatarViewerOpen(false);
       loadMedia();
+      if (isGroup) {
+        setLoadingMembers(true);
+        setGroupInfo(null);
+        chatService
+          .getGroupMembers(conversation.id)
+          .then((res) => {
+            if (res && res.success) setGroupInfo(res);
+          })
+          .catch(() => {})
+          .finally(() => setLoadingMembers(false));
+      }
     });
-  }, [visible, conversation.id, conversation.contact_name, conversation.contact_phone, loadMedia]);
+  }, [visible, conversation.id, conversation.contact_name, conversation.contact_phone, loadMedia, isGroup]);
 
   const handleSaveName = async () => {
     const trimmed = editNameText.trim();
@@ -336,6 +351,43 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
               </View>
             )}
           </View>
+
+          {isGroup ? (
+            <View style={styles.sectionCard}>
+              <View style={styles.mediaHeaderRow}>
+                <Text style={styles.sectionTitle}>أعضاء الجروب</Text>
+                <Text style={styles.mediaCountBadge}>
+                  {groupInfo?.members?.length ?? (loadingMembers ? '…' : 0)}
+                </Text>
+              </View>
+
+              {loadingMembers ? (
+                <View style={styles.mediaLoadingWrap}>
+                  <ActivityIndicator size="small" color="#00A884" />
+                  <Text style={styles.mediaLoadingText}>جاري تحميل الأعضاء...</Text>
+                </View>
+              ) : !groupInfo || groupInfo.members.length === 0 ? (
+                <Text style={styles.noMediaText}>تعذر تحميل قائمة الأعضاء</Text>
+              ) : (
+                <View>
+                  {groupInfo.members.map((m, idx) => (
+                    <MemberRow
+                      key={m.jid || idx}
+                      member={m}
+                      sessionId={conversation.session_id}
+                      token={token}
+                      isLast={idx === groupInfo.members.length - 1}
+                    />
+                  ))}
+                  {groupInfo.past?.length ? (
+                    <Text style={styles.pastMembersLine}>
+                      {groupInfo.past.length} غادر أو أُزيل من الجروب
+                    </Text>
+                  ) : null}
+                </View>
+              )}
+            </View>
+          ) : null}
         </ScrollView>
 
         <Modal
@@ -391,6 +443,56 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
         </Modal>
       </KeyboardSafeView>
     </Modal>
+  );
+};
+
+const MEMBER_COLORS = ['#00A884', '#1F70C1', '#D63384', '#D97706', '#7C3AED', '#0D9488', '#EA580C'];
+
+const MemberRow: React.FC<{
+  member: GroupMember;
+  sessionId: number | string | undefined;
+  token?: string | null;
+  isLast?: boolean;
+}> = ({ member, sessionId, token, isLast }) => {
+  const [avatarFailed, setAvatarFailed] = useState(false);
+  const avatarUri =
+    member.jid && sessionId && token
+      ? Config.getSenderAvatarUrl(sessionId, member.jid, token)
+      : null;
+  const label = member.name || (member.phone ? `+${member.phone}` : 'عضو');
+  const color =
+    MEMBER_COLORS[
+      Math.abs((member.jid || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0)) %
+        MEMBER_COLORS.length
+    ];
+  return (
+    <View style={[styles.memberRow, !isLast && styles.memberRowBorder]}>
+      <View style={[styles.memberAvatar, { backgroundColor: color }]}>
+        <Text style={styles.memberAvatarText}>{(label || 'ع').slice(0, 1).toUpperCase()}</Text>
+        {avatarUri && !avatarFailed ? (
+          <Image
+            source={{ uri: avatarUri }}
+            style={StyleSheet.absoluteFill}
+            onError={() => setAvatarFailed(true)}
+          />
+        ) : null}
+      </View>
+      <View style={styles.memberTextWrap}>
+        <Text style={styles.memberName} numberOfLines={1}>
+          {label}
+        </Text>
+        {member.name && member.phone ? (
+          <Text style={styles.memberPhone} numberOfLines={1}>
+            +{member.phone}
+          </Text>
+        ) : null}
+      </View>
+      {member.superadmin || member.admin ? (
+        <View style={styles.adminBadge}>
+          <Text style={styles.adminBadgeText}>مسؤول</Text>
+        </View>
+      ) : null}
+    </View>
   );
 };
 
@@ -566,6 +668,62 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     paddingVertical: 20,
+  },
+  memberRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+  },
+  memberRowBorder: {
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#202C33',
+  },
+  memberAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  memberAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  memberTextWrap: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  memberName: {
+    color: '#E9EDEF',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'right',
+  },
+  memberPhone: {
+    color: '#8696A0',
+    fontSize: 12,
+    marginTop: 1,
+    textAlign: 'right',
+  },
+  adminBadge: {
+    backgroundColor: 'rgba(0,168,132,0.15)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  adminBadgeText: {
+    color: '#00A884',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  pastMembersLine: {
+    color: '#8696A0',
+    fontSize: 11,
+    textAlign: 'right',
+    marginTop: 8,
   },
   mediaLoadingText: {
     color: '#8696A0',

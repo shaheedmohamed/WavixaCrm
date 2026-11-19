@@ -9,6 +9,7 @@ import {
   ChatList,
   MediaEditSpec,
   StarredMessageItem,
+  GroupMembersResponse,
 } from '../types/crm';
 
 export interface ConversationsParams {
@@ -159,6 +160,13 @@ export const chatService = {
     const response = await apiClient.get<{ success: boolean; media: Message[] }>(
       `/crm/conversations/${conversationId}/media`,
       { params: { limit } }
+    );
+    return response.data;
+  },
+
+  async getGroupMembers(conversationId: number): Promise<GroupMembersResponse> {
+    const response = await apiClient.get<GroupMembersResponse>(
+      `/crm/conversations/${conversationId}/members`
     );
     return response.data;
   },

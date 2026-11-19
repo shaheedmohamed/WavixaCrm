@@ -1132,6 +1132,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         (item.id === initialUnreadAnchorIdRef.current ||
           item.message_id === initialUnreadAnchorIdRef.current);
 
+      // WhatsApp run grouping: the avatar + sender name header only shows on
+      // the first incoming message after a different sender / outgoing / day.
+      const isFirstInRun =
+        !isGroup ||
+        item.direction !== 'incoming' ||
+        !olderMsg ||
+        isFirstOfDay ||
+        olderMsg.direction !== 'incoming' ||
+        (olderMsg.from || '') !== (item.from || '');
+
       const rowKey = item.client_temp_id || item.id || item.message_id;
 
       return (
@@ -1162,6 +1172,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             <MessageBubble
               message={item}
               isGroup={isGroup}
+              isFirstInRun={isFirstInRun}
               conversation={conversation}
               contactTitle={contactTitle}
               quoted={

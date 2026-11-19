@@ -1654,11 +1654,17 @@ public function messageRevoked(Request $request)
                 }
             }
 
+            // Group senders increasingly arrive as @lid — the engine then
+            // sends senderPhone='' + senderLid. Falling back to `from` (the
+            // GROUP JID) stored the group id as the sender and wiped sender
+            // identity entirely, so prefer the LID digits here.
             $senderPhone = !empty($data['senderPhone'])
                 ? $data['senderPhone']
-                : (str_ends_with($fromJid, '@lid')
-                    ? null
-                    : preg_replace('/@.*$/', '', $fromJid));
+                : (!empty($data['senderLid'])
+                    ? preg_replace('/\D/', '', explode('@', (string) $data['senderLid'])[0])
+                    : (str_ends_with($fromJid, '@lid')
+                        ? null
+                        : preg_replace('/@.*$/', '', $fromJid)));
             $fromMe = (bool) ($data['fromMe'] ?? false);
             // The stanza's notify attr carries the author's pushname — on
             // fromMe messages (owner replying from the WhatsApp app) that is
