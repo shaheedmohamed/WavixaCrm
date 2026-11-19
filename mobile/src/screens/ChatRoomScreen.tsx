@@ -533,6 +533,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         timestamp: nowIso,
         status: 'pending',
         reply_to_id: replyId,
+        sent_by: user ? { id: user.id, name: user.name } : null,
         retry_payload: {
           kind: 'text',
           text,
@@ -545,7 +546,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       scrollToLatest(true);
       executeTextSend(tempId, text, replyId);
     },
-    [replyTarget, conversation.id, scrollToLatest, executeTextSend]
+    [replyTarget, conversation.id, scrollToLatest, executeTextSend, user]
   );
 
   const executeMediaUpload = useCallback(
@@ -671,6 +672,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         local_uri: media.uri,
         upload_progress: 1,
         edit_spec: editSpec,
+        sent_by: user ? { id: user.id, name: user.name } : null,
         timestamp: new Date().toISOString(),
         status: 'pending',
         reply_to_id: replyId,
@@ -703,7 +705,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         editSpec
       );
     },
-    [replyTarget, conversation.id, scrollToLatest, executeMediaUpload]
+    [replyTarget, conversation.id, scrollToLatest, executeMediaUpload, user]
   );
 
   const handleRetryMessage = useCallback(

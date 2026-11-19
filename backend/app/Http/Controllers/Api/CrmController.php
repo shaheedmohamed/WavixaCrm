@@ -1499,7 +1499,8 @@ class CrmController extends Controller
         $selfChat = $conversation->session?->phone_number
             && preg_replace('/\D/', '', (string) $conversation->contact_phone)
                 === preg_replace('/\D/', '', (string) $conversation->session->phone_number);
-        $query = WhatsAppMessage::where(function ($q) use ($conversation, $selfChat) {
+        $query = WhatsAppMessage::with('sentBy:id,name')
+            ->where(function ($q) use ($conversation, $selfChat) {
             $q->where('conversation_id', $conversation->id)
               ->orWhere(function ($sq) use ($conversation, $selfChat) {
                   $sq->where('session_id', $conversation->session_id);
@@ -2340,6 +2341,7 @@ class CrmController extends Controller
                 } else {
                     $msgRecord = WhatsAppMessage::create([
                         'user_id' => $conversation->user_id,
+                        'sent_by_user_id' => $request->user()->id,
                         'session_id' => $session->id,
                         'conversation_id' => $conversation->id,
                         'from' => $session->phone_number,
@@ -2360,6 +2362,7 @@ class CrmController extends Controller
                     \Illuminate\Support\Facades\DB::select('SELECT RELEASE_LOCK(?)', [$lockName]);
                 }
             }
+            $msgRecord?->loadMissing('sentBy:id,name');
 
             $conversation->update([
                 'last_message' => $text,
@@ -2657,6 +2660,7 @@ class CrmController extends Controller
             // would otherwise stay empty forever.
             $pending = WhatsAppMessage::create([
                 'user_id' => $conversation->user_id,
+                'sent_by_user_id' => $request->user()->id,
                 'session_id' => $session->id,
                 'conversation_id' => $conversation->id,
                 'from' => $session->phone_number,
@@ -2692,6 +2696,7 @@ class CrmController extends Controller
                     $pending->delete();
                     $msgRecord->update(array_filter([
                         'conversation_id' => $msgRecord->conversation_id ?: $conversation->id,
+                        'sent_by_user_id' => $request->user()->id,
                         'media_url' => $mediaUrl,
                         'media_caption' => $caption,
                         'media_mime_type' => $mimeType,
@@ -2720,6 +2725,7 @@ class CrmController extends Controller
                     \Illuminate\Support\Facades\DB::select('SELECT RELEASE_LOCK(?)', [$lockName]);
                 }
             }
+            $msgRecord?->loadMissing('sentBy:id,name');
 
             $conversation->update([
                 'last_message' => $caption ?: ($type === 'image' ? '📷 صورة' : ($type === 'video' ? '🎥 فيديو' : '🎤 تسجيل صوتي')),
@@ -3105,6 +3111,7 @@ class CrmController extends Controller
             } else {
                 $msgRecord = WhatsAppMessage::create([
                     'user_id' => $conv->user_id,
+                    'sent_by_user_id' => $request->user()->id,
                     'session_id' => $session->id,
                     'conversation_id' => $conv->id,
                     'from' => $session->phone_number,
@@ -3129,6 +3136,7 @@ class CrmController extends Controller
                 \Illuminate\Support\Facades\DB::select('SELECT RELEASE_LOCK(?)', [$lockName]);
             }
         }
+        $msgRecord?->loadMissing('sentBy:id,name');
 
         $conv->update([
             'last_message' => $label ?: "[{$type}]",

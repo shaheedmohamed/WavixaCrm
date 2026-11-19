@@ -107,6 +107,8 @@ export interface Message {
   starred_at?: string | null;
   starred_by_user_id?: number | null;
   starred_by?: { id: number; name: string } | null;
+  sent_by_user_id?: number | null;
+  sent_by?: { id: number; name: string } | null;
   revoked_at?: string | null;
   local_uri?: string | null;
   upload_progress?: number | null;

@@ -95,7 +95,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onDoubleTapLike,
   onPressReactions,
 }) => {
-  const { token, user } = useAuth();
+  const { token, user, isAgent } = useAuth();
   const lastTapRef = useRef(0);
   const [likePulse] = useState(() => new Animated.Value(1));
 
@@ -133,6 +133,13 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
     }
   };
   const isOutgoing = message.direction === 'outgoing';
+  // Sender attribution — owners/admins see which employee replied, or that
+  // the message went out from the WhatsApp app itself. Agents don't get the
+  // extra chrome (they only work their own queue anyway).
+  const sentByLabel =
+    isOutgoing && !isAgent && message.status !== 'failed'
+      ? message.sent_by?.name || 'من الواتساب'
+      : null;
   const showGroupSender = isGroup && !isOutgoing;
 
   const senderColor =
@@ -380,6 +387,11 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                     {message.starred_at ? (
                       <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
                     ) : null}
+                    {sentByLabel ? (
+                      <Text style={styles.sentByText} numberOfLines={1}>
+                        · {sentByLabel}
+                      </Text>
+                    ) : null}
                   </>
                 }
               />
@@ -459,6 +471,11 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
               </Text>
               {message.starred_at ? (
                 <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
+              ) : null}
+              {sentByLabel ? (
+                <Text style={styles.sentByText} numberOfLines={1}>
+                  · {sentByLabel}
+                </Text>
               ) : null}
             </View>
           )}
@@ -623,6 +640,12 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 10,
     color: '#667781',
+  },
+  sentByText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#8696A0',
+    maxWidth: 110,
   },
   tick: {
     marginRight: 1,

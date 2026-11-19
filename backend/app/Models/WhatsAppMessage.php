@@ -29,6 +29,7 @@ class WhatsAppMessage extends Model
         'mentioned_jids',
         'starred_at',
         'starred_by_user_id',
+        'sent_by_user_id',
         'reply_to_id',
         'is_forwarded',
         'message_id',
@@ -101,5 +102,11 @@ class WhatsAppMessage extends Model
     public function starredBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'starred_by_user_id');
+    }
+
+    /** The CRM user who sent this outgoing message (null = sent from WhatsApp). */
+    public function sentBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'sent_by_user_id');
     }
 }
