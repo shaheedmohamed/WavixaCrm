@@ -16,6 +16,8 @@ interface SwipeableMessageRowProps {
   message: Message;
   onSwipeReply: (message: Message) => void;
   highlighted?: boolean;
+  /** Swipe-to-reply is suppressed while a multi-selection is active. */
+  disabled?: boolean;
   children: React.ReactNode;
 }
 
@@ -32,12 +34,14 @@ const SwipeableMessageRowComponent: React.FC<SwipeableMessageRowProps> = ({
   message,
   onSwipeReply,
   highlighted = false,
+  disabled = false,
   children,
 }) => {
   const translateX = useSharedValue(0);
   const triggered = useSharedValue(false);
 
   const pan = Gesture.Pan()
+    .enabled(!disabled)
     // Activate only for clearly-horizontal drags so the vertical
     // FlatList keeps full priority — the WhatsApp conflict rule.
     .activeOffsetX([-16, 16])

@@ -1263,6 +1263,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
           <SwipeableMessageRow
             message={item}
+            disabled={selectionMode}
             onSwipeReply={handleSwipeReply}
             highlighted={highlightedMsgKey !== null && highlightedMsgKey === rowKey}
           >
