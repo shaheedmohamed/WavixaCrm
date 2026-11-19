@@ -258,6 +258,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     onBackRef.current = onBack;
   }, [onBack]);
 
+  // Pop the keyboard as soon as the room settles — the screen remounts per
+  // conversation (keyed by id) so this runs once per chat. Skipped on
+  // exact-message jumps so the keyboard doesn't cover the target message.
+  useEffect(() => {
+    if (focusMessageId) return;
+    const t = setTimeout(() => composerRef.current?.focus(), 320);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
