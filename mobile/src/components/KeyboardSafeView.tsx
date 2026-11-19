@@ -6,7 +6,6 @@ import {
   StyleProp,
   StyleSheet,
   TurboModuleRegistry,
-  View,
   ViewStyle,
 } from 'react-native';
 
@@ -18,24 +17,6 @@ export const HAS_KEYBOARD_SYNC =
   Platform.OS !== 'web' &&
   TurboModuleRegistry.get('KeyboardController') != null;
 
-// Edge-to-edge is enforced on Expo SDK 53+ Android: the window is NOT
-// resized for the IME — apps must consume the inset themselves. Under
-// E2E the (disabled) provider's margin path is skipped too, so a plain
-// view leaves the composer under the keyboard. Detect E2E the same way
-// the lib does.
-const IS_EDGE_TO_EDGE = (() => {
-  if (Platform.OS !== 'android') return false;
-  try {
-    const deviceInfo = TurboModuleRegistry.get('DeviceInfo') as any;
-    return (
-      TurboModuleRegistry.get('RNEdgeToEdge') != null ||
-      deviceInfo?.getConstants?.()?.isEdgeToEdge === true
-    );
-  } catch {
-    return false;
-  }
-})();
-
 interface KeyboardSafeViewProps {
   children: React.ReactNode;
   style?: StyleProp<ViewStyle>;
@@ -46,15 +27,16 @@ interface KeyboardSafeViewProps {
 /**
  * Keyboard-safe wrapper.
  *
- * Three cases:
- * - Android non-E2E: android:windowSoftInputMode="adjustResize" shrinks
- *   the window itself (plus the disabled provider's margin path when the
- *   lib is bundled) — a plain view is all that's needed.
- * - Android E2E: nothing resizes the window, so RN's own
- *   KeyboardAvoidingView (height) lifts the composer. Its Keyboard
- *   events are emitted by RN's global layout listener — independent of
- *   the keyboard-controller event pipeline entirely.
- * - iOS: classic padding behavior.
+ * Uses RN's own KeyboardAvoidingView (height on Android, padding on
+ * iOS). RN's Keyboard events come from the global layout listener —
+ * independent of the keyboard-controller event pipeline, so they fire
+ * on every device. 'height' measures the real view-vs-keyboard overlap:
+ * when the window is already resized (adjustResize, non-edge-to-edge)
+ * the overlap is zero and it stays out of the way; under edge-to-edge
+ * it shrinks the container by the IME height.
+ *
+ * The root KeyboardProvider stays mounted with enabled={false} so the
+ * lib's animated pipeline can't suppress the resize margin path.
  */
 export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
   children,
@@ -75,11 +57,6 @@ export const KeyboardSafeView: React.FC<KeyboardSafeViewProps> = ({
       hideSub.remove();
     };
   }, [onKeyboardVisibleChange]);
-
-  if (Platform.OS === 'android' && !IS_EDGE_TO_EDGE) {
-    // adjustResize (or the provider's margin path) lifts the content.
-    return <View style={[styles.root, style]}>{children}</View>;
-  }
 
   return (
     <RNKeyboardAvoidingView
