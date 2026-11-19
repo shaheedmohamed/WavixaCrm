@@ -1598,6 +1598,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               );
             })()}
 
+          {!selectionMode && (
           <ChatInputBar
             ref={composerRef}
             bottomInset={insets.bottom}
@@ -1608,6 +1609,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             onOpenCameraQuick={() => setCameraVisible(true)}
             onOpenQuickReplies={() => setQuickRepliesVisible(true)}
           />
+          )}
         </KeyboardSafeView>
       </View>
 
