@@ -7,13 +7,13 @@ import {
   TouchableOpacity,
   TouchableWithoutFeedback,
   Image,
-  Linking,
   Alert,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/theme';
+import { callService } from '../services/callService';
 
 export interface GroupSender {
   phone: string | null;
@@ -46,9 +46,9 @@ export const GroupMemberSheet: React.FC<GroupMemberSheetProps> = ({
 
   const call = () => {
     if (!member.phone) return;
-    Linking.openURL(`tel:+${member.phone}`).catch(() =>
-      Alert.alert('فشل', 'تعذر فتح تطبيق الاتصال')
-    );
+    onClose();
+    // WhatsApp voice call through the CRM bridge — not the GSM dialer.
+    callService.dial(member.phone, member.name || `+${member.phone}`);
   };
 
   const copyNumber = async () => {

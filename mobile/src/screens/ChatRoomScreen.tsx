@@ -34,6 +34,7 @@ import { ForwardModal } from '../components/ForwardModal';
 import { QuickReplyModal } from '../components/QuickReplyModal';
 import { TransferModal } from '../components/TransferModal';
 import { GroupMemberSheet } from '../components/GroupMemberSheet';
+import { callService } from '../services/callService';
 import { ResolveModal } from '../components/ResolveModal';
 import { PinDurationModal } from '../components/PinDurationModal';
 import { ReactionDetailsSheet } from '../components/ReactionDetailsSheet';
@@ -919,6 +920,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       setMemberSheet(sender),
     []
   );
+
+
   const openingSenderRef = useRef(false);
   const openSenderChat = useCallback(
     async (phone: string) => {
@@ -1192,6 +1195,20 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     (conversation.contact_username ? `@${conversation.contact_username}` : null) ||
     (conversation.contact_phone ? `+${conversation.contact_phone}` : 'عميل');
 
+  // Voice call via the WhatsApp call bridge — groups dial their @g.us JID,
+  // contacts dial their phone number.
+  const handleCallContact = useCallback(() => {
+    const to = isGroup
+      ? conversation.contact_jid || ''
+      : conversation.contact_phone ||
+        (conversation.contact_jid || '').replace(/\D/g, '');
+    if (!to) {
+      Alert.alert('غير متاح', 'لا يوجد رقم لإجراء مكالمة');
+      return;
+    }
+    callService.dial(to, contactTitle);
+  }, [isGroup, conversation, contactTitle]);
+
   const galleryItems = useMemo(() => {
     const list: GalleryMediaItem[] = [];
     for (let i = 0; i < messages.length; i++) {
@@ -1456,6 +1473,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         </View>
 
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={handleCallContact}
+            style={styles.actionIconBtn}
+            hitSlop={8}
+          >
+            <Ionicons name="call-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={() => setTransferVisible(true)}
             style={styles.actionIconBtn}

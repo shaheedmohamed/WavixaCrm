@@ -139,7 +139,41 @@ class CrmCallController extends Controller
             && in_array($request->input('prevState'), ['ringing', 'connecting', 'active', 'incoming'])) {
             $this->logCallMessage($request, $session);
         }
+
+        // Incoming call → high-priority push so the phone rings even with
+        // the app closed. Targets mirror message notifications: the account
+        // owner plus the agent the peer's chat is assigned to.
+        if ($request->input('event') === 'state' && $request->input('callState') === 'incoming'
+            && $request->filled('peer')) {
+            $this->pushIncomingCall($request, $session, $ownerId);
+        }
         return response()->json(['ok' => true]);
+    }
+
+    /** FCM "incoming call" push to the owner (+ the peer chat's agent). */
+    private function pushIncomingCall(Request $request, $session, int $ownerId): void
+    {
+        try {
+            $peer = preg_replace('/\D/', '', (string) $request->input('peer'));
+            $conv = \App\Models\WhatsAppConversation::where('session_id', $session->id)
+                ->where(function ($q) use ($peer) {
+                    $q->where('contact_phone', $peer)
+                      ->orWhere('contact_jid', 'like', "%{$peer}%");
+                })->first();
+            $caller = $conv?->contact_name ?: "+{$peer}";
+            $targets = collect([$ownerId, $conv?->assigned_agent_id])
+                ->filter()->unique()->values();
+            foreach ($targets as $uid) {
+                \App\Services\ExpoPushService::notifyIncoming(
+                    $uid,
+                    'مكالمة واردة',
+                    "{$caller} يتصل بك",
+                    ['conversation_id' => $conv?->id, 'type' => 'call.incoming']
+                );
+            }
+        } catch (\Throwable $e) {
+            Log::debug('CRM push (call.incoming) failed: ' . $e->getMessage());
+        }
     }
 
     /** Persist a call-log message row + broadcast it like a normal message. */

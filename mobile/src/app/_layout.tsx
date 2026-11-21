@@ -1,11 +1,14 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { HAS_KEYBOARD_SYNC } from '../components/KeyboardSafeView';
-import { AuthProvider } from '../context/AuthContext';
+import { AuthProvider, useAuth } from '../context/AuthContext';
+import { CallScreen } from '../components/CallScreen';
+import { realtime } from '../services/realtime';
+import { callService } from '../services/callService';
 
 export default function RootLayout() {
   return (
@@ -22,6 +25,8 @@ export default function RootLayout() {
           >
             <Stack.Screen name="index" />
           </Stack>
+          <RealtimeGate />
+          <CallScreen />
           </AuthProvider>
         </MaybeKeyboardProvider>
       </SafeAreaProvider>
@@ -36,6 +41,29 @@ export default function RootLayout() {
 // devices where those events misbehave the composer ends up buried under
 // the keyboard. Disabled, the view applies resize margins itself (native
 // WindowInsets path) so the input is always above the keyboard.
+// Keeps the Reverb channel alive while signed in and funnels call events
+// (incoming WhatsApp calls) into the call manager.
+const RealtimeGate: React.FC = () => {
+  const { user } = useAuth();
+
+  useEffect(() => {
+    if (!user) {
+      realtime.stop();
+      return;
+    }
+    const off = realtime.on((ev) => {
+      if (ev.type === 'call.event') callService.handleRealtimeEvent(ev.data);
+    });
+    realtime.start(user);
+    return () => {
+      off();
+      realtime.stop();
+    };
+  }, [user]);
+
+  return null;
+};
+
 const MaybeKeyboardProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) =>
