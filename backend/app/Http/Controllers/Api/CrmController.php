@@ -1328,11 +1328,17 @@ class CrmController extends Controller
         if ($user->crm_role === 'agent') {
             // Agents never see archived or completed (مكتمل) chats, nor chats
             // handled by colleagues, nor already-read unclaimed history.
-            if ($request->boolean('archived') || $scope === 'resolved') {
+            if ($request->boolean('archived')) {
                 $query->whereRaw('1 = 0');
+            } elseif ($scope === 'resolved') {
+                // Chats this agent closed stay on their board until a fresh
+                // customer message throws them back into the shared pool.
+                $query->where('resolved_by', $user->id);
             } else {
-                $query->whereNull('resolved_at')
-                      ->whereNull('archived_at');
+                $query->where(function ($q) use ($user) {
+                    $q->whereNull('resolved_at')
+                      ->orWhere('resolved_by', $user->id);
+                })->whereNull('archived_at');
 
                 $isGroupsScope = $scope === 'groups' || $request->boolean('groups_only');
 
@@ -1361,10 +1367,13 @@ class CrmController extends Controller
                         default => $query->where(function ($q) use ($user, $request) {
                             // 1) Unclaimed chats with unread messages
                             // 2) Chats currently handled by this agent
+                            // 3) Chats this agent resolved — kept visible
+                            //    until the next customer reply repools them
                             $q->where(function ($u) {
                                 $u->whereNull('assigned_agent_id')
                                   ->where('unread_count', '>', 0);
-                            })->orWhere('assigned_agent_id', $user->id);
+                            })->orWhere('assigned_agent_id', $user->id)
+                              ->orWhere('resolved_by', $user->id);
                             if ($request->boolean('include_groups')) {
                                 // Groups merged into chats: collaborative —
                                 // they bypass the claim/unread gating.

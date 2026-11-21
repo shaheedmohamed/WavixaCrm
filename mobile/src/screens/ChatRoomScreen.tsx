@@ -33,6 +33,7 @@ import { ContactInfoModal } from '../components/ContactInfoModal';
 import { ForwardModal } from '../components/ForwardModal';
 import { QuickReplyModal } from '../components/QuickReplyModal';
 import { TransferModal } from '../components/TransferModal';
+import { GroupMemberSheet } from '../components/GroupMemberSheet';
 import { ResolveModal } from '../components/ResolveModal';
 import { PinDurationModal } from '../components/PinDurationModal';
 import { ReactionDetailsSheet } from '../components/ReactionDetailsSheet';
@@ -905,10 +906,21 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     setForwardTarget(m);
   }, []);
 
-  // Group member header tap — resolve the number to (or create) its 1:1
-  // conversation and swap the room to it, WhatsApp-style.
-  const openingSenderRef = useRef(false);
+  // Group member header tap — WhatsApp-style member card first; the
+  // "مراسلة" action inside it resolves the number into a 1:1 chat.
+  const [memberSheet, setMemberSheet] = useState<{
+    phone: string | null;
+    name: string | null;
+    avatarUri?: string | null;
+    color?: string;
+  } | null>(null);
   const handlePressSender = useCallback(
+    (sender: { phone: string | null; name: string | null; avatarUri?: string | null; color?: string }) =>
+      setMemberSheet(sender),
+    []
+  );
+  const openingSenderRef = useRef(false);
+  const openSenderChat = useCallback(
     async (phone: string) => {
       if (!onOpenConversation || openingSenderRef.current) return;
       openingSenderRef.current = true;
@@ -1642,6 +1654,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         visible={quickRepliesVisible}
         onClose={() => setQuickRepliesVisible(false)}
         onSelectReply={(txt) => composerRef.current?.appendText(txt)}
+      />
+
+      <GroupMemberSheet
+        member={memberSheet}
+        onClose={() => setMemberSheet(null)}
+        onMessage={(phone) => {
+          setMemberSheet(null);
+          openSenderChat(phone);
+        }}
       />
 
       <TransferModal

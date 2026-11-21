@@ -44,8 +44,13 @@ interface MessageBubbleProps {
   onDismissFailed?: (msg: Message) => void;
   onDoubleTapLike?: (msg: Message) => void;
   onPressReactions?: (msg: Message) => void;
-  // Group sender header tap — opens a 1:1 chat with that member's number.
-  onPressSender?: (phone: string, name: string | null) => void;
+  // Group sender header tap — opens the member card (message / call / …).
+  onPressSender?: (sender: {
+    phone: string | null;
+    name: string | null;
+    avatarUri?: string | null;
+    color?: string;
+  }) => void;
   // WhatsApp-style multi-select: while a selection is active every tap
   // toggles the message instead of opening media/like actions.
   selectionMode?: boolean;
@@ -311,7 +316,19 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
         {isGroupIncoming && (
           <View style={styles.groupAvatarWrap}>
             {showGroupSender ? (
-              <View style={[styles.groupAvatar, { backgroundColor: senderColor }]}>
+              <TouchableOpacity
+                style={[styles.groupAvatar, { backgroundColor: senderColor }]}
+                onPress={() =>
+                  onPressSender?.({
+                    phone: senderPhone,
+                    name: message.sender_name || null,
+                    avatarUri: senderAvatarUri,
+                    color: senderColor,
+                  })
+                }
+                disabled={!onPressSender}
+                activeOpacity={0.8}
+              >
                 <Text style={styles.groupAvatarText}>{senderInitials}</Text>
                 {senderAvatarUri && !senderAvatarFailed ? (
                   <Image
@@ -320,7 +337,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                     onError={() => setSenderAvatarFailed(true)}
                   />
                 ) : null}
-              </View>
+              </TouchableOpacity>
             ) : null}
           </View>
         )}
@@ -352,16 +369,20 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             </View>
           ) : null}
           {showGroupSender && senderDisplayName ? (
-            senderPhone && onPressSender ? (
-              <TouchableOpacity
-                onPress={() => onPressSender(senderPhone, message.sender_name || null)}
-                activeOpacity={0.7}
-              >
-                <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
-              </TouchableOpacity>
-            ) : (
+            <TouchableOpacity
+              onPress={() =>
+                onPressSender?.({
+                  phone: senderPhone,
+                  name: message.sender_name || null,
+                  avatarUri: senderAvatarUri,
+                  color: senderColor,
+                })
+              }
+              disabled={!onPressSender}
+              activeOpacity={0.7}
+            >
               <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
-            )
+            </TouchableOpacity>
           ) : null}
 
           {message.is_forwarded ? (

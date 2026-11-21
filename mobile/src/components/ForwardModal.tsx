@@ -26,10 +26,11 @@ interface ForwardModalProps {
   onClose: () => void;
 }
 
-/** Pick a target chat and forward the selected message — same pipeline the
- *  web chat uses (/crm/messages/forward). Search runs server-side so every
- *  stored chat is reachable by name or phone, and a typed phone number can
- *  be forwarded to even when no conversation exists yet. */
+const MAX_TARGETS = 20; // backend validation cap
+
+/** WhatsApp-style forward picker: search any chat (groups included), tick
+ *  as many targets as wanted — typed phone numbers work too — then send
+ *  once via /crm/messages/forward. */
 export const ForwardModal: React.FC<ForwardModalProps> = ({
   visible,
   message,
@@ -39,6 +40,7 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [selected, setSelected] = useState<Conversation[]>([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -53,7 +55,9 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
       try {
         const q = search.trim();
         const res = await chatService.getConversations(
-          q ? { search: q, per_page: 50 } : { per_page: 50 }
+          q
+            ? { search: q, per_page: 50, include_groups: true }
+            : { per_page: 50, include_groups: true }
         );
         if (fetchSeq.current === seq && res.success && res.conversations) {
           setConversations(
@@ -70,7 +74,10 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
 
   useEffect(() => {
     if (!visible) return;
-    const t = setTimeout(() => setSearch(''), 0);
+    const t = setTimeout(() => {
+      setSearch('');
+      setSelected([]);
+    }, 0);
     return () => clearTimeout(t);
   }, [visible]);
 
@@ -88,48 +95,39 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
     (c.contact_username ? `@${c.contact_username}` : null) ||
     (c.contact_phone ? `+${c.contact_phone}` : 'عميل واتساب');
 
-  const forward = async (conv: Conversation) => {
-    const list = messages && messages.length > 0 ? messages : message ? [message] : [];
-    if (list.length === 0 || sending) return;
-    setSending(true);
-    let lastErr = '';
-    try {
-      let ok = 0;
-      for (const m of list) {
-        try {
-          const res = await chatService.forwardMessage(m.message_id || m.id, [conv.id]);
-          if (res.success) {
-            ok += 1;
-          } else {
-            lastErr =
-              (res.results || []).find((r: any) => !r.success)?.error ||
-              res.message ||
-              lastErr;
-          }
-        } catch (e: any) {
-          lastErr = e.response?.data?.message || lastErr;
-        }
-      }
-      if (ok > 0) {
-        Alert.alert('تم', list.length > 1 ? `تمت إعادة توجيه ${ok} رسالة` : 'تمت إعادة توجيه الرسالة');
-        onClose();
-      } else {
-        Alert.alert('فشل', lastErr || 'تعذر إعادة التوجيه');
-      }
-    } finally {
-      setSending(false);
-    }
+  const isSelected = (id: number) => selected.some((c) => c.id === id);
+
+  const toggle = (c: Conversation) => {
+    setSelected((prev) => {
+      if (prev.some((x) => x.id === c.id)) return prev.filter((x) => x.id !== c.id);
+      if (prev.length >= MAX_TARGETS) return prev;
+      return [...prev, c];
+    });
   };
 
-  // Forward to a typed phone number — resolve it to a conversation first
-  // (startConversation returns the existing chat or creates a new one).
-  const forwardToPhone = async () => {
+  // Selected chats stay pinned on top even when the search moves on.
+  const listData = useMemo(() => {
+    const ids = new Set(conversations.map((c) => c.id));
+    return [...selected.filter((c) => !ids.has(c.id)), ...conversations];
+  }, [conversations, selected]);
+
+  // Resolve a typed number into a conversation and tick it like any row —
+  // the actual send still waits for the confirm button.
+  const pickPhone = async () => {
     if (!phoneQuery || sending || starting) return;
     setStarting(true);
     try {
       const res = await chatService.startConversation(phoneQuery);
-      if (res?.success && res.conversation?.id) {
-        await forward(res.conversation as Conversation);
+      const conv = res?.conversation as Conversation | undefined;
+      if (res?.success && conv?.id) {
+        setConversations((prev) =>
+          prev.some((c) => c.id === conv.id) ? prev : [conv, ...prev]
+        );
+        setSelected((prev) =>
+          prev.some((c) => c.id === conv.id) || prev.length >= MAX_TARGETS
+            ? prev
+            : [...prev, conv]
+        );
       } else {
         Alert.alert('فشل', res?.message || 'تعذر بدء المحادثة مع هذا الرقم');
       }
@@ -140,6 +138,59 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
     }
   };
 
+  const doForward = async () => {
+    const list = messages && messages.length > 0 ? messages : message ? [message] : [];
+    if (list.length === 0 || selected.length === 0 || sending) return;
+    setSending(true);
+    const ids = selected.map((c) => c.id);
+    const okConvs = new Set<number>();
+    const errors = new Map<number, string>();
+    try {
+      for (const m of list) {
+        try {
+          const res = await chatService.forwardMessage(m.message_id || m.id, ids);
+          for (const r of res.results || []) {
+            if (r.success) okConvs.add(r.conversation_id);
+            else if (!errors.has(r.conversation_id)) {
+              errors.set(r.conversation_id, r.error || 'خطأ غير معروف');
+            }
+          }
+          if (!res.success && !(res.results || []).length) {
+            for (const id of ids) errors.set(id, res.message || 'فشل التحويل');
+          }
+        } catch (e: any) {
+          const msg = e.response?.data?.message || 'فشل التحويل';
+          for (const id of ids) errors.set(id, msg);
+        }
+      }
+
+      if (okConvs.size > 0) {
+        const errLines = [...errors.entries()]
+          .filter(([id]) => !okConvs.has(id))
+          .map(([id, err]) => {
+            const conv = selected.find((c) => c.id === id);
+            return `• ${conv ? title(conv) : id}: ${err}`;
+          });
+        Alert.alert(
+          'تم',
+          `تمت إعادة التوجيه إلى ${okConvs.size} محادثة` +
+            (errLines.length ? `\n\nفشل إلى:\n${errLines.join('\n')}` : '')
+        );
+        onClose();
+      } else {
+        Alert.alert('فشل', errors.values().next().value || 'تعذر إعادة التوجيه');
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const renderCheck = (on: boolean) => (
+    <View style={[styles.check, on && styles.checkOn]}>
+      {on ? <Ionicons name="checkmark" size={14} color="#FFFFFF" /> : null}
+    </View>
+  );
+
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, { paddingTop: Math.max(insets.top, 10) }]}>
@@ -148,13 +199,16 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
             <Ionicons name="close" size={22} color="#111B21" />
           </TouchableOpacity>
           <Text style={styles.title}>إعادة توجيه إلى...</Text>
+          {selected.length > 0 ? (
+            <Text style={styles.count}>{selected.length}</Text>
+          ) : null}
         </View>
 
         <View style={styles.searchWrap}>
           <Ionicons name="search" size={16} color="#8696A0" />
           <TextInput
             style={styles.search}
-            placeholder="ابحث في المحادثات..."
+            placeholder="ابحث في المحادثات أو اكتب رقم..."
             placeholderTextColor="#8696A0"
             value={search}
             onChangeText={setSearch}
@@ -166,7 +220,7 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
           <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 40 }} />
         ) : (
           <FlatList
-            data={conversations}
+            data={listData}
             keyExtractor={(c) => String(c.id)}
             contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 10) }}
             keyboardShouldPersistTaps="handled"
@@ -174,7 +228,7 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
               phoneQuery ? (
                 <TouchableOpacity
                   style={styles.row}
-                  onPress={forwardToPhone}
+                  onPress={pickPhone}
                   disabled={sending || starting}
                   activeOpacity={0.7}
                 >
@@ -188,7 +242,7 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
                   {starting ? (
                     <ActivityIndicator size="small" color={Colors.primary} />
                   ) : (
-                    <Ionicons name="arrow-undo" size={18} color={Colors.primary} />
+                    <Ionicons name="add" size={22} color={Colors.primary} />
                   )}
                 </TouchableOpacity>
               ) : undefined
@@ -201,29 +255,43 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
                 </Text>
               </View>
             }
-            renderItem={({ item }) => (
-              <TouchableOpacity
-                style={styles.row}
-                onPress={() => forward(item)}
-                disabled={sending || starting}
-                activeOpacity={0.7}
-              >
-                <ChatAvatar conversation={item} title={title(item)} size={44} />
-                <View style={styles.rowInfo}>
-                  <Text style={styles.rowTitle} numberOfLines={1}>{title(item)}</Text>
-                  {item.contact_phone ? (
-                    <Text style={styles.rowSub} numberOfLines={1}>+{item.contact_phone}</Text>
-                  ) : null}
-                </View>
-                {sending ? (
-                  <ActivityIndicator size="small" color={Colors.primary} />
-                ) : (
-                  <Ionicons name="arrow-undo" size={18} color="#8696A0" />
-                )}
-              </TouchableOpacity>
-            )}
+            renderItem={({ item }) => {
+              const on = isSelected(item.id);
+              return (
+                <TouchableOpacity
+                  style={[styles.row, on && styles.rowOn]}
+                  onPress={() => toggle(item)}
+                  disabled={sending || starting}
+                  activeOpacity={0.7}
+                >
+                  <ChatAvatar conversation={item} title={title(item)} size={44} />
+                  <View style={styles.rowInfo}>
+                    <Text style={styles.rowTitle} numberOfLines={1}>{title(item)}</Text>
+                    {item.contact_phone ? (
+                      <Text style={styles.rowSub} numberOfLines={1}>+{item.contact_phone}</Text>
+                    ) : null}
+                  </View>
+                  {renderCheck(on)}
+                </TouchableOpacity>
+              );
+            }}
           />
         )}
+
+        <TouchableOpacity
+          style={[styles.sendBtn, (selected.length === 0 || sending) && styles.sendBtnDisabled]}
+          onPress={doForward}
+          disabled={selected.length === 0 || sending}
+          activeOpacity={0.85}
+        >
+          {sending ? (
+            <ActivityIndicator size="small" color="#FFFFFF" />
+          ) : (
+            <Text style={styles.sendBtnText}>
+              تحويل{selected.length ? ` (${selected.length})` : ''}
+            </Text>
+          )}
+        </TouchableOpacity>
       </View>
     </Modal>
   );
@@ -251,6 +319,16 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: '#111B21',
   },
+  count: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: Colors.primary,
+    backgroundColor: '#E7F6EF',
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    overflow: 'hidden',
+  },
   searchWrap: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
@@ -275,6 +353,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#F0F2F5',
   },
+  rowOn: {
+    backgroundColor: '#E7F6EF',
+  },
   phoneIcon: {
     width: 44,
     height: 44,
@@ -298,6 +379,19 @@ const styles = StyleSheet.create({
     textAlign: 'right',
     marginTop: 1,
   },
+  check: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: '#C4CDD3',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkOn: {
+    backgroundColor: Colors.primary,
+    borderColor: Colors.primary,
+  },
   empty: {
     alignItems: 'center',
     marginTop: 60,
@@ -306,5 +400,22 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 13,
     color: '#667781',
+  },
+  sendBtn: {
+    backgroundColor: Colors.primary,
+    marginHorizontal: 14,
+    marginBottom: 12,
+    borderRadius: 14,
+    height: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendBtnDisabled: {
+    opacity: 0.4,
+  },
+  sendBtnText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
   },
 });
