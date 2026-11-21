@@ -7,14 +7,39 @@ import { apiClient } from './api';
 export const CHANNEL_ID = 'wavixa_messages';
 export const SOUND_NAME = 'notify_ding.wav';
 
-// Foreground notifications show as a banner + play the channel sound.
+// The logged-in account — pushes carrying a different data.user_id belong
+// to a stale token of another login sharing this device and get dropped.
+let currentUserId: number | string | null = null;
+export const setPushUserId = (id: number | string | null) => {
+  currentUserId = id;
+};
+
+const SILENT = {
+  shouldPlaySound: false,
+  shouldSetBadge: false,
+  shouldShowBanner: false,
+  shouldShowList: false,
+};
+
+// FCM is the single source of push UI — foreground and background — so a
+// message can never alert twice. The chat-list poller still plays the ding.
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
+  handleNotification: async (notification) => {
+    const targetUser = notification?.request?.content?.data?.user_id;
+    if (
+      currentUserId != null &&
+      targetUser != null &&
+      String(targetUser) !== String(currentUserId)
+    ) {
+      return SILENT;
+    }
+    return {
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    };
+  },
 });
 
 let initPromise: Promise<boolean> | null = null;
@@ -117,4 +142,15 @@ export const registerPushToken = async (): Promise<string | null> => {
 export const setupPush = async () => {
   const ok = await initNotifications();
   if (ok) await registerPushToken();
+};
+
+/** Drop this device's push token server-side — call on logout so a
+ *  signed-out install stops receiving the account's notifications. Must
+ *  run while the API token is still valid. */
+export const unregisterPushToken = async (): Promise<void> => {
+  try {
+    const tokenData = await Notifications.getDevicePushTokenAsync();
+    const token = tokenData?.data as string | undefined;
+    await apiClient.delete('/crm/push-token', { data: token ? { token } : {} });
+  } catch {}
 };

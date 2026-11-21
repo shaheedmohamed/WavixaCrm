@@ -19,6 +19,6 @@ export const Config = {
     `https://crm.wavixa.net/api/crm/video-thumb/${messageId}?token=${encodeURIComponent(token)}`,
 
   // App Metadata
-  appName: 'Wavixa CRM',
+  appName: 'Wavixa',
   appVersion: '1.0.0',
 };

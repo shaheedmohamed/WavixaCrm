@@ -1861,7 +1861,9 @@ public function messageRevoked(Request $request)
 
             // Real push to the mobile app — owner + assigned agent devices
             // get the custom ding notification for genuinely incoming msgs.
-            if (!$fromMe && $incomingMessage) {
+            // wasRecentlyCreated skips re-delivered webhooks (engine retries,
+            // history replays) that updateOrCreate matched — no double dings.
+            if (!$fromMe && $incomingMessage && $incomingMessage->wasRecentlyCreated) {
                 try {
                     $convFresh = $conversation->fresh();
                     $title = $convFresh->contact_name

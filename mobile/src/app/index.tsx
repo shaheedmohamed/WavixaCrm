@@ -171,6 +171,7 @@ export default function IndexPage() {
                 conversation={selectedConversation}
                 onBack={closeOverlay}
                 focusMessageId={focusMessageId}
+                onOpenConversation={handleOpenConversation}
               />
             ) : overlayView === 'starred' ? (
               <StarredMessagesScreen

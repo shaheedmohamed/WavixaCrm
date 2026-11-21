@@ -1492,6 +1492,12 @@ class CrmController extends Controller
             $this->broadcastConversation($conversation);
         }
 
+        // Opening the chat reads it — reset the push-notification buffer so
+        // the next message starts a fresh bundled notification.
+        if (!$peek && $caller) {
+            \App\Services\ExpoPushService::clearConversation($caller->id, $conversation->id);
+        }
+
         $conversation->loadMissing([
             'assignedAgent:id,name',
             'resolvedBy:id,name',
@@ -2383,6 +2389,10 @@ class CrmController extends Controller
             }
             $msgRecord?->loadMissing('sentBy:id,name');
 
+            // Replying from the app reads the chat — reset its buffered
+            // push lines so the next burst starts clean.
+            \App\Services\ExpoPushService::clearConversation($request->user()->id, $conversation->id);
+
             $conversation->update([
                 'last_message' => $text,
                 'last_message_type' => 'text',
@@ -2745,6 +2755,8 @@ class CrmController extends Controller
                 }
             }
             $msgRecord?->loadMissing('sentBy:id,name');
+
+            \App\Services\ExpoPushService::clearConversation($request->user()->id, $conversation->id);
 
             $conversation->update([
                 'last_message' => $caption ?: ($type === 'image' ? '📷 صورة' : ($type === 'video' ? '🎥 فيديو' : '🎤 تسجيل صوتي')),
@@ -3151,7 +3163,7 @@ class CrmController extends Controller
             } else {
                 $msgRecord = WhatsAppMessage::create([
                     'user_id' => $conv->user_id,
-                    'sent_by_user_id' => $request->user()->id,
+                    'sent_by_user_id' => $sender->id,
                     'session_id' => $session->id,
                     'conversation_id' => $conv->id,
                     'from' => $session->phone_number,
@@ -3177,6 +3189,8 @@ class CrmController extends Controller
             }
         }
         $msgRecord?->loadMissing('sentBy:id,name');
+
+        \App\Services\ExpoPushService::clearConversation($sender->id, $conv->id);
 
         $conv->update([
             'last_message' => $label ?: "[{$type}]",
@@ -3421,6 +3435,8 @@ class CrmController extends Controller
         if ($locker = $this->conversationLocker($conversation, $user)) {
             return $this->lockedResponse($locker);
         }
+
+        \App\Services\ExpoPushService::clearConversation($user->id, $conversation->id);
 
         $conversation->forceFill([
             'assigned_agent_id' => null,
@@ -4571,6 +4587,22 @@ class CrmController extends Controller
             'device_name' => 'nullable|string|max:100',
         ]);
         $user = $request->user();
+
+        // One device token belongs to exactly one account. When a phone is
+        // shared between logins the FCM token survives the switch — leaving
+        // it on the old user pushes THEIR chats to this device too.
+        User::where('id', '!=', $user->id)
+            ->whereJsonContains('expo_push_tokens', [['token' => $data['token']]])
+            ->get()
+            ->each(function ($u) use ($data) {
+                $u->update([
+                    'expo_push_tokens' => collect($u->expo_push_tokens ?? [])
+                        ->reject(fn ($t) => ($t['token'] ?? null) === $data['token'])
+                        ->values()
+                        ->all(),
+                ]);
+            });
+
         $tokens = collect($user->expo_push_tokens ?? [])
             ->reject(fn ($t) => ($t['token'] ?? null) === $data['token'])
             ->push([
@@ -4582,6 +4614,32 @@ class CrmController extends Controller
             ->values()
             ->all();
         $user->update(['expo_push_tokens' => $tokens]);
+        return response()->json(['success' => true]);
+    }
+
+    /**
+     * Remove a device push token — the app calls this on logout so a
+     * signed-out install stops receiving the account's notifications.
+     * No token given → wipe every device of the current user.
+     */
+    public function deletePushToken(Request $request)
+    {
+        $data = $request->validate(['token' => 'nullable|string|max:200']);
+        $token = $data['token'] ?? null;
+
+        $users = $token
+            ? User::whereJsonContains('expo_push_tokens', [['token' => $token]])->get()
+            : collect([$request->user()]);
+
+        foreach ($users as $u) {
+            $u->update([
+                'expo_push_tokens' => collect($u->expo_push_tokens ?? [])
+                    ->reject(fn ($t) => $token ? (($t['token'] ?? null) === $token) : true)
+                    ->values()
+                    ->all(),
+            ]);
+        }
+
         return response()->json(['success' => true]);
     }
 

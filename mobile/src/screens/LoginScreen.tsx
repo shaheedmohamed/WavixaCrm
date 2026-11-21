@@ -131,7 +131,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
             <View style={styles.footerInfo}>
               <Ionicons name="shield-checkmark" size={16} color={Colors.primary} />
-              <Text style={styles.footerText}>اتصال آمن ومباشر بنظام Wavixa CRM</Text>
+              <Text style={styles.footerText}>اتصال آمن ومباشر بنظام Wavixa</Text>
             </View>
           </View>
         </ScrollView>

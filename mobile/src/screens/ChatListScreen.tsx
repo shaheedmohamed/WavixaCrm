@@ -29,7 +29,7 @@ import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
 import { playIncomingMessage } from '../services/notifySound';
-import { initNotifications, notifyNewMessage } from '../services/notifications';
+import { initNotifications } from '../services/notifications';
 import { useAuth } from '../context/AuthContext';
 import { ChatAvatar } from '../components/ChatAvatar';
 import { AvatarPeekModal } from '../components/AvatarPeekModal';
@@ -105,7 +105,6 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const reqSeq = useRef(0);
   const lastSeenIncoming = useRef<Map<number, string>>(new Map());
   const firstSyncDone = useRef(false);
-  const notifReady = useRef(false);
   const activeConvIdRef = useRef<number | null>(activeConversationId ?? null);
 
   useEffect(() => {
@@ -184,9 +183,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     Promise.resolve().then(() => {
       loadChatLists();
     });
-    initNotifications().then((ok) => {
-      notifReady.current = ok;
-    });
+    initNotifications().catch(() => {});
     prewarmMediaPermissions().catch(() => {});
     return () => {
       alive = false;
@@ -251,13 +248,9 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
               const prev = lastSeenIncoming.current.get(c.id);
               if (prev && prev !== c.last_message_at) {
                 if (!chatPrefs.isMuted(c.id) && activeConvIdRef.current !== c.id) {
-                  const name =
-                    c.contact_name ||
-                    (c.contact_phone ? `+${c.contact_phone}` : 'عميل');
+                  // Sound only — the tray/banner notification comes from
+                  // FCM itself, so a local copy here would alert twice.
                   playIncomingMessage();
-                  if (notifReady.current) {
-                    notifyNewMessage(name, c.last_message || 'رسالة جديدة');
-                  }
                 }
               }
             }

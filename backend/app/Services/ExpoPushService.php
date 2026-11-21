@@ -31,6 +31,31 @@ class ExpoPushService
             $sa = self::serviceAccount();
             $projectId = $sa['project_id'];
 
+            // WhatsApp-style bundling: every message of one conversation
+            // carries the same notification tag + collapse key, so Android
+            // keeps a single tray entry per chat that updates in place. The
+            // recent lines accumulate here so the updated notification shows
+            // the whole unread burst, expanded.
+            $convId = (int) ($data['conversation_id'] ?? 0);
+            $data['user_id'] = (string) $userId;
+            $tag = null;
+            $count = 1;
+            if ($convId > 0) {
+                $tag = 'conv_' . $convId;
+                $key = self::bufferKey($userId, $convId);
+                $lines = Cache::get($key, []);
+                if (!in_array($body, $lines, true)) {
+                    $lines[] = $body;
+                }
+                $lines = array_slice($lines, -6);
+                Cache::put($key, $lines, now()->addMinutes(30));
+                $count = count($lines);
+                $body = implode("\n", $lines);
+                if ($count > 1) {
+                    $title = "{$title} ({$count})";
+                }
+            }
+
             foreach ($tokens as $token) {
                 Http::timeout(10)
                     ->withToken($accessToken)
@@ -39,18 +64,21 @@ class ExpoPushService
                             'token' => $token,
                             'notification' => [
                                 'title' => $title,
-                                'body' => mb_substr($body, 0, 180),
+                                'body' => mb_substr($body, 0, 500),
                             ],
-                            'android' => [
+                            'android' => array_filter([
+                                'collapse_key' => $tag,
                                 'priority' => 'HIGH',
-                                'notification' => [
+                                'notification' => array_filter([
+                                    'tag' => $tag,
                                     'channel_id' => 'wavixa_messages',
                                     'sound' => 'notify_ding',
                                     'notification_priority' => 'PRIORITY_HIGH',
+                                    'notification_count' => $count,
                                     'default_vibrate_timings' => true,
                                     'default_light_settings' => true,
-                                ],
-                            ],
+                                ], fn ($v) => $v !== null),
+                            ], fn ($v) => $v !== null),
                             'data' => array_map('strval', $data),
                         ],
                     ]);
@@ -58,6 +86,24 @@ class ExpoPushService
         } catch (\Throwable $e) {
             Log::debug('FCM send failed: ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Drop the buffered lines once the conversation is read — the next push
+     * starts a fresh burst instead of re-listing stale messages.
+     */
+    public static function clearConversation(int $userId, int $conversationId): void
+    {
+        try {
+            Cache::forget(self::bufferKey($userId, $conversationId));
+        } catch (\Throwable $e) {
+            // Buffer cleanup must never break a request.
+        }
+    }
+
+    private static function bufferKey(int $userId, int $conversationId): string
+    {
+        return "push_msgs_{$userId}_{$conversationId}";
     }
 
     private static function serviceAccount(): ?array

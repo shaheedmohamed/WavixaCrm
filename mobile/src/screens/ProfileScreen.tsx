@@ -131,12 +131,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
         <View style={styles.section}>
           <TouchableOpacity
             style={styles.actionRow}
-            onPress={() => Alert.alert('Wavixa CRM', 'تطبيق موظفي خدمة العملاء لنظام Wavixa WhatsApp CRM')}
+            onPress={() => Alert.alert('Wavixa', 'تطبيق موظفي خدمة العملاء لنظام Wavixa')}
             activeOpacity={0.7}
           >
             <Ionicons name="chevron-back" size={18} color="#8696A0" />
             <View style={styles.actionRight}>
-              <Text style={styles.actionText}>عن نظام Wavixa CRM</Text>
+              <Text style={styles.actionText}>عن تطبيق Wavixa</Text>
               <Ionicons name="information-circle-outline" size={20} color={Colors.primary} />
             </View>
           </TouchableOpacity>

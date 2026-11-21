@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -27,7 +27,9 @@ interface ForwardModalProps {
 }
 
 /** Pick a target chat and forward the selected message — same pipeline the
- *  web chat uses (/crm/messages/forward). */
+ *  web chat uses (/crm/messages/forward). Search runs server-side so every
+ *  stored chat is reachable by name or phone, and a typed phone number can
+ *  be forwarded to even when no conversation exists yet. */
 export const ForwardModal: React.FC<ForwardModalProps> = ({
   visible,
   message,
@@ -40,41 +42,46 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [starting, setStarting] = useState(false);
+  const fetchSeq = useRef(0);
 
   useEffect(() => {
     if (!visible) return;
-    let alive = true;
-    Promise.resolve().then(async () => {
-      if (!alive) return;
-      setSearch('');
+    const seq = ++fetchSeq.current;
+    const timer = setTimeout(async () => {
       setLoading(true);
       try {
-        const res = await chatService.getConversations({ per_page: 50 });
-        if (alive && res.success && res.conversations) {
+        const q = search.trim();
+        const res = await chatService.getConversations(
+          q ? { search: q, per_page: 50 } : { per_page: 50 }
+        );
+        if (fetchSeq.current === seq && res.success && res.conversations) {
           setConversations(
             res.conversations.filter((c: Conversation) => c.id !== currentConversationId)
           );
         }
       } catch {
       } finally {
-        if (alive) setLoading(false);
+        if (fetchSeq.current === seq) setLoading(false);
       }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [visible, currentConversationId]);
+    }, search.trim() ? 350 : 0);
+    return () => clearTimeout(timer);
+  }, [visible, search, currentConversationId]);
 
-  const filtered = search.trim()
-    ? conversations.filter((c) => {
-        const q = search.trim().toLowerCase();
-        return (
-          (c.contact_name || '').toLowerCase().includes(q) ||
-          (c.contact_phone || '').includes(q) ||
-          (c.contact_username || '').toLowerCase().includes(q)
-        );
-      })
-    : conversations;
+  useEffect(() => {
+    if (!visible) return;
+    const t = setTimeout(() => setSearch(''), 0);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  // A query that is (almost) only digits and phone punctuation is treated as
+  // a phone number the user may want to forward to directly.
+  const phoneQuery = useMemo(() => {
+    const raw = search.trim();
+    if (!raw || !/^[\d+\s()-]+$/.test(raw)) return null;
+    const digits = raw.replace(/\D/g, '');
+    return digits.length >= 6 ? digits : null;
+  }, [search]);
 
   const title = (c: Conversation) =>
     c.contact_name ||
@@ -85,24 +92,51 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
     const list = messages && messages.length > 0 ? messages : message ? [message] : [];
     if (list.length === 0 || sending) return;
     setSending(true);
+    let lastErr = '';
     try {
       let ok = 0;
       for (const m of list) {
         try {
           const res = await chatService.forwardMessage(m.message_id || m.id, [conv.id]);
-          if (res.success) ok += 1;
-        } catch {}
+          if (res.success) {
+            ok += 1;
+          } else {
+            lastErr =
+              (res.results || []).find((r: any) => !r.success)?.error ||
+              res.message ||
+              lastErr;
+          }
+        } catch (e: any) {
+          lastErr = e.response?.data?.message || lastErr;
+        }
       }
       if (ok > 0) {
         Alert.alert('تم', list.length > 1 ? `تمت إعادة توجيه ${ok} رسالة` : 'تمت إعادة توجيه الرسالة');
         onClose();
       } else {
-        Alert.alert('فشل', 'تعذر إعادة التوجيه');
+        Alert.alert('فشل', lastErr || 'تعذر إعادة التوجيه');
       }
-    } catch (err: any) {
-      Alert.alert('فشل', err.response?.data?.message || 'تعذر إعادة التوجيه');
     } finally {
       setSending(false);
+    }
+  };
+
+  // Forward to a typed phone number — resolve it to a conversation first
+  // (startConversation returns the existing chat or creates a new one).
+  const forwardToPhone = async () => {
+    if (!phoneQuery || sending || starting) return;
+    setStarting(true);
+    try {
+      const res = await chatService.startConversation(phoneQuery);
+      if (res?.success && res.conversation?.id) {
+        await forward(res.conversation as Conversation);
+      } else {
+        Alert.alert('فشل', res?.message || 'تعذر بدء المحادثة مع هذا الرقم');
+      }
+    } catch (e: any) {
+      Alert.alert('فشل', e.response?.data?.message || 'تعذر بدء المحادثة مع هذا الرقم');
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -128,24 +162,50 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
           />
         </View>
 
-        {loading ? (
+        {loading && conversations.length === 0 ? (
           <ActivityIndicator size="large" color={Colors.primary} style={{ marginTop: 40 }} />
         ) : (
           <FlatList
-            data={filtered}
+            data={conversations}
             keyExtractor={(c) => String(c.id)}
             contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 10) }}
+            keyboardShouldPersistTaps="handled"
+            ListHeaderComponent={
+              phoneQuery ? (
+                <TouchableOpacity
+                  style={styles.row}
+                  onPress={forwardToPhone}
+                  disabled={sending || starting}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.phoneIcon}>
+                    <Ionicons name="person-add" size={20} color={Colors.primary} />
+                  </View>
+                  <View style={styles.rowInfo}>
+                    <Text style={styles.rowTitle} numberOfLines={1}>إرسال إلى رقم جديد</Text>
+                    <Text style={styles.rowSub} numberOfLines={1}>+{phoneQuery}</Text>
+                  </View>
+                  {starting ? (
+                    <ActivityIndicator size="small" color={Colors.primary} />
+                  ) : (
+                    <Ionicons name="arrow-undo" size={18} color={Colors.primary} />
+                  )}
+                </TouchableOpacity>
+              ) : undefined
+            }
             ListEmptyComponent={
               <View style={styles.empty}>
                 <MaterialCommunityIcons name="chat-outline" size={44} color="#8696A0" />
-                <Text style={styles.emptyText}>لا توجد محادثات</Text>
+                <Text style={styles.emptyText}>
+                  {search.trim() ? 'لا توجد نتائج' : 'لا توجد محادثات'}
+                </Text>
               </View>
             }
             renderItem={({ item }) => (
               <TouchableOpacity
                 style={styles.row}
                 onPress={() => forward(item)}
-                disabled={sending}
+                disabled={sending || starting}
                 activeOpacity={0.7}
               >
                 <ChatAvatar conversation={item} title={title(item)} size={44} />
@@ -214,6 +274,14 @@ const styles = StyleSheet.create({
     gap: 10,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: '#F0F2F5',
+  },
+  phoneIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E7F6EF',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowInfo: {
     flex: 1,

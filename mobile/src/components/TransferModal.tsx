@@ -52,6 +52,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
               setAgents(filtered);
             }
           })
+          .catch(() => setError('تعذر تحميل قائمة الموظفين'))
           .finally(() => setLoading(false));
       });
     }
@@ -95,7 +96,7 @@ export const TransferModal: React.FC<TransferModalProps> = ({
 
           {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
-          <View style={{ flex: 1, paddingHorizontal: 16 }}>
+          <View style={{ flexShrink: 1, paddingHorizontal: 16 }}>
             <Text style={styles.sectionTitle}>اختر الموظف:</Text>
 
             {loading ? (

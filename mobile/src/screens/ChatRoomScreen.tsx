@@ -56,6 +56,8 @@ interface ChatRoomScreenProps {
   conversation: Conversation;
   onBack: () => void;
   focusMessageId?: number | string | null;
+  // Group member tap → jump into that member's 1:1 chat.
+  onOpenConversation?: (conv: Conversation) => void;
 }
 
 let cachedMediaPerm = false;
@@ -187,6 +189,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   conversation: initialConv,
   onBack,
   focusMessageId = null,
+  onOpenConversation,
 }) => {
   const { user, token, isAgent } = useAuth();
   const insets = useSafeAreaInsets();
@@ -902,6 +905,26 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     setForwardTarget(m);
   }, []);
 
+  // Group member header tap — resolve the number to (or create) its 1:1
+  // conversation and swap the room to it, WhatsApp-style.
+  const openingSenderRef = useRef(false);
+  const handlePressSender = useCallback(
+    async (phone: string) => {
+      if (!onOpenConversation || openingSenderRef.current) return;
+      openingSenderRef.current = true;
+      try {
+        const res = await chatService.startConversation(phone);
+        if (res?.success && res.conversation?.id) {
+          onOpenConversation(res.conversation);
+        }
+      } catch {
+      } finally {
+        openingSenderRef.current = false;
+      }
+    },
+    [onOpenConversation]
+  );
+
   const handleActionPin = useCallback((m: Message) => {
     setSelectedMsgForPin(m);
     setPinDurationVisible(true);
@@ -1285,6 +1308,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onDismissFailed={handleDismissFailed}
               onDoubleTapLike={handleDoubleTapLike}
               onPressReactions={handlePressReactions}
+              onPressSender={isGroup ? handlePressSender : undefined}
               selectionMode={selectionMode}
               isSelected={selectedIds.has(rowKey)}
               onToggleSelect={toggleSelect}
@@ -1308,6 +1332,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       handleDismissFailed,
       handleDoubleTapLike,
       handlePressReactions,
+      handlePressSender,
       selectionMode,
       selectedIds,
       toggleSelect,

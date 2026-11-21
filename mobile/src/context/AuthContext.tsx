@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
+import { setPushUserId, unregisterPushToken } from '../services/notifications';
 import { User } from '../types/crm';
 
 interface AuthContextType {
@@ -58,6 +59,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       return { success: false, message: res.message || 'بيانات الدخول غير صحيحة' };
     } catch (err: any) {
+      console.error(
+        'Login request failed:',
+        err.code,
+        err.message,
+        'status:', err.response?.status,
+        'url:', err.config?.baseURL + err.config?.url
+      );
       const msg = err.response?.data?.message || 'تعذر الاتصال بالخادم، يرجى المحاولة لاحقاً';
       return { success: false, message: msg };
     }
@@ -65,6 +73,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     try {
+      // Detach the device token BEFORE the API token is dropped — after
+      // this the backend has no route left to push to this install.
+      await unregisterPushToken();
       await authService.logout();
     } finally {
       setUser(null);
@@ -86,6 +97,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const isAgent = user?.crm_role === 'agent';
   const isOwner = user?.crm_role === 'owner';
   const isAdmin = user?.crm_role === 'admin';
+
+  // Push notifications carry the target account id — a shared device token
+  // from a previous login gets its pushes dropped here instead of shown.
+  useEffect(() => {
+    setPushUserId(user?.id ?? null);
+  }, [user]);
 
   return (
     <AuthContext.Provider

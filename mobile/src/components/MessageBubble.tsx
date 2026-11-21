@@ -44,6 +44,8 @@ interface MessageBubbleProps {
   onDismissFailed?: (msg: Message) => void;
   onDoubleTapLike?: (msg: Message) => void;
   onPressReactions?: (msg: Message) => void;
+  // Group sender header tap — opens a 1:1 chat with that member's number.
+  onPressSender?: (phone: string, name: string | null) => void;
   // WhatsApp-style multi-select: while a selection is active every tap
   // toggles the message instead of opening media/like actions.
   selectionMode?: boolean;
@@ -105,6 +107,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onDismissFailed,
   onDoubleTapLike,
   onPressReactions,
+  onPressSender,
   selectionMode = false,
   isSelected = false,
   onToggleSelect,
@@ -179,6 +182,19 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
     (message.from && !message.from.includes(groupDigits) && message.from.length <= 15
       ? `+${message.from}`
       : null);
+  // Plain-phone labels break inside RTL text (+20 10… renders as …10 20+)
+  // — bidi isolates keep the digits LTR no matter what surrounds them.
+  const senderLabel =
+    senderDisplayName && /^[\d+\s()-]+$/.test(senderDisplayName)
+      ? `\u2066${senderDisplayName}\u2069`
+      : senderDisplayName;
+  // Number used to open the member's 1:1 chat when the name is tapped.
+  const senderPhone = (() => {
+    const p = (message.sender_phone || '').replace(/\D/g, '');
+    if (p.length >= 6) return p;
+    const f = (message.from || '').replace(/\D/g, '');
+    return f.length >= 6 && f.length <= 15 && f !== groupDigits ? f : null;
+  })();
   const senderInitials = (senderDisplayName || 'ع').slice(0, 1).toUpperCase();
   const [senderAvatarFailed, setSenderAvatarFailed] = useState(false);
   const senderAvatarUri = isGroupIncoming
@@ -336,7 +352,16 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             </View>
           ) : null}
           {showGroupSender && senderDisplayName ? (
-            <Text style={[styles.senderName, { color: senderColor }]}>{senderDisplayName}</Text>
+            senderPhone && onPressSender ? (
+              <TouchableOpacity
+                onPress={() => onPressSender(senderPhone, message.sender_name || null)}
+                activeOpacity={0.7}
+              >
+                <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={[styles.senderName, { color: senderColor }]}>{senderLabel}</Text>
+            )
           ) : null}
 
           {message.is_forwarded ? (
