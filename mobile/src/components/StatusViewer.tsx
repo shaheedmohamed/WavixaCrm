@@ -87,6 +87,9 @@ const StatusVideo: React.FC<{ uri: string; onEnd: () => void }> = ({ uri, onEnd 
       style={styles.media}
       contentFit="contain"
       nativeControls={false}
+      // textureView stays inside the RN view tree — surfaceView would punch
+      // through on Android and bury the progress bars, header and tap zones.
+      surfaceType="textureView"
     />
   );
 };
@@ -112,7 +115,7 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
 
   const markViewed = useCallback(
     (item?: StatusItem) => {
-      if (!item || item.viewed_at) return;
+      if (!item || item.viewed_at || item.is_mine) return;
       item.viewed_at = new Date().toISOString();
       chatService.viewStatus(item.id).catch(() => {});
       onItemViewed?.(item.id);
@@ -137,12 +140,15 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
   }, []);
 
   // Reset playback when the modal opens — render-phase adjust avoids a
-  // reset effect firing a frame late.
+  // reset effect firing a frame late. Start like WhatsApp: the first
+  // UNSEEN story; an all-watched ring replays from the NEWEST, not from a
+  // months-old item.
   const [wasVisible, setWasVisible] = useState(false);
   if (visible !== wasVisible) {
     setWasVisible(visible);
     if (visible) {
-      setIndex(0);
+      const firstUnseen = items.findIndex((i) => !i.viewed_at && !i.deleted_at);
+      setIndex(firstUnseen >= 0 ? firstUnseen : items.length - 1);
       setPaused(false);
       setProgress(0);
     }
