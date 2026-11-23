@@ -10,6 +10,8 @@ import {
   MediaEditSpec,
   StarredMessageItem,
   GroupMembersResponse,
+  StatusesResponse,
+  StatusItemsResponse,
 } from '../types/crm';
 
 export interface ConversationsParams {
@@ -282,6 +284,25 @@ export const chatService = {
 
   async getStarredMessages() {
     const response = await apiClient.get('/crm/starred-messages');
+    return response.data;
+  },
+
+  async getStatuses() {
+    const response = await apiClient.get<StatusesResponse>('/crm/statuses');
+    return response.data;
+  },
+
+  // Full story list for one poster — archived/truncated rings lazy-load
+  // through here; pass { mine: true } for the owner's own stories.
+  async getStatusItems(opts: { poster_phone?: string; mine?: boolean }) {
+    const response = await apiClient.get<StatusItemsResponse>('/crm/statuses/items', {
+      params: opts,
+    });
+    return response.data;
+  },
+
+  async viewStatus(id: number | string) {
+    const response = await apiClient.post(`/crm/statuses/${id}/view`);
     return response.data;
   },
 

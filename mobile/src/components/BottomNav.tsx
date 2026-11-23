@@ -4,7 +4,7 @@ import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '../constants/theme';
 
-export type BottomTabType = 'chats' | 'starred' | 'replies' | 'settings';
+export type BottomTabType = 'chats' | 'statuses' | 'starred' | 'replies' | 'settings';
 
 interface BottomNavProps {
   activeTab: BottomTabType;
@@ -55,7 +55,29 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {activeTab === 'chats' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
-      {/* 2. Starred messages */}
+      {/* 2. Statuses (WhatsApp stories) */}
+      <TouchableOpacity
+        style={styles.tabItem}
+        onPress={() => onTabPress('statuses')}
+        activeOpacity={0.7}
+      >
+        <MaterialCommunityIcons
+          name={activeTab === 'statuses' ? 'circle-double' : 'circle-double'}
+          size={21}
+          color={activeTab === 'statuses' ? Colors.primary : '#8696A0'}
+        />
+        <Text
+          style={[
+            styles.tabLabel,
+            activeTab === 'statuses' && styles.tabLabelActive,
+          ]}
+        >
+          الحالة
+        </Text>
+        {activeTab === 'statuses' && <View style={styles.activeIndicator} />}
+      </TouchableOpacity>
+
+      {/* 3. Starred messages */}
       <TouchableOpacity
         style={styles.tabItem}
         onPress={() => onTabPress('starred')}
@@ -77,7 +99,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {activeTab === 'starred' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
-      {/* 3. Center Floating Action Button (New Chat) */}
+      {/* 4. Center Floating Action Button (New Chat) */}
       <View style={styles.fabContainer}>
         <TouchableOpacity
           style={styles.fab}
@@ -88,7 +110,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         </TouchableOpacity>
       </View>
 
-      {/* 4. Quick replies */}
+      {/* 5. Quick replies */}
       <TouchableOpacity
         style={styles.tabItem}
         onPress={() => onTabPress('replies')}
@@ -110,7 +132,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {activeTab === 'replies' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
-      {/* 5. Settings */}
+      {/* 6. Settings */}
       <TouchableOpacity
         style={styles.tabItem}
         onPress={() => onTabPress('settings')}

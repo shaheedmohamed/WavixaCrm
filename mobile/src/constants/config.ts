@@ -18,6 +18,10 @@ export const Config = {
   getVideoThumbUrl: (messageId: number | string, token: string) =>
     `https://crm.wavixa.net/api/crm/video-thumb/${messageId}?token=${encodeURIComponent(token)}`,
 
+  // Status (story) media — lazy-decrypts through the engine like /crm/media.
+  getStatusMediaUrl: (statusId: number | string, token: string) =>
+    `https://crm.wavixa.net/api/crm/status-media/${statusId}?token=${encodeURIComponent(token)}`,
+
   // App Metadata
   appName: 'Wavixa',
   appVersion: '1.0.0',

@@ -14,6 +14,7 @@ import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatRoomScreen } from '../screens/ChatRoomScreen';
 import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
+import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { WavixaLogo } from '../components/WavixaLogo';
@@ -21,7 +22,14 @@ import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
-type OverlayView = 'none' | 'welcome' | 'chat-room' | 'profile' | 'stats' | 'starred';
+type OverlayView =
+  | 'none'
+  | 'welcome'
+  | 'chat-room'
+  | 'profile'
+  | 'stats'
+  | 'starred'
+  | 'statuses';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
@@ -102,6 +110,10 @@ export default function IndexPage() {
     openOverlay('stats');
   }, [openOverlay]);
 
+  const handleOpenStatuses = useCallback(() => {
+    openOverlay('statuses');
+  }, [openOverlay]);
+
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
@@ -154,6 +166,7 @@ export default function IndexPage() {
           onOpenProfile={handleOpenProfile}
           onOpenStats={handleOpenStats}
           onOpenStarred={handleOpenStarred}
+          onOpenStatuses={handleOpenStatuses}
         />
       </View>
 
@@ -184,6 +197,8 @@ export default function IndexPage() {
               <ProfileScreen onBack={closeOverlay} />
             ) : overlayView === 'stats' ? (
               <StatsScreen onBack={closeOverlay} />
+            ) : overlayView === 'statuses' ? (
+              <StatusesScreen onBack={closeOverlay} />
             ) : null)}
         </Animated.View>
       )}

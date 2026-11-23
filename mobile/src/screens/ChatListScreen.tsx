@@ -47,6 +47,7 @@ interface ChatListScreenProps {
   onOpenProfile: () => void;
   onOpenStats: () => void;
   onOpenStarred?: () => void;
+  onOpenStatuses?: () => void;
 }
 
 const sortConversations = (list: Conversation[]): Conversation[] =>
@@ -64,6 +65,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenProfile,
   onOpenStats,
   onOpenStarred,
+  onOpenStatuses,
 }) => {
   const { user, token } = useAuth();
   const insets = useSafeAreaInsets();
@@ -588,13 +590,15 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       setActiveTab(tab);
       if (tab === 'starred') {
         onOpenStarred?.();
+      } else if (tab === 'statuses') {
+        onOpenStatuses?.();
       } else if (tab === 'replies') {
         setQuickRepliesVisible(true);
       } else if (tab === 'settings') {
         onOpenProfile();
       }
     },
-    [onOpenStarred, onOpenProfile]
+    [onOpenStarred, onOpenStatuses, onOpenProfile]
   );
 
   const renderItem = useCallback(

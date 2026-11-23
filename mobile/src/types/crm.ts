@@ -239,3 +239,48 @@ export interface GroupMembersResponse {
   members: GroupMember[];
   past: GroupPastMember[];
 }
+
+// WhatsApp Status / story — one ring segment in the viewer.
+export interface StatusItem {
+  id: number;
+  poster_phone?: string | null;
+  poster_name?: string | null;
+  poster_avatar?: string | null;
+  is_mine: boolean;
+  type: 'text' | 'image' | 'video' | 'audio' | string;
+  body?: string | null;
+  media_url?: string | null;
+  media_mime_type?: string | null;
+  has_lazy_media?: boolean;
+  posted_at?: string | null;
+  expires_at?: string | null;
+  deleted_at?: string | null;
+  viewed_at?: string | null;
+}
+
+// One contact's ring — ordered newest-first like the backend returns.
+// Archived groups ship with items: [] and lazy-load on open.
+export interface StatusGroup {
+  poster_phone: string;
+  poster_name?: string | null;
+  poster_avatar?: string | null;
+  count: number;
+  unseen_count?: number;
+  has_deleted?: boolean;
+  latest_at?: string | null;
+  items: StatusItem[];
+  has_more?: boolean;
+}
+
+export interface StatusesResponse {
+  success: boolean;
+  mine: StatusItem[];
+  mine_has_more?: boolean;
+  recent: StatusGroup[];
+  viewed: StatusGroup[];
+}
+
+export interface StatusItemsResponse {
+  success: boolean;
+  items: StatusItem[];
+}

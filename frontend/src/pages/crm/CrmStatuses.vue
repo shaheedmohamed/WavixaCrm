@@ -62,7 +62,7 @@
                 <div class="font-bold text-[15px] truncate">{{ g.poster_name }}</div>
                 <div class="text-xs text-[#8696a0] mt-0.5">
                   {{ relTime(g.latest_at) }} · {{ g.count }} {{ g.count === 1 ? 'حالة' : 'حالات' }}
-                  <span v-if="g.items.some(i => i.deleted_at)" class="text-red-400/80">· فيها محذوفة</span>
+                  <span v-if="g.has_deleted || g.items.some(i => i.deleted_at)" class="text-red-400/80">· فيها محذوفة</span>
                 </div>
               </div>
             </button>
@@ -81,7 +81,7 @@
                 <div class="font-medium text-[15px] text-[#d1d7db] truncate">{{ g.poster_name }}</div>
                 <div class="text-xs text-[#8696a0] mt-0.5">
                   {{ relTime(g.latest_at) }} · {{ g.count }} {{ g.count === 1 ? 'حالة' : 'حالات' }}
-                  <span v-if="g.items.some(i => i.deleted_at)" class="text-red-400/80">· فيها محذوفة</span>
+                  <span v-if="g.has_deleted || g.items.some(i => i.deleted_at)" class="text-red-400/80">· فيها محذوفة</span>
                 </div>
               </div>
             </button>
@@ -241,8 +241,9 @@ const load = async (manual = false) => {
       recent.value = res.data.recent || [];
       viewed.value = res.data.viewed || [];
       loaded.value = true;
-      // keep the open viewer in sync with fresh data
-      if (viewer.value.group) {
+      // keep the open viewer in sync with fresh data — lazy-loaded archive
+      // rings aren't in the index payload, so leave them alone.
+      if (viewer.value.group && !viewer.value.group.__lazy) {
         const all = [...mine.value, ...recent.value.flatMap((g) => g.items), ...viewed.value.flatMap((g) => g.items)];
         const ids = new Set(viewer.value.group.items.map((i) => i.id));
         const fresh = all.filter((i) => ids.has(i.id));
@@ -283,9 +284,23 @@ const startTimer = () => {
 const pauseTimer = () => { clearInterval(segTimer); segProgress.value = 0; };
 const itemLoaded = () => {};
 
-const openViewer = (group) => {
-  if (!group || !group.items?.length) return;
-  viewer.value = { group, idx: 0 };
+const openViewer = async (group) => {
+  if (!group || !group.count) return;
+  // Archived rings ship with items: [] — pull the full story list on open.
+  let g = group;
+  if (!g.items?.length || g.items.length < g.count) {
+    try {
+      const params = g.poster_phone === 'me'
+        ? { mine: 1 }
+        : { poster_phone: g.poster_phone };
+      const res = await crm.client().get('/statuses/items', { params });
+      if (res.data?.success && res.data.items?.length) {
+        g = { ...g, items: res.data.items, __lazy: true };
+      }
+    } catch {}
+  }
+  if (!g.items?.length) return;
+  viewer.value = { group: g, idx: 0 };
   markViewed(currentItem.value);
   startTimer();
 };

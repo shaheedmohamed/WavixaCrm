@@ -4184,19 +4184,46 @@ class CrmController extends Controller
     public function getStatuses(Request $request)
     {
         $allowed = $this->getAllowedSessionIds();
-        $rows = \App\Models\WhatsAppStatus::whereIn('session_id', $allowed)
-            ->where('posted_at', '>=', now()->subHours(36))
-            ->orderBy('posted_at', 'desc')->orderBy('id', 'desc')
-            ->get();
+        // Full archive — statuses never age out of the CRM list. Deleted
+        // stories keep their row (deleted_at) and stay visible with a
+        // "محذوفة" marker, exactly like the anti-delete message bubble.
+        // Items are embedded only where they're needed (live rings + own
+        // stories); archived groups carry flags + counts and lazy-load via
+        // /crm/statuses/items — the full history is tens of thousands of
+        // rows, too heavy for one response.
+        $liveCutoff = now()->subHours(24);
+
+        // Per-poster aggregates — group headers only, no row hydration.
+        $agg = \App\Models\WhatsAppStatus::whereIn('session_id', $allowed)
+            ->where('is_mine', false)
+            ->selectRaw("poster_phone, count(*) as c,
+                sum(deleted_at is not null) as del_count,
+                sum(viewed_at is null and deleted_at is null) as unseen_count,
+                sum(viewed_at is null and deleted_at is null and posted_at >= ?) as live_unseen", [$liveCutoff])
+            ->groupBy('poster_phone')
+            ->get()
+            ->keyBy('poster_phone');
+
+        // Latest status per poster (MySQL 8 window) — name/avatar/time shown
+        // on each ring come from their newest story.
+        $latest = collect(\DB::select(
+            "select poster_phone, poster_name, poster_avatar, posted_at from (
+                select poster_phone, poster_name, poster_avatar, posted_at,
+                    row_number() over (partition by poster_phone order by posted_at desc, id desc) rn
+                from whatsapp_statuses
+                where session_id in (" . implode(',', array_map('intval', $allowed)) . ")
+                    and is_mine = 0
+            ) t where rn = 1"
+        ))->keyBy('poster_phone');
 
         // Live contact resolution — the saved name/avatar may have been
         // learned after the status row was first stored.
-        $phones = $rows->pluck('poster_phone')->filter()->unique()->all();
+        $phones = $agg->keys()->all();
         $contacts = WhatsAppConversation::whereIn('session_id', $allowed)
             ->whereIn('contact_phone', $phones)
             ->get()->keyBy('contact_phone');
 
-        $items = $rows->map(function ($s) use ($contacts) {
+        $mapItem = function ($s) use ($contacts) {
             $c = $contacts->get($s->poster_phone);
             $saved = ($c && $c->contact_name && !preg_match('/^\+?\d+$/', trim($c->contact_name)))
                 ? $c->contact_name : null;
@@ -4210,36 +4237,75 @@ class CrmController extends Controller
                 'body' => $s->body,
                 'media_url' => $s->media_url,
                 'media_mime_type' => $s->media_mime_type,
-                'has_lazy_media' => !$s->media_url && !empty($s->media_meta['mediaKey']),
-                'posted_at' => $s->posted_at?->toIso8601String(),
-                'expires_at' => $s->expires_at?->toIso8601String(),
-                'deleted_at' => $s->deleted_at?->toIso8601String(),
-                'viewed_at' => $s->viewed_at?->toIso8601String(),
+                'has_lazy_media' => !$s->media_url && !empty($s->lazy_media_key),
+                'posted_at' => $s->posted_at ? \Carbon\Carbon::parse($s->posted_at)->toIso8601String() : null,
+                'expires_at' => $s->expires_at ? \Carbon\Carbon::parse($s->expires_at)->toIso8601String() : null,
+                'deleted_at' => $s->deleted_at ? \Carbon\Carbon::parse($s->deleted_at)->toIso8601String() : null,
+                'viewed_at' => $s->viewed_at ? \Carbon\Carbon::parse($s->viewed_at)->toIso8601String() : null,
             ];
-        });
+        };
 
-        $mine = $items->where('is_mine', true)->values();
+        // Own stories — newest first; a 61st row flags the lazy tail.
+        $mineRows = \App\Models\WhatsAppStatus::whereIn('session_id', $allowed)
+            ->where('is_mine', true)
+            ->orderBy('posted_at', 'desc')->orderBy('id', 'desc')
+            ->limit(61)
+            ->get([
+                'id', 'session_id', 'poster_phone', 'poster_name', 'poster_avatar',
+                'is_mine', 'type', 'body', 'media_url', 'media_mime_type',
+                'posted_at', 'expires_at', 'deleted_at', 'viewed_at',
+                \DB::raw("media_meta->>'$.mediaKey' as lazy_media_key"),
+            ]);
+        $mine = $mineRows->take(60)->map($mapItem)->values();
 
-        $groups = [];
-        foreach ($items->where('is_mine', false) as $it) {
-            $groups[$it['poster_phone']][] = $it;
+        // Embed items only for posters with live unseen stories — capped at
+        // 60 newest per poster in SQL so a prolific poster can't hydrate
+        // thousands of rows for nothing.
+        $livePosters = $agg->filter(fn ($a) => $a->live_unseen > 0)->keys()->all();
+        $liveItems = collect();
+        if (count($livePosters)) {
+            $inPhones = "'" . implode("','", array_map('addslashes', $livePosters)) . "'";
+            $inSess = implode(',', array_map('intval', $allowed));
+            $liveItems = collect(\DB::select(
+                "select * from (
+                    select s.id, s.session_id, s.poster_phone, s.poster_name, s.poster_avatar,
+                        s.is_mine, s.type, s.body, s.media_url, s.media_mime_type,
+                        s.posted_at, s.expires_at, s.deleted_at, s.viewed_at,
+                        s.media_meta->>'$.mediaKey' as lazy_media_key,
+                        row_number() over (
+                            partition by poster_phone order by posted_at desc, id desc
+                        ) rn
+                    from whatsapp_statuses s
+                    where s.session_id in ({$inSess}) and s.is_mine = 0
+                        and s.poster_phone in ({$inPhones})
+                ) t where rn <= 60"
+            ))->map($mapItem)->groupBy('poster_phone');
         }
+
         $recent = [];
         $viewed = [];
-        foreach ($groups as $phone => $list) {
+        foreach ($agg as $phone => $a) {
+            $head = $latest->get($phone);
+            $c = $contacts->get($phone);
+            $saved = ($c && $c->contact_name && !preg_match('/^\+?\d+$/', trim($c->contact_name)))
+                ? $c->contact_name : null;
+            $isRecent = $a->live_unseen > 0;
+            $embedded = $isRecent ? ($liveItems->get($phone) ?: collect())->take(60)->values() : [];
             $g = [
                 'poster_phone' => $phone,
-                'poster_name' => $list[0]['poster_name'],
-                'poster_avatar' => $list[0]['poster_avatar'],
-                'count' => count($list),
-                'latest_at' => $list[0]['posted_at'],
-                'items' => array_values($list),
+                'poster_name' => $saved ?: ($head->poster_name ?? '+' . $phone),
+                'poster_avatar' => $c?->contact_avatar ?: ($head->poster_avatar ?? null),
+                'count' => (int) $a->c,
+                'unseen_count' => (int) $a->unseen_count,
+                'has_deleted' => $a->del_count > 0,
+                'latest_at' => $head?->posted_at ? \Carbon\Carbon::parse($head->posted_at)->toIso8601String() : null,
+                'items' => $embedded,
+                'has_more' => $a->c > count($embedded),
             ];
-            $allSeen = collect($list)->every(fn ($i) => $i['viewed_at'] || $i['deleted_at']);
-            if ($allSeen) {
-                $viewed[] = $g;
-            } else {
+            if ($isRecent) {
                 $recent[] = $g;
+            } else {
+                $viewed[] = $g;
             }
         }
         $byLatest = fn ($a, $b) => strtotime($b['latest_at']) <=> strtotime($a['latest_at']);
@@ -4249,9 +4315,64 @@ class CrmController extends Controller
         return response()->json([
             'success' => true,
             'mine' => $mine,
+            'mine_has_more' => $mineRows->count() > 60,
             'recent' => $recent,
             'viewed' => $viewed,
         ]);
+    }
+
+    /**
+     * Full story list for one poster — the statuses index only embeds items
+     * for live rings; archived/truncated groups load on open through here.
+     * `?mine=1` returns the owner's own stories.
+     */
+    public function getStatusItems(Request $request)
+    {
+        $allowed = $this->getAllowedSessionIds();
+        $q = \App\Models\WhatsAppStatus::whereIn('session_id', $allowed)
+            ->orderBy('posted_at', 'desc')->orderBy('id', 'desc');
+        if ($request->boolean('mine')) {
+            $q->where('is_mine', true);
+        } else {
+            $phone = preg_replace('/\D/', '', (string) $request->query('poster_phone', ''));
+            if ($phone === '') {
+                return response()->json(['success' => false, 'message' => 'poster_phone required'], 422);
+            }
+            $q->where('poster_phone', $phone);
+        }
+        $rows = $q->get([
+            'id', 'session_id', 'poster_phone', 'poster_name', 'poster_avatar',
+            'is_mine', 'type', 'body', 'media_url', 'media_mime_type',
+            'posted_at', 'expires_at', 'deleted_at', 'viewed_at',
+            \DB::raw("media_meta->>'$.mediaKey' as lazy_media_key"),
+        ]);
+
+        $posterPhone = $rows->first()?->poster_phone;
+        $contact = $posterPhone
+            ? WhatsAppConversation::whereIn('session_id', $allowed)
+                ->where('contact_phone', $posterPhone)->first()
+            : null;
+        $saved = ($contact && $contact->contact_name && !preg_match('/^\+?\d+$/', trim($contact->contact_name)))
+            ? $contact->contact_name : null;
+
+        $items = $rows->map(fn ($s) => [
+            'id' => $s->id,
+            'poster_phone' => $s->poster_phone,
+            'poster_name' => $saved ?: ($s->poster_name ?: '+' . $s->poster_phone),
+            'poster_avatar' => $contact?->contact_avatar ?: $s->poster_avatar,
+            'is_mine' => (bool) $s->is_mine,
+            'type' => $s->type,
+            'body' => $s->body,
+            'media_url' => $s->media_url,
+            'media_mime_type' => $s->media_mime_type,
+            'has_lazy_media' => !$s->media_url && !empty($s->lazy_media_key),
+            'posted_at' => $s->posted_at ? \Carbon\Carbon::parse($s->posted_at)->toIso8601String() : null,
+            'expires_at' => $s->expires_at ? \Carbon\Carbon::parse($s->expires_at)->toIso8601String() : null,
+            'deleted_at' => $s->deleted_at ? \Carbon\Carbon::parse($s->deleted_at)->toIso8601String() : null,
+            'viewed_at' => $s->viewed_at ? \Carbon\Carbon::parse($s->viewed_at)->toIso8601String() : null,
+        ])->values();
+
+        return response()->json(['success' => true, 'items' => $items]);
     }
 
     /**

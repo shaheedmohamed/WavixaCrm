@@ -239,6 +239,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
 
         // WhatsApp statuses (stories) — captured from status@broadcast traffic
         Route::get('/statuses', [\App\Http\Controllers\Api\CrmController::class, 'getStatuses']);
+        Route::get('/statuses/items', [\App\Http\Controllers\Api\CrmController::class, 'getStatusItems']);
         Route::post('/statuses/{id}/view', [\App\Http\Controllers\Api\CrmController::class, 'viewStatus']);
 
         // Auto Reply (WhatsApp chatbot) — same engine as the platform's

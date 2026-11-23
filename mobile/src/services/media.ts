@@ -1,5 +1,5 @@
 import { Config } from '../constants/config';
-import { Conversation, Message } from '../types/crm';
+import { Conversation, Message, StatusItem } from '../types/crm';
 
 // Turn a backend-relative path (/storage/..., /api/...) into an absolute URL.
 export const resolveUrl = (url?: string | null): string | null => {
@@ -44,6 +44,20 @@ export const avatarSrc = (
     v = String(h);
   }
   return Config.getAvatarUrl(conv.id, token, download, v);
+};
+
+// Status media — stored rows carry media_url; history-synced items decrypt
+// lazily through the token-authed /crm/status-media/{id} resolver.
+export const statusMediaSrc = (
+  s: StatusItem | null | undefined,
+  token?: string | null
+): string | null => {
+  if (!s) return null;
+  if (s.media_url) return resolveUrl(s.media_url);
+  if (s.has_lazy_media && s.id && token) {
+    return Config.getStatusMediaUrl(s.id, token);
+  }
+  return null;
 };
 
 // Group-sender avatar — each participant's JID resolves through the backend
