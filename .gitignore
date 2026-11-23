@@ -45,3 +45,5 @@ logs/
 *~
 
 !mobile/assets/notify_ding.wav
+apk/
+backend/public/apk/
