@@ -82,6 +82,14 @@ class WhatsAppWebhookController extends Controller
 
         Log::info("WhatsApp session {$session->id} marked connected ({$session->phone_number})");
 
+        // Provision a dedicated call-bridge instance for this number — the
+        // watcher starts wavixa-callbridge@<phone> within ~10s and it emits
+        // its own WA Web pairing QR (fetched via /crm/call/qr?phone=).
+        if ($session->phone_number) {
+            try { \App\Services\CallBridgeManager::ensure($session->phone_number); }
+            catch (\Throwable $e) { Log::debug('call-bridge provision failed: ' . $e->getMessage()); }
+        }
+
         try {
             event(new \App\Events\CrmRealtimeEvent($session->user_id, 'device.status', [
                 'session_id' => $session->id,

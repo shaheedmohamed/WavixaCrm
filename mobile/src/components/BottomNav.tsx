@@ -11,6 +11,7 @@ interface BottomNavProps {
   onTabPress: (tab: BottomTabType) => void;
   onNewChatPress: () => void;
   totalUnread?: number;
+  showStatuses?: boolean;
 }
 
 export const BottomNav: React.FC<BottomNavProps> = ({
@@ -18,6 +19,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
   onTabPress,
   onNewChatPress,
   totalUnread = 0,
+  showStatuses = false,
 }) => {
   const insets = useSafeAreaInsets();
   const bottomInset = Math.max(insets.bottom, 6);
@@ -55,7 +57,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {activeTab === 'chats' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
 
-      {/* 2. Statuses (WhatsApp stories) */}
+      {/* 2. Statuses (WhatsApp stories) — demo account only for now */}
+      {showStatuses && (
       <TouchableOpacity
         style={styles.tabItem}
         onPress={() => onTabPress('statuses')}
@@ -76,6 +79,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         </Text>
         {activeTab === 'statuses' && <View style={styles.activeIndicator} />}
       </TouchableOpacity>
+      )}
 
       {/* 3. Starred messages */}
       <TouchableOpacity

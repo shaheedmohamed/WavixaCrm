@@ -5,25 +5,20 @@ namespace App\Http\Controllers\Api;
 use App\Events\CrmRealtimeEvent;
 use App\Http\Controllers\Controller;
 use App\Models\WhatsAppSession;
+use App\Services\CallBridgeManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 /**
- * CRM voice calls — proxies call control to the local WhatsApp call bridge
- * (whatsapp-callbridge, a Puppeteer-driven WhatsApp Web session on 127.0.0.1:3999)
- * and receives its call events for Reverb broadcast.
- *
- * The bridge handles one call at a time. The WS ticket is a short-lived HMAC
- * the CRM browser uses to open the audio WebSocket (nginx → bridge /ws).
+ * CRM voice calls — proxies call control to per-number WhatsApp call-bridge
+ * instances (whatsapp-callbridge, Puppeteer WA Web sessions). Each CRM-linked
+ * number gets its own `wavixa-callbridge@<phone>` unit — see CallBridgeManager.
+ * The bridge handles one call at a time per instance. The WS ticket is a
+ * short-lived HMAC used to open the audio WebSocket (nginx /call-ws/<port>).
  */
 class CrmCallController extends Controller
 {
-    private function bridge(): string
-    {
-        return rtrim(env('CALL_BRIDGE_URL', 'http://127.0.0.1:3999'), '/');
-    }
-
     private function wsSecret(): ?string
     {
         $s = env('CALL_WS_SECRET');
@@ -32,44 +27,99 @@ class CrmCallController extends Controller
         return is_file($f) ? trim(file_get_contents($f)) : null;
     }
 
-    private function post(string $path, array $body = [], int $timeout = 15)
+    /**
+     * Which number should serve this request: an explicit ?phone= (validated
+     * against the caller's sessions), the conversation's owning session phone,
+     * the user's own connected session, or the default system bridge.
+     */
+    private function callerPhone(Request $request): string
+    {
+        $user = $request->user();
+        $explicit = preg_replace('/\D/', '', (string) $request->input('phone'));
+        if ($explicit) {
+            $owns = $user && WhatsAppSession::where('phone_number', 'like', "%{$explicit}")->exists();
+            if ($owns || ($user && in_array($user->crm_role, ['owner', 'admin']))) return $explicit;
+        }
+        if ($convId = $request->input('conversation_id')) {
+            $conv = \App\Models\WhatsAppConversation::find($convId);
+            if ($conv?->session?->phone_number) return $conv->session->phone_number;
+        }
+        $sess = $user ? WhatsAppSession::where('user_id', $user->id)
+            ->where('status', 'connected')->latest('connected_at')->first() : null;
+        return $sess?->phone_number ?: CallBridgeManager::DEFAULT_PHONE;
+    }
+
+    private function post(string $base, string $path, array $body = [], int $timeout = 15)
     {
         try {
-            $r = Http::timeout($timeout)->post($this->bridge() . $path, $body);
+            $r = Http::timeout($timeout)->post($base . $path, $body);
             return $r->json() ?? ['ok' => false, 'err' => 'bad bridge response'];
         } catch (\Throwable $e) {
             return ['ok' => false, 'err' => 'bridge unreachable: ' . $e->getMessage()];
         }
     }
 
-    public function state()
+    /** Provisioned + up URL for the phone, or a needs_pairing-style result. */
+    private function bridgeFor(string $phone): ?string
     {
+        CallBridgeManager::ensure($phone);
+        return CallBridgeManager::url($phone);
+    }
+
+    public function state(Request $request)
+    {
+        $phone = $this->callerPhone($request);
+        $base = $this->bridgeFor($phone);
+        if (!$base) return response()->json(['ready' => false, 'err' => 'no bridge for ' . $phone]);
         try {
-            $r = Http::timeout(8)->get($this->bridge() . '/state');
-            return response()->json($r->json() ?? ['ready' => false]);
+            $r = Http::timeout(8)->get($base . '/state');
+            $j = $r->json() ?? ['ready' => false];
+            $j['phone'] = $phone;
+            return response()->json($j);
         } catch (\Throwable $e) {
-            return response()->json(['ready' => false, 'err' => $e->getMessage()]);
+            return response()->json(['ready' => false, 'phone' => $phone, 'err' => $e->getMessage()]);
         }
     }
 
     /**
-     * Current bridge pairing QR as PNG — needed when the bridge's WhatsApp
-     * Web session loses its linked-device auth (state.ready=false and the
-     * bridge emits QR codes). Owner/admin only via ?token= (same pattern as
-     * /crm/media — a plain browser open can't send Bearer headers).
+     * Pairing QR for the requested phone's bridge as PNG. The session's owner
+     * (and owner/admin) may fetch it — agents need it to pair THEIR calls.
      */
     public function pairingQr(Request $request)
     {
         $accessToken = \Laravel\Sanctum\PersonalAccessToken::findToken((string) $request->query('token'));
         $user = $accessToken?->tokenable;
-        if (!$user || ($user->crm_role ?? null) === 'agent') {
-            abort(403);
-        }
-        $png = '/var/www/Wavixa/whatsapp-callbridge/out/qr.png';
+        if (!$user) abort(403);
+        $phone = preg_replace('/\D/', '', (string) $request->query('phone')) ?: $this->callerPhone($request);
+        $isAdmin = in_array($user->crm_role, ['owner', 'admin']);
+        $owns = WhatsAppSession::where('user_id', $user->id)->where('phone_number', 'like', "%{$phone}")->exists();
+        if (!$isAdmin && !$owns) abort(403);
+        $png = CallBridgeManager::qrPath($phone);
         if (!is_file($png)) {
             abort(404, 'no qr — bridge is paired or not emitting one');
         }
         return response()->file($png, ['Cache-Control' => 'no-store']);
+    }
+
+    /**
+     * Explicit "enable calls for my number" — provisions the bridge instance
+     * so the app can immediately show whether WA Web pairing is required.
+     */
+    public function link(Request $request)
+    {
+        $phone = $this->callerPhone($request);
+        $r = CallBridgeManager::ensure($phone);
+        if (!$r) return response()->json(['ok' => false, 'err' => 'bridge cap reached'], 503);
+        $state = null;
+        try { $state = Http::timeout(5)->get("http://127.0.0.1:{$r['port']}/state")->json(); } catch (\Throwable $e) {}
+        return response()->json([
+            'ok' => true,
+            'phone' => $phone,
+            'port' => $r['port'],
+            'created' => $r['created'],
+            'ready' => (bool) ($state['ready'] ?? false),
+            'online' => (bool) ($state['online'] ?? false),
+        ]);
     }
 
     public function dial(Request $request)
@@ -82,16 +132,44 @@ class CrmCallController extends Controller
             $to .= '@g.us';
         }
         if (!$to || $to === '@g.us') return response()->json(['ok' => false, 'err' => 'missing number'], 422);
+
+        $phone = $this->callerPhone($request);
+        $base = $this->bridgeFor($phone);
+        if (!$base) return response()->json(['ok' => false, 'err' => 'bridge cap reached'], 503);
+
+        // Fresh instance or unpaired WA Web → tell the app to show the QR.
+        try {
+            $st = Http::timeout(8)->get($base . '/state')->json();
+            if (!($st['ready'] ?? false)) {
+                return response()->json([
+                    'ok' => false,
+                    'err' => 'needs_pairing',
+                    'needs_pairing' => true,
+                    'phone' => $phone,
+                    'qr' => '/api/crm/call/qr?phone=' . $phone,
+                ]);
+            }
+        } catch (\Throwable $e) {
+            return response()->json(['ok' => false, 'err' => 'bridge starting: ' . $e->getMessage()], 503);
+        }
+
         // dial walks the WA UI (open chat → menu → picker) — allow ~45s
-        return response()->json($this->post('/dial', ['to' => $to, 'video' => $request->boolean('video')], 45));
+        return response()->json($this->post($base, '/dial', ['to' => $to, 'video' => $request->boolean('video')], 45));
     }
 
-    public function answer()  { return response()->json($this->post('/answer')); }
-    public function reject()  { return response()->json($this->post('/reject')); }
-    public function hangup()  { return response()->json($this->post('/hangup')); }
-    public function mute(Request $request) { return response()->json($this->post('/mute', ['mute' => $request->boolean('mute', true)])); }
+    public function answer(Request $request)  { return $this->callCtl($request, '/answer'); }
+    public function reject(Request $request)  { return $this->callCtl($request, '/reject'); }
+    public function hangup(Request $request)  { return $this->callCtl($request, '/hangup'); }
+    public function mute(Request $request)    { return $this->callCtl($request, '/mute', ['mute' => $request->boolean('mute', true)]); }
 
-    /** Short-lived HMAC ticket for the audio WebSocket (nginx /call-ws → bridge). */
+    private function callCtl(Request $request, string $path, array $body = [])
+    {
+        $base = CallBridgeManager::url($this->callerPhone($request));
+        if (!$base) return response()->json(['ok' => false, 'err' => 'no bridge'], 503);
+        return response()->json($this->post($base, $path, $body));
+    }
+
+    /** Short-lived HMAC ticket for the audio WebSocket (nginx /call-ws/<port>). */
     public function wsTicket(Request $request)
     {
         $secret = $this->wsSecret();
@@ -100,10 +178,13 @@ class CrmCallController extends Controller
         $exp = (time() + 120) * 1000; // ms — matches bridge Date.now() check
         $sig = hash_hmac('sha256', "{$uid}.{$exp}", $secret);
         $scheme = $request->secure() ? 'wss' : 'ws';
+        $phone = $this->callerPhone($request);
+        $r = CallBridgeManager::resolve($phone) ?? ['port' => CallBridgeManager::DEFAULT_PORT];
+        $wsPath = $r['port'] === CallBridgeManager::DEFAULT_PORT ? '/call-ws' : "/call-ws/{$r['port']}";
         return response()->json([
             'ok' => true,
             'ticket' => "{$uid}.{$exp}.{$sig}",
-            'url' => "{$scheme}://{$request->getHost()}/call-ws",
+            'url' => "{$scheme}://{$request->getHost()}{$wsPath}",
         ]);
     }
 

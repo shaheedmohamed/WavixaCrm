@@ -260,6 +260,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/call/reject', [\App\Http\Controllers\Api\CrmCallController::class, 'reject']);
         Route::post('/call/hangup', [\App\Http\Controllers\Api\CrmCallController::class, 'hangup']);
         Route::post('/call/mute', [\App\Http\Controllers\Api\CrmCallController::class, 'mute']);
+        Route::post('/call/link', [\App\Http\Controllers\Api\CrmCallController::class, 'link']);
         Route::post('/call/ws-ticket', [\App\Http\Controllers\Api\CrmCallController::class, 'wsTicket']);
 
         // Platform admin (crm_role = 'admin') — full visibility + customer CRUD

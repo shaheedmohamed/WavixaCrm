@@ -68,6 +68,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStatuses,
 }) => {
   const { user, token } = useAuth();
+  const isStatusViewerAccount = (user?.email ?? '').trim().toLowerCase() === 'demo@crm.com';
   const insets = useSafeAreaInsets();
   const isAgent = user?.crm_role === 'agent';
 
@@ -591,14 +592,14 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       if (tab === 'starred') {
         onOpenStarred?.();
       } else if (tab === 'statuses') {
-        onOpenStatuses?.();
+        if (isStatusViewerAccount) onOpenStatuses?.();
       } else if (tab === 'replies') {
         setQuickRepliesVisible(true);
       } else if (tab === 'settings') {
         onOpenProfile();
       }
     },
-    [onOpenStarred, onOpenStatuses, onOpenProfile]
+    [onOpenStarred, onOpenStatuses, onOpenProfile, isStatusViewerAccount]
   );
 
   const renderItem = useCallback(
@@ -954,6 +955,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           onTabPress={handleBottomTabPress}
           onNewChatPress={() => setNewChatVisible(true)}
           totalUnread={totalUnreadMessages}
+          showStatuses={isStatusViewerAccount}
         />
       )}
 
