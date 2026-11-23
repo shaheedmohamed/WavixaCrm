@@ -23,7 +23,9 @@
       "softwareKeyboardLayoutMode": "resize",
       "permissions": [
         "POST_NOTIFICATIONS",
-        "RECORD_AUDIO"
+        "RECORD_AUDIO",
+        "USE_FULL_SCREEN_INTENT",
+        "WAKE_LOCK"
       ]
     },
     "web": {
@@ -37,7 +39,8 @@
           "icon": "./assets/android-icon-monochrome.png",
           "color": "#00A884",
           "sounds": [
-            "./assets/notify_ding.wav"
+            "./assets/notify_ding.wav",
+            "./assets/ringtone.wav"
           ]
         }
       ],

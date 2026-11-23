@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { authService } from '../services/authService';
-import { setPushUserId, unregisterPushToken } from '../services/notifications';
+import { unregisterPushToken } from '../services/notifications';
+import { setCallPushUserId } from '../services/callPush';
 import { User } from '../types/crm';
 
 interface AuthContextType {
@@ -101,7 +102,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Push notifications carry the target account id — a shared device token
   // from a previous login gets its pushes dropped here instead of shown.
   useEffect(() => {
-    setPushUserId(user?.id ?? null);
+    setCallPushUserId(user?.id ?? null);
   }, [user]);
 
   return (

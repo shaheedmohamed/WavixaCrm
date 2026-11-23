@@ -138,11 +138,11 @@ class CrmCallController extends Controller
             && $request->filled('peer')
             && in_array($request->input('prevState'), ['ringing', 'connecting', 'active', 'incoming'])) {
             $this->logCallMessage($request, $session);
+            $this->pushCallEnded($request, $session, $ownerId);
         }
 
-        // Incoming call → high-priority push so the phone rings even with
-        // the app closed. Targets mirror message notifications: the account
-        // owner plus the agent the peer's chat is assigned to.
+        // Incoming call → data-only high-priority push so the app wakes and
+        // renders a real full-screen ringing UI even when killed/locked.
         if ($request->input('event') === 'state' && $request->input('callState') === 'incoming'
             && $request->filled('peer')) {
             $this->pushIncomingCall($request, $session, $ownerId);
@@ -150,29 +150,67 @@ class CrmCallController extends Controller
         return response()->json(['ok' => true]);
     }
 
-    /** FCM "incoming call" push to the owner (+ the peer chat's agent). */
+    /** Owner + the agent the peer's chat is assigned to. */
+    private function callTargets($session, string $peer): array
+    {
+        $conv = \App\Models\WhatsAppConversation::where('session_id', $session->id)
+            ->where(function ($q) use ($peer) {
+                $q->where('contact_phone', $peer)
+                  ->orWhere('contact_jid', 'like', "%{$peer}%");
+            })->first();
+        return [$conv, collect([$session->user_id, $conv?->assigned_agent_id])
+            ->filter()->unique()->values()];
+    }
+
+    /** FCM data "call.incoming" → app renders its own full-screen call UI. */
     private function pushIncomingCall(Request $request, $session, int $ownerId): void
     {
         try {
             $peer = preg_replace('/\D/', '', (string) $request->input('peer'));
-            $conv = \App\Models\WhatsAppConversation::where('session_id', $session->id)
-                ->where(function ($q) use ($peer) {
-                    $q->where('contact_phone', $peer)
-                      ->orWhere('contact_jid', 'like', "%{$peer}%");
-                })->first();
+            [$conv, $targets] = $this->callTargets($session, $peer);
             $caller = $conv?->contact_name ?: "+{$peer}";
-            $targets = collect([$ownerId, $conv?->assigned_agent_id])
-                ->filter()->unique()->values();
             foreach ($targets as $uid) {
-                \App\Services\ExpoPushService::notifyIncoming(
-                    $uid,
-                    'مكالمة واردة',
-                    "{$caller} يتصل بك",
-                    ['conversation_id' => $conv?->id, 'type' => 'call.incoming']
-                );
+                \App\Services\ExpoPushService::sendDataPush($uid, [
+                    'type' => 'call.incoming',
+                    'conversation_id' => $conv?->id,
+                    'peer' => $peer,
+                    'caller' => $caller,
+                    'video' => $request->boolean('video') ? '1' : '0',
+                ]);
             }
         } catch (\Throwable $e) {
             Log::debug('CRM push (call.incoming) failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * FCM data "call.end" cancels the ringing UI on every target device; an
+     * unanswered incoming call additionally leaves a normal missed-call
+     * notification so there is a tray trace like WhatsApp.
+     */
+    private function pushCallEnded(Request $request, $session, int $ownerId): void
+    {
+        try {
+            $peer = preg_replace('/\D/', '', (string) $request->input('peer'));
+            [$conv, $targets] = $this->callTargets($session, $peer);
+            foreach ($targets as $uid) {
+                \App\Services\ExpoPushService::sendDataPush($uid, [
+                    'type' => 'call.end',
+                    'conversation_id' => $conv?->id,
+                    'peer' => $peer,
+                ]);
+            }
+            if ($request->input('direction') === 'in' && !$request->boolean('answered')) {
+                $caller = $conv?->contact_name ?: "+{$peer}";
+                foreach ($targets as $uid) {
+                    \App\Services\ExpoPushService::notifyIncoming(
+                        $uid, 'مكالمة فائتة', "{$caller} حاول الاتصال بك",
+                        ['conversation_id' => $conv?->id, 'type' => 'call.missed']
+                    );
+                }
+            }
+        } catch (\Throwable $e) {
+            Log::debug('CRM push (call.end) failed: ' . $e->getMessage());
         }
     }
 

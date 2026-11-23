@@ -418,6 +418,21 @@ class CallService {
     this.applyPhase(data.callState, data.peer);
   }
 
+  /**
+   * Hydrate from the bridge's live state — used when the app cold-launches
+   * from the incoming-call notification so CallScreen renders 'incoming'
+   * even though no realtime/WS event was seen this session.
+   */
+  async syncFromBridge() {
+    try {
+      const { data } = await apiClient.get('/crm/call/state');
+      if (data?.callState && data.callState !== 'idle') {
+        this.applyPhase(data.callState === 'ringing' && data.peer && this.state.phase === 'idle'
+          ? 'incoming' : data.callState, data.peer);
+      }
+    } catch {}
+  }
+
   private applyPhase(s: string, peer?: string | null) {
     if (s === 'active') {
       stopTone();

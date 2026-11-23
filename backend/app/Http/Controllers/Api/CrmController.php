@@ -93,6 +93,34 @@ class CrmController extends Controller
         return str_ends_with((string) $conversation->contact_jid, '@g.us');
     }
 
+    /**
+     * The sessions.status column lags the engine: a missed status webhook or
+     * a single failed /health probe (whatsapp:sync-sessions marks every
+     * session disconnected on one timeout) leaves a live socket stamped
+     * "disconnected" and blocks every send with "الجهاز غير متصل". Before
+     * refusing an action on that stale row, ask the engine directly and
+     * heal the row when the session is actually up.
+     */
+    private function sessionIsLive(WhatsAppSession $session): bool
+    {
+        if ($session->status === 'connected') {
+            return true;
+        }
+        foreach (array_filter([$session->session_token, (string) $session->user_id]) as $nodeId) {
+            try {
+                $res = $this->engineClient()->timeout(6)
+                    ->get("{$this->engineUrl}/api/whatsapp/status/{$nodeId}");
+                if (($res->json()['status'] ?? null) === 'connected') {
+                    $session->update(['status' => 'connected', 'last_activity_at' => now()]);
+                    return true;
+                }
+            } catch (\Throwable $e) {
+                // Engine unreachable for this id — try the next alias.
+            }
+        }
+        return false;
+    }
+
     private function lockedResponse(?User $locker)
     {
         return response()->json([
@@ -672,7 +700,7 @@ class CrmController extends Controller
         $owner = $this->resolveOwner();
         $session = WhatsAppSession::where('user_id', $owner->id)->where('id', $id)->firstOrFail();
 
-        if ($session->status !== 'connected') {
+        if (!$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
         }
 
@@ -961,6 +989,80 @@ class CrmController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'تم حذف العضو بنجاح',
+        ]);
+    }
+
+    /**
+     * Open (unresolved) conversations currently held by one agent — feeds the
+     * owner's per-agent drawer on the team page.
+     */
+    public function agentConversations($id)
+    {
+        /** @var User $user */
+        $user = Auth::user();
+        if ($user->crm_role === 'agent') {
+            return response()->json(['success' => false, 'message' => 'غير مصرح'], 403);
+        }
+
+        $owner = $this->resolveOwner();
+        $agent = User::where('crm_parent_id', $owner->id)->where('id', $id)->firstOrFail();
+
+        $conversations = WhatsAppConversation::with(['session:id,device_name,phone_number'])
+            ->where('assigned_agent_id', $agent->id)
+            ->whereNull('resolved_at')
+            ->orderBy('last_message_at', 'desc')
+            ->get([
+                'id', 'session_id', 'contact_jid', 'contact_name', 'contact_phone',
+                'contact_username', 'contact_avatar', 'last_message', 'last_message_at',
+                'unread_count', 'is_pinned', 'assigned_at', 'archived_at',
+            ]);
+
+        return response()->json([
+            'success' => true,
+            'agent' => ['id' => $agent->id, 'name' => $agent->name],
+            'conversations' => $conversations,
+        ]);
+    }
+
+    /**
+     * Release every open conversation an agent is holding so they drop back
+     * into the shared queue where any teammate can pick them up.
+     */
+    public function releaseAgentConversations($id)
+    {
+        /** @var User $user */
+        $user = Auth::user();
+        if ($user->crm_role === 'agent') {
+            return response()->json(['success' => false, 'message' => 'غير مصرح'], 403);
+        }
+
+        $owner = $this->resolveOwner();
+        $agent = User::where('crm_parent_id', $owner->id)->where('id', $id)->firstOrFail();
+
+        $held = WhatsAppConversation::where('assigned_agent_id', $agent->id)
+            ->whereNull('resolved_at')
+            ->get();
+
+        foreach ($held as $conv) {
+            $conv->forceFill([
+                'assigned_agent_id' => null,
+                'assigned_at' => null,
+                'transferred_by' => null,
+                'transferred_at' => null,
+            ])->save();
+            $this->broadcastConversation($conv);
+        }
+
+        $this->audit('agent.release_conversations', [
+            'agent_id' => $agent->id,
+            'agent_name' => $agent->name,
+            'released' => $held->count(),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'released' => $held->count(),
+            'message' => 'تم فصل ' . $held->count() . ' محادثة وإرجاعها للمحادثات المتاحة',
         ]);
     }
 
@@ -1326,19 +1428,39 @@ class CrmController extends Controller
         $scope = $request->input('scope');
 
         if ($user->crm_role === 'agent') {
-            // Agents never see archived or completed (مكتمل) chats, nor chats
-            // handled by colleagues, nor already-read unclaimed history.
+            // Agents never see archived or completed (مكتمل) chats — every
+            // open thread on their sessions is listed for the whole team,
+            // claimed or not, read or not; only writing is exclusive to the
+            // holder. Search additionally spans resolved threads and quiet
+            // history exactly like an owner's, since search is how an agent
+            // finds a chat to open or forward to.
             if ($request->boolean('archived')) {
                 $query->whereRaw('1 = 0');
+            } elseif ($request->filled('search')) {
+                $query->whereNull('archived_at');
+                if ($scope === 'groups' || $request->boolean('groups_only')) {
+                    $query->where('contact_jid', 'like', '%@g.us');
+                } elseif (!$request->boolean('include_groups')) {
+                    $query->where(function ($q) {
+                        $q->whereNull('contact_jid')
+                          ->orWhere('contact_jid', 'not like', '%@g.us');
+                    });
+                }
             } elseif ($scope === 'resolved') {
                 // Chats this agent closed stay on their board until a fresh
                 // customer message throws them back into the shared pool.
                 $query->where('resolved_by', $user->id);
             } else {
-                $query->where(function ($q) use ($user) {
-                    $q->whereNull('resolved_at')
-                      ->orWhere('resolved_by', $user->id);
-                })->whereNull('archived_at');
+                // Shared inbox: every teammate sees every open chat on their
+                // sessions — visibility is never gated on unread_count or on
+                // who is handling the thread. A chat must stay listed even
+                // after someone reads it (in the CRM, or straight from the
+                // phone's WhatsApp via the message-read sync) or replies to
+                // it outside the app; the claim lock, not the list, decides
+                // who may reply. Completed (مكتمل) chats live in the
+                // resolved tab only — a fresh customer message re-pools them
+                // via the webhook clearing resolved_at.
+                $query->whereNull('resolved_at')->whereNull('archived_at');
 
                 $isGroupsScope = $scope === 'groups' || $request->boolean('groups_only');
 
@@ -1357,29 +1479,9 @@ class CrmController extends Controller
 
                     match ($scope) {
                         'mine' => $query->where('assigned_agent_id', $user->id),
-                        'unassigned' => $query->whereNull('assigned_agent_id')
-                            ->where('unread_count', '>', 0),
-                        'unread' => $query->where('unread_count', '>', 0)
-                            ->where(function ($q) use ($user) {
-                                $q->whereNull('assigned_agent_id')
-                                  ->orWhere('assigned_agent_id', $user->id);
-                            }),
-                        default => $query->where(function ($q) use ($user, $request) {
-                            // 1) Unclaimed chats with unread messages
-                            // 2) Chats currently handled by this agent
-                            // 3) Chats this agent resolved — kept visible
-                            //    until the next customer reply repools them
-                            $q->where(function ($u) {
-                                $u->whereNull('assigned_agent_id')
-                                  ->where('unread_count', '>', 0);
-                            })->orWhere('assigned_agent_id', $user->id)
-                              ->orWhere('resolved_by', $user->id);
-                            if ($request->boolean('include_groups')) {
-                                // Groups merged into chats: collaborative —
-                                // they bypass the claim/unread gating.
-                                $q->orWhere('contact_jid', 'like', '%@g.us');
-                            }
-                        }),
+                        'unassigned' => $query->whereNull('assigned_agent_id'),
+                        'unread' => $query->where('unread_count', '>', 0),
+                        default => null,
                     };
                 }
             }
@@ -1470,11 +1572,10 @@ class CrmController extends Controller
 
         $caller = $request->user();
         if (!$peek && $caller && $caller->crm_role === 'agent') {
-            if ($locker = $this->conversationLocker($conversation, $caller)) {
-                return $this->lockedResponse($locker);
-            }
-            // Enforce max_active_chats BEFORE clearing unread_count so a full
-            // agent can neither open extra chats nor wipe their unread badge.
+            // Reading is never locked — the shared inbox keeps every open
+            // chat viewable by the whole team, including one held by a
+            // colleague; only writing is exclusive (sendMessage/sendMedia/
+            // sendTyping still refuse via conversationLocker).
             // Auto-claim is limited to live unassigned chats: a resolved chat
             // must NOT silently reopen just because a stale poll or a second
             // tab refetches its messages — that made "مكتمل" bounce straight
@@ -1849,8 +1950,13 @@ class CrmController extends Controller
         $resolve = function (string $jid) use ($lidToPn, $pnToLid, $names, $book) {
             $pn = $lidToPn[$jid] ?? (str_ends_with($jid, '@s.whatsapp.net') ? $jid : null);
             $phone = $pn ? preg_replace('/\D/', '', explode('@', $pn)[0]) : null;
-            $name = $names[$jid] ?? ($pn ? $names[$pn] : null) ?? ($pnToLid[$jid] ?? null ? $names[$pnToLid[$jid]] : null)
-                ?? ($phone ? $book[substr($phone, -10)] ?? null : null);
+            $lid = $pnToLid[$jid] ?? null;
+            // ->get() not [ ] — Collection::offsetGet throws on a missing key,
+            // and a mentioned JID often has no conversation row at all.
+            $name = $names->get($jid)
+                ?? ($pn ? $names->get($pn) : null)
+                ?? ($lid ? $names->get($lid) : null)
+                ?? ($phone ? $book->get(substr($phone, -10)) : null);
             return ['jid' => $jid, 'phone' => $phone, 'name' => $name];
         };
 
@@ -2048,7 +2154,7 @@ class CrmController extends Controller
         }
 
         $session = WhatsAppSession::find($sessionId);
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل حالياً بالواتساب'], 400);
         }
 
@@ -2182,7 +2288,7 @@ class CrmController extends Controller
             return response()->json(['success' => false, 'message' => 'دي مش محادثة جروب'], 422);
         }
         $session = $conversation->session;
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
         }
 
@@ -2332,7 +2438,7 @@ class CrmController extends Controller
             $session = WhatsAppSession::find($request->session_id) ?: $session;
         }
 
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل حالياً بالواتساب'], 400);
         }
 
@@ -2565,7 +2671,7 @@ class CrmController extends Controller
             $session = WhatsAppSession::find($request->session_id) ?: $session;
         }
 
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل حالياً'], 400);
         }
 
@@ -2847,7 +2953,7 @@ class CrmController extends Controller
         }
 
         $session = $conversation->session;
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
         }
 
@@ -2966,7 +3072,7 @@ class CrmController extends Controller
             }
 
             $session = $conversation->session;
-            if (!$session || $session->status !== 'connected') {
+            if (!$session || !$this->sessionIsLive($session)) {
                 return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
             }
 
@@ -3091,7 +3197,7 @@ class CrmController extends Controller
     private function forwardToConversation(WhatsAppMessage $source, WhatsAppConversation $conv, User $sender): WhatsAppMessage
     {
         $session = $conv->session;
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             throw new \RuntimeException('الجهاز غير متصل');
         }
 
@@ -3292,7 +3398,7 @@ class CrmController extends Controller
         }
 
         $session = $conversation->session;
-        if (!$session || $session->status !== 'connected') {
+        if (!$session || !$this->sessionIsLive($session)) {
             return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
         }
 

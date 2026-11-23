@@ -35,21 +35,39 @@ class SyncWhatsAppSessions extends Command
     {
         $serviceUrl = config('services.whatsapp.url', 'http://127.0.0.1:3002');
 
-        try {
-            $health = Http::timeout(5)->get("{$serviceUrl}/health");
-        } catch (\Throwable $e) {
-            $this->error("WhatsApp service unreachable: {$e->getMessage()}");
+        // A single failed probe must never nuke every session — the engine
+        // stalls for a second during reconnects/GC and mass-marking all
+        // devices disconnected used to block every CRM send until the next
+        // status webhook happened to heal the rows. Only after several
+        // consecutive failures is the service really down.
+        $health = null;
+        $healthError = null;
+        for ($attempt = 1; $attempt <= 3; $attempt++) {
+            try {
+                $health = Http::timeout(5)->get("{$serviceUrl}/health");
+                if ($health->successful()) {
+                    break;
+                }
+                $healthError = 'HTTP ' . $health->status();
+            } catch (\Throwable $e) {
+                $health = null;
+                $healthError = $e->getMessage();
+            }
+            if ($attempt < 3) {
+                sleep(2);
+            }
+        }
+
+        if (!$health || !$health->successful()) {
+            $this->error("WhatsApp service unreachable after 3 probes: {$healthError}");
             $this->markAllDisconnected('service_unreachable');
             return self::FAILURE;
         }
 
-        if (!$health->successful()) {
-            $this->error('WhatsApp service health check failed.');
-            $this->markAllDisconnected('service_unhealthy');
-            return self::FAILURE;
-        }
-
-        $sessions = WhatsAppSession::whereIn('status', ['connected', 'pending'])->get();
+        // "disconnected" is included so a false mark (a flapping probe, a
+        // missed status webhook) self-corrects on the next run instead of
+        // sticking until the engine happens to re-emit a status event.
+        $sessions = WhatsAppSession::whereIn('status', ['connected', 'pending', 'disconnected'])->get();
         $this->info("Checking {$sessions->count()} session(s)...");
 
         $fixed = 0;

@@ -89,6 +89,49 @@ class ExpoPushService
     }
 
     /**
+     * Data-only high-priority FCM — wakes the app process even when killed so
+     * it can render its own UI (incoming-call full-screen, call cancellation).
+     * No `notification` block on purpose: Android delivers data payloads to the
+     * app's background task rather than posting a tray entry itself.
+     */
+    public static function sendDataPush(int $userId, array $data): void
+    {
+        try {
+            $user = \App\Models\User::find($userId);
+            $tokens = collect($user?->expo_push_tokens ?? [])
+                ->pluck('token')->filter()->unique()->values();
+            if ($tokens->isEmpty()) return;
+
+            $accessToken = self::accessToken();
+            if (!$accessToken) return;
+
+            $sa = self::serviceAccount();
+            $projectId = $sa['project_id'];
+            $data['user_id'] = (string) $userId;
+
+            foreach ($tokens as $token) {
+                Http::timeout(10)
+                    ->withToken($accessToken)
+                    ->post("https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send", [
+                        'message' => [
+                            'token' => $token,
+                            'android' => [
+                                'priority' => 'HIGH',
+                                'direct_boot_ok' => true,
+                            ],
+                            'data' => array_map('strval', array_filter(
+                                $data,
+                                fn ($v) => $v !== null && $v !== ''
+                            )),
+                        ],
+                    ]);
+            }
+        } catch (\Throwable $e) {
+            Log::debug('FCM data push failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
      * Drop the buffered lines once the conversation is read — the next push
      * starts a fresh burst instead of re-listing stale messages.
      */

@@ -192,6 +192,18 @@ class CrmService {
     return resp.data;
   }
 
+  // Open conversations a single agent is currently holding.
+  async getAgentConversations(id) {
+    const resp = await this.client().get(`/agents/${id}/conversations`);
+    return resp.data;
+  }
+
+  // Drop the agent's lock on every open chat so they return to the shared queue.
+  async releaseAgentConversations(id) {
+    const resp = await this.client().post(`/agents/${id}/release-conversations`);
+    return resp.data;
+  }
+
   // Groups — shared device scope per team
   async getGroups() {
     const resp = await this.client().get('/groups');

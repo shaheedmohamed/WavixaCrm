@@ -9,6 +9,11 @@ import { AuthProvider, useAuth } from '../context/AuthContext';
 import { CallScreen } from '../components/CallScreen';
 import { realtime } from '../services/realtime';
 import { callService } from '../services/callService';
+import {
+  initCallChannel,
+  handleInitialCallNotification,
+  cancelCallNotificationOnIdle,
+} from '../services/callPush';
 
 export default function RootLayout() {
   return (
@@ -55,8 +60,15 @@ const RealtimeGate: React.FC = () => {
       if (ev.type === 'call.event') callService.handleRealtimeEvent(ev.data);
     });
     realtime.start(user);
+    initCallChannel();
+    handleInitialCallNotification();
+    // Cold-launched by the full-screen intent? Hydrate the live bridge state
+    // so the incoming CallScreen shows even without a notification event.
+    callService.syncFromBridge();
+    const offCall = callService.subscribe((s) => cancelCallNotificationOnIdle(s.phase));
     return () => {
       off();
+      offCall();
       realtime.stop();
     };
   }, [user]);

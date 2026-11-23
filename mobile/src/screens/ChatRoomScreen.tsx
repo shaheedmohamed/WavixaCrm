@@ -540,6 +540,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               m.client_temp_id === tempId ? { ...m, status: 'failed' } : m
             )
           );
+          // Apisauce resolves 4xx/5xx into res.data — surface the server's
+          // reason ("الجهاز غير متصل", "محادثة مع موظف آخر", quota…) instead
+          // of leaving agents staring at a bare red retry bar.
+          if (typeof res?.message === 'string') {
+            Alert.alert('فشل الإرسال', res.message);
+          }
         }
       } catch {
         setMessages((prev) =>
@@ -662,6 +668,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
                 : m
             )
           );
+          if (typeof res?.message === 'string') {
+            Alert.alert('فشل الإرسال', res.message);
+          }
         }
       } catch {
         setMessages((prev) =>
@@ -1335,6 +1344,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onPressQuoted={jumpToMessageKey}
               onRetry={handleRetryMessage}
               onDismissFailed={handleDismissFailed}
+              onCallBack={handleCallContact}
               onDoubleTapLike={handleDoubleTapLike}
               onPressReactions={handlePressReactions}
               onPressSender={isGroup ? handlePressSender : undefined}
@@ -1359,6 +1369,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       jumpToMessageKey,
       handleRetryMessage,
       handleDismissFailed,
+      handleCallContact,
       handleDoubleTapLike,
       handlePressReactions,
       handlePressSender,

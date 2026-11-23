@@ -207,6 +207,8 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/agents', [\App\Http\Controllers\Api\CrmController::class, 'createAgent']);
         Route::put('/agents/{id}', [\App\Http\Controllers\Api\CrmController::class, 'updateAgent']);
         Route::delete('/agents/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteAgent']);
+        Route::get('/agents/{id}/conversations', [\App\Http\Controllers\Api\CrmController::class, 'agentConversations']);
+        Route::post('/agents/{id}/release-conversations', [\App\Http\Controllers\Api\CrmController::class, 'releaseAgentConversations']);
 
         // Agent groups — shared device scope per team
         Route::get('/groups', [\App\Http\Controllers\Api\CrmController::class, 'getGroups']);

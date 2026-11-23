@@ -203,19 +203,34 @@ class WhatsAppWebhookController extends Controller
                 ->first();
 
             if (!$conversation && $toDigits && !$isGroupDest) {
-                $conversation = WhatsAppConversation::create([
-                    'session_id' => $sessionId,
-                    'user_id' => $userId,
-                    'contact_jid' => $toJid,
-                    'contact_phone' => $toDigits,
-                    'contact_name' => DB::table('whatsapp_pushnames')->where('jid', $toJid)->value('pushname')
-                        ?: '+' . $toDigits,
-                    'last_message' => $data['message'] ?? '',
-                    'last_message_type' => $data['messageType'] ?? 'text',
-                    'last_message_direction' => 'outgoing',
-                    'last_message_status' => WhatsAppMessage::STATUS_SENT,
-                    'last_message_at' => now(),
-                ]);
+                try {
+                    $conversation = WhatsAppConversation::create([
+                        'session_id' => $sessionId,
+                        'user_id' => $userId,
+                        'contact_jid' => $toJid,
+                        'contact_phone' => $toDigits,
+                        'contact_name' => DB::table('whatsapp_pushnames')->where('jid', $toJid)->value('pushname')
+                            ?: '+' . $toDigits,
+                        'last_message' => $data['message'] ?? '',
+                        'last_message_type' => $data['messageType'] ?? 'text',
+                        'last_message_direction' => 'outgoing',
+                        'last_message_status' => WhatsAppMessage::STATUS_SENT,
+                        'last_message_at' => now(),
+                    ]);
+                } catch (\Illuminate\Database\QueryException $e) {
+                    // Lost the insert race to a parallel webhook — adopt the
+                    // row it created.
+                    $conversation = WhatsAppConversation::where('session_id', $sessionId)
+                        ->where(function ($q) use ($data, $toDigits, $toJid) {
+                            $q->where('contact_jid', $data['to'])
+                              ->orWhere('contact_jid', $toJid)
+                              ->orWhere('contact_phone', $toDigits);
+                        })
+                        ->first();
+                    if (!$conversation) {
+                        throw $e;
+                    }
+                }
             }
 
             // Find-or-create must be serialized per message_id: the engine fires
@@ -672,9 +687,10 @@ class WhatsAppWebhookController extends Controller
         $jid = preg_replace('/:\d+@/', '@', $rawJid);
         $lidClean = $lidJid ? preg_replace('/:\d+@/', '@', $lidJid) : null;
         if ($lidClean && str_ends_with($lidClean, '@lid') && str_ends_with($jid, '@s.whatsapp.net')) {
-            DB::table('whatsapp_lid_mappings')->updateOrInsert(
-                ['lid' => $lidClean],
-                ['pn' => $jid, 'updated_at' => now(), 'created_at' => now()]
+            DB::table('whatsapp_lid_mappings')->upsert(
+                ['lid' => $lidClean, 'pn' => $jid, 'updated_at' => now(), 'created_at' => now()],
+                ['lid'],
+                ['pn', 'updated_at']
             );
         }
 
@@ -963,9 +979,10 @@ public function messageRevoked(Request $request)
                 $lid = $m['lid'] ?? $m['lidJid'] ?? null;
                 $pn = $m['pn'] ?? $m['pnJid'] ?? null;
                 if ($lid && $pn) {
-                    DB::table('whatsapp_lid_mappings')->updateOrInsert(
-                        ['lid' => $lid],
-                        ['pn' => $pn, 'updated_at' => now(), 'created_at' => now()]
+                    DB::table('whatsapp_lid_mappings')->upsert(
+                        ['lid' => $lid, 'pn' => $pn, 'updated_at' => now(), 'created_at' => now()],
+                        ['lid'],
+                        ['pn', 'updated_at']
                     );
                 }
             }
@@ -1146,17 +1163,31 @@ public function messageRevoked(Request $request)
                         ->first();
                 }
                 if (!$conversation) {
-                    $conversation = WhatsAppConversation::create([
-                        'session_id' => $session->id,
-                        'contact_jid' => $jid,
-                        'user_id' => $session->user_id,
-                        'contact_phone' => $phone,
-                        'contact_name' => $name ?: ($isGroup ? 'مجموعة' : '+' . $phone),
-                        // Must stay null: seeding now() would outrank every real
-                        // history timestamp below and leave the chat ordered by
-                        // import time instead of its last message.
-                        'last_message_at' => null,
-                    ]);
+                    try {
+                        $conversation = WhatsAppConversation::create([
+                            'session_id' => $session->id,
+                            'contact_jid' => $jid,
+                            'user_id' => $session->user_id,
+                            'contact_phone' => $phone,
+                            'contact_name' => $name ?: ($isGroup ? 'مجموعة' : '+' . $phone),
+                            // Must stay null: seeding now() would outrank every real
+                            // history timestamp below and leave the chat ordered by
+                            // import time instead of its last message.
+                            'last_message_at' => null,
+                        ]);
+                    } catch (\Illuminate\Database\QueryException $e) {
+                        // A live webhook created the same chat mid-sync —
+                        // adopt its row.
+                        $conversation = WhatsAppConversation::where('session_id', $session->id)
+                            ->where('contact_jid', $jid)
+                            ->first()
+                            ?? WhatsAppConversation::where('session_id', $session->id)
+                                ->where('contact_phone', $phone)
+                                ->first();
+                        if (!$conversation) {
+                            throw $e;
+                        }
+                    }
                 }
 
                 // Dedupe PN/LID twins: the same contact can exist as both
@@ -1637,9 +1668,14 @@ public function messageRevoked(Request $request)
                 && str_ends_with($data['from'], '@s.whatsapp.net')
             ) {
                 $senderLidJid = $data['senderLid'];
-                DB::table('whatsapp_lid_mappings')->updateOrInsert(
-                    ['lid' => $senderLidJid],
-                    ['pn' => $data['from'], 'updated_at' => now(), 'created_at' => now()]
+                // upsert (INSERT … ON DUPLICATE KEY UPDATE) — a parallel
+                // webhook for the same contact otherwise races the
+                // update-then-insert pair into a 1062 that kills the whole
+                // message.
+                DB::table('whatsapp_lid_mappings')->upsert(
+                    ['lid' => $senderLidJid, 'pn' => $data['from'], 'updated_at' => now(), 'created_at' => now()],
+                    ['lid'],
+                    ['pn', 'updated_at']
                 );
             }
 
@@ -1679,9 +1715,13 @@ public function messageRevoked(Request $request)
             // chunk or fresh conversation resolves the name instead of first
             // rendering a bare "+number".
             if (!$fromMe && !$isGroup && $senderName) {
-                DB::table('whatsapp_pushnames')->updateOrInsert(
-                    ['jid' => $fromJid],
-                    ['pushname' => mb_substr($senderName, 0, 190), 'updated_at' => now(), 'created_at' => now()]
+                // Atomic upsert — two webhook hits for the same new contact
+                // used to race updateOrInsert into a 1062 and drop the
+                // message entirely.
+                DB::table('whatsapp_pushnames')->upsert(
+                    ['jid' => $fromJid, 'pushname' => mb_substr($senderName, 0, 190), 'updated_at' => now(), 'created_at' => now()],
+                    ['jid'],
+                    ['pushname', 'updated_at']
                 );
             }
             $contactPhone = $fromMe
@@ -1704,14 +1744,29 @@ public function messageRevoked(Request $request)
                     ->first();
             }
             if (!$conversation) {
-                $conversation = WhatsAppConversation::create([
-                    'session_id' => $session->id,
-                    'contact_jid' => $fromJid,
-                    'user_id' => $session->user_id,
-                    'contact_phone' => $contactPhone,
-                    'contact_name' => $senderName ?: '+' . $contactPhone,
-                    'last_message_at' => $msgTime,
-                ]);
+                try {
+                    $conversation = WhatsAppConversation::create([
+                        'session_id' => $session->id,
+                        'contact_jid' => $fromJid,
+                        'user_id' => $session->user_id,
+                        'contact_phone' => $contactPhone,
+                        'contact_name' => $senderName ?: '+' . $contactPhone,
+                        'last_message_at' => $msgTime,
+                    ]);
+                } catch (\Illuminate\Database\QueryException $e) {
+                    // A parallel webhook hit for the same contact won the
+                    // insert race — adopt the row it created instead of
+                    // letting the 1062 kill this message.
+                    $conversation = WhatsAppConversation::where('session_id', $session->id)
+                        ->where('contact_jid', $fromJid)
+                        ->first()
+                        ?? WhatsAppConversation::where('session_id', $session->id)
+                            ->where('contact_phone', $contactPhone)
+                            ->first();
+                    if (!$conversation) {
+                        throw $e;
+                    }
+                }
             }
 
             // Merge PN/LID twin conversations for the same resolved contact

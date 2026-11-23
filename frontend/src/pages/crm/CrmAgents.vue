@@ -116,85 +116,223 @@
       </button>
     </div>
 
-    <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-      <div
-        v-for="a in agents"
-        :key="a.id"
-        class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-5 flex flex-col justify-between hover:border-slate-600 transition-all"
-      >
-        <div>
-          <!-- Top Row -->
-          <div class="flex items-center justify-between mb-3">
-            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-sky-500 text-white font-bold flex items-center justify-center text-sm shadow-md">
-              {{ a.name ? a.name.trim().charAt(0) : 'A' }}
-            </div>
-
-            <span
-              class="px-2.5 py-1 rounded-full text-[11px] font-bold"
-              :class="a.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
+    <div v-else class="bg-slate-800/80 border border-slate-700/80 rounded-2xl overflow-hidden">
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm min-w-[980px]">
+          <thead>
+            <tr class="border-b border-slate-700/80 text-slate-400 text-[11px]">
+              <th class="text-right font-bold px-5 py-3.5">الموظف</th>
+              <th class="text-right font-bold px-4 py-3.5">البريد الإلكتروني</th>
+              <th class="text-right font-bold px-4 py-3.5">المجموعة</th>
+              <th class="text-right font-bold px-4 py-3.5">الأجهزة المصرح بها</th>
+              <th class="text-center font-bold px-4 py-3.5">المحادثات المفتوحة</th>
+              <th class="text-center font-bold px-4 py-3.5">الحالة</th>
+              <th class="text-right font-bold px-4 py-3.5">تاريخ الإضافة</th>
+              <th class="text-center font-bold px-4 py-3.5">إجراءات</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="a in agents"
+              :key="a.id"
+              @click="openAgentConversations(a)"
+              class="border-b border-slate-800/60 last:border-0 hover:bg-slate-700/30 cursor-pointer transition-colors"
             >
-              {{ a.status === 'active' ? 'نشط' : 'معطل' }}
-            </span>
-          </div>
+              <!-- Employee -->
+              <td class="px-5 py-3.5">
+                <div class="flex items-center gap-3">
+                  <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-indigo-600 to-sky-500 text-white font-bold flex items-center justify-center text-xs shrink-0 shadow-md">
+                    {{ a.name ? a.name.trim().charAt(0) : 'A' }}
+                  </div>
+                  <span class="font-bold text-white whitespace-nowrap">{{ a.name }}</span>
+                </div>
+              </td>
 
-          <!-- Name & Email -->
-          <div class="space-y-1 mb-4">
-            <h3 class="text-base font-bold text-white">{{ a.name }}</h3>
-            <p class="text-xs text-slate-400 font-mono" dir="ltr">{{ a.email }}</p>
-            <p v-if="a.group_name" class="text-[11px] text-emerald-400 font-bold flex items-center gap-1">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-              {{ a.group_name }}
-            </p>
-            <p class="text-[11px] text-slate-400 flex items-center gap-1">
-              <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/></svg>
-              الشاتات المفتوحة: {{ a.active_chats ?? 0 }}/{{ a.max_active_chats || 5 }}
-            </p>
-          </div>
+              <!-- Email -->
+              <td class="px-4 py-3.5">
+                <span class="text-xs text-slate-400 font-mono" dir="ltr">{{ a.email }}</span>
+              </td>
 
-          <!-- Assigned Devices -->
-          <div class="mb-4">
-            <span class="text-[11px] font-semibold text-slate-400 block mb-1.5">الأجهزة المصرح بها:</span>
-            <div class="flex flex-wrap gap-1.5">
-              <template v-if="a.group_name">
-                <span class="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-xs font-bold">
-                  أجهزة المجموعة
+              <!-- Group -->
+              <td class="px-4 py-3.5">
+                <span v-if="a.group_name" class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-bold whitespace-nowrap">
+                  {{ a.group_name }}
                 </span>
-              </template>
-              <template v-else-if="!a.assigned_sessions || a.assigned_sessions.length === 0">
-                <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">
-                  كل الأجهزة
-                </span>
-              </template>
-              <template v-else>
-                <span
-                  v-for="sid in a.assigned_sessions"
-                  :key="sid"
-                  class="px-2 py-0.5 rounded-md bg-slate-700 text-slate-200 text-xs font-bold"
+                <span v-else class="text-slate-600 text-xs">—</span>
+              </td>
+
+              <!-- Devices -->
+              <td class="px-4 py-3.5">
+                <div class="flex flex-wrap gap-1 max-w-[220px]">
+                  <template v-if="a.group_name">
+                    <span class="px-2 py-0.5 rounded-md bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[11px] font-bold">أجهزة المجموعة</span>
+                  </template>
+                  <template v-else-if="!a.assigned_sessions || a.assigned_sessions.length === 0">
+                    <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-bold">كل الأجهزة</span>
+                  </template>
+                  <template v-else>
+                    <span
+                      v-for="sid in a.assigned_sessions.slice(0, 3)"
+                      :key="sid"
+                      class="px-2 py-0.5 rounded-md bg-slate-700 text-slate-200 text-[11px] font-bold whitespace-nowrap"
+                    >
+                      {{ getDeviceName(sid) }}
+                    </span>
+                    <span v-if="a.assigned_sessions.length > 3" class="text-slate-500 text-[11px] font-bold">
+                      +{{ a.assigned_sessions.length - 3 }}
+                    </span>
+                  </template>
+                </div>
+              </td>
+
+              <!-- Open chats -->
+              <td class="px-4 py-3.5 text-center">
+                <button
+                  @click.stop="openAgentConversations(a)"
+                  class="px-2.5 py-1 rounded-full text-[11px] font-bold transition-colors"
+                  :class="(a.active_chats ?? 0) > 0 ? 'bg-sky-500/10 text-sky-300 border border-sky-500/20 hover:bg-sky-500/20' : 'bg-slate-700/60 text-slate-400 border border-slate-700'"
+                  title="عرض المحادثات المفتوحة"
                 >
-                  {{ getDeviceName(sid) }}
+                  {{ a.active_chats ?? 0 }}/{{ a.max_active_chats || 5 }}
+                </button>
+              </td>
+
+              <!-- Status -->
+              <td class="px-4 py-3.5 text-center">
+                <span
+                  class="px-2.5 py-1 rounded-full text-[11px] font-bold whitespace-nowrap"
+                  :class="a.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
+                >
+                  {{ a.status === 'active' ? 'نشط' : 'معطل' }}
                 </span>
-              </template>
-            </div>
-          </div>
+              </td>
+
+              <!-- Created at -->
+              <td class="px-4 py-3.5">
+                <span class="text-[11px] text-slate-400 whitespace-nowrap" dir="ltr">{{ formatDate(a.created_at) }}</span>
+              </td>
+
+              <!-- Actions -->
+              <td class="px-4 py-3.5">
+                <div class="flex items-center justify-center gap-1.5">
+                  <button
+                    @click.stop="openAgentConversations(a)"
+                    class="px-2.5 py-1.5 rounded-lg bg-sky-600/15 text-sky-300 hover:bg-sky-600/30 text-[11px] font-bold transition-colors whitespace-nowrap"
+                    title="عرض المحادثات المفتوحة"
+                  >
+                    المحادثات
+                  </button>
+                  <button
+                    @click.stop="releaseAll(a)"
+                    :disabled="!(a.active_chats > 0) || releasingAgentId === a.id"
+                    class="px-2.5 py-1.5 rounded-lg bg-amber-600/15 text-amber-300 hover:bg-amber-600/30 text-[11px] font-bold transition-colors whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="فصل كل المحادثات وإرجاعها للمتاحة"
+                  >
+                    فصل الكل
+                  </button>
+                  <button
+                    @click.stop="openEditModal(a)"
+                    class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-bold transition-colors whitespace-nowrap"
+                  >
+                    تعديل
+                  </button>
+                  <button
+                    @click.stop="deleteAgent(a.id)"
+                    class="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
+                    title="حذف الموظف"
+                  >
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Modal: Agent's open conversations -->
+    <div
+      v-if="showChatsModal"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-lg p-6 shadow-2xl relative text-right flex flex-col max-h-[85vh]">
+        <button
+          @click="showChatsModal = false"
+          class="absolute top-5 left-5 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+
+        <h2 class="text-xl font-bold text-white mb-1">المحادثات المفتوحة — {{ selectedAgent?.name }}</h2>
+        <p class="text-xs text-slate-400 mb-4">المحادثات اللي الموظف ده ماسكها دلوقتي — تقدر تفصل أي محادثة أو الكل مرة واحدة فترجع للمتاحة لأي موظف تاني</p>
+
+        <div class="flex items-center justify-between gap-3 mb-4">
+          <span class="text-xs font-bold text-slate-300">
+            {{ agentConvs.length }} محادثة مفتوحة
+          </span>
+          <button
+            v-if="agentConvs.length > 0"
+            @click="releaseAll(selectedAgent)"
+            :disabled="releasingAll"
+            class="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-amber-600/20 text-amber-300 hover:bg-amber-600/40 border border-amber-500/30 text-xs font-bold transition-all disabled:opacity-50"
+          >
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+            <span>{{ releasingAll ? 'جاري الفصل...' : 'فصل كل المحادثات' }}</span>
+          </button>
         </div>
 
-        <!-- Action Buttons -->
-        <div class="pt-4 border-t border-slate-700/60 flex items-center justify-between">
-          <button
-            @click="openEditModal(a)"
-            class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold transition-colors flex items-center gap-1.5"
-          >
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"/></svg>
-            <span>تعديل</span>
-          </button>
+        <div v-if="loadingConvs" class="p-10 text-center text-slate-400 text-sm">
+          جاري تحميل المحادثات...
+        </div>
 
-          <button
-            @click="deleteAgent(a.id)"
-            class="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
-            title="حذف الموظف"
+        <div v-else-if="agentConvs.length === 0" class="p-10 text-center bg-slate-800/40 rounded-2xl border border-dashed border-slate-700 text-sm text-slate-400">
+          مفيش محادثات مفتوحة مع الموظف ده حالياً
+        </div>
+
+        <div v-else class="space-y-2 overflow-y-auto pl-1">
+          <div
+            v-for="c in agentConvs"
+            :key="c.id"
+            class="flex items-center gap-3 p-3 rounded-2xl bg-slate-800/70 border border-slate-700/60"
           >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-          </button>
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-600 to-teal-500 text-white font-bold flex items-center justify-center text-sm shrink-0 overflow-hidden">
+              <img v-if="c.contact_avatar" :src="c.contact_avatar" class="w-full h-full object-cover" alt="" />
+              <span v-else>{{ (c.contact_name || c.contact_phone || '؟').trim().charAt(0) }}</span>
+            </div>
+            <div class="min-w-0 flex-1">
+              <p class="text-sm font-bold text-white truncate">
+                {{ c.contact_name || c.contact_username || c.contact_phone || c.contact_jid }}
+              </p>
+              <p class="text-[11px] text-slate-400 truncate" dir="ltr">
+                {{ c.contact_phone || c.contact_jid }}
+                <span v-if="c.session" class="text-slate-500" dir="rtl">· {{ c.session.device_name }}</span>
+              </p>
+              <p class="text-[10px] text-slate-500 mt-0.5 truncate">{{ c.last_message || '—' }}</p>
+            </div>
+            <div class="flex flex-col items-end gap-1.5 shrink-0">
+              <span v-if="c.unread_count > 0" class="px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 text-[10px] font-bold">
+                {{ c.unread_count }} جديد
+              </span>
+              <span class="text-[10px] text-slate-500" dir="ltr">{{ formatTime(c.last_message_at) }}</span>
+              <div class="flex items-center gap-1">
+                <button
+                  @click="openInChat(c)"
+                  class="px-2.5 py-1 rounded-lg bg-sky-600/15 text-sky-300 hover:bg-sky-600/30 text-[10px] font-bold transition-colors"
+                  title="فتح المحادثة في الشات"
+                >
+                  فتح
+                </button>
+                <button
+                  @click="releaseConversation(c)"
+                  :disabled="releasingConvId === c.id"
+                  class="px-2.5 py-1 rounded-lg bg-amber-600/15 text-amber-300 hover:bg-amber-600/30 text-[10px] font-bold transition-colors disabled:opacity-50"
+                >
+                  {{ releasingConvId === c.id ? 'جاري الفصل...' : 'فصل' }}
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -410,7 +548,10 @@
 
 <script setup>
 import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
 import crm from '@/services/crm';
+
+const router = useRouter();
 
 const agents = ref([]);
 const devices = ref([]);
@@ -463,6 +604,95 @@ const getDeviceName = (sessionId) => {
 };
 
 const groupName = (id) => groups.value.find((g) => g.id === id)?.name || '';
+
+// ---- Agent open conversations drawer -------------------------------------
+const showChatsModal = ref(false);
+const selectedAgent = ref(null);
+const agentConvs = ref([]);
+const loadingConvs = ref(false);
+const releasingAll = ref(false);
+const releasingAgentId = ref(null);
+const releasingConvId = ref(null);
+
+const formatDate = (v) => {
+  if (!v) return '—';
+  try {
+    return new Date(v).toLocaleDateString('ar-EG', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch {
+    return v;
+  }
+};
+
+const formatTime = (v) => {
+  if (!v) return '';
+  try {
+    return new Date(v).toLocaleString('ar-EG', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return '';
+  }
+};
+
+const openAgentConversations = async (a) => {
+  selectedAgent.value = a;
+  showChatsModal.value = true;
+  loadingConvs.value = true;
+  agentConvs.value = [];
+  try {
+    const res = await crm.getAgentConversations(a.id);
+    if (res.success) agentConvs.value = res.conversations || [];
+  } catch {
+    alert('فشل تحميل محادثات الموظف');
+  } finally {
+    loadingConvs.value = false;
+  }
+};
+
+// Release one held chat back to the shared queue (assign with no agent).
+const releaseConversation = async (c) => {
+  releasingConvId.value = c.id;
+  try {
+    const res = await crm.assignConversation(c.id, null);
+    if (res.success !== false) {
+      agentConvs.value = agentConvs.value.filter((x) => x.id !== c.id);
+      const agent = agents.value.find((x) => x.id === selectedAgent.value?.id);
+      if (agent) agent.active_chats = agentConvs.value.length;
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل فصل المحادثة');
+  } finally {
+    releasingConvId.value = null;
+  }
+};
+
+// Jump straight into the chat thread — the chat page re-opens the
+// conversation from the ?id= deep link on mount.
+const openInChat = (c) => {
+  showChatsModal.value = false;
+  router.push({ name: 'CrmChat', query: { id: c.id } });
+};
+
+// Release every chat the agent holds — they all go back to the available pool.
+const releaseAll = async (a) => {
+  if (!a) return;
+  if (!confirm(`فصل كل المحادثات المفتوحة اللي ${a.name} ماسكها؟ هترجع تظهر في المحادثات المتاحة لأي موظف.`)) return;
+  releasingAll.value = true;
+  releasingAgentId.value = a.id;
+  try {
+    const res = await crm.releaseAgentConversations(a.id);
+    if (res.success) {
+      if (selectedAgent.value?.id === a.id) agentConvs.value = [];
+      const agent = agents.value.find((x) => x.id === a.id);
+      if (agent) agent.active_chats = 0;
+    } else {
+      alert(res.message || 'فشل فصل المحادثات');
+    }
+  } catch (err) {
+    alert(err.response?.data?.message || 'فشل فصل المحادثات');
+  } finally {
+    releasingAll.value = false;
+    releasingAgentId.value = null;
+  }
+};
 
 // Turn a 422 response into something the user can act on — the generic
 // "Validation error" message hides which field actually failed.

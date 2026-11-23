@@ -41,6 +41,8 @@ interface MessageBubbleProps {
   onViewMedia?: (msg: Message, kind: 'image' | 'video') => void;
   onPressQuoted?: (replyToId: string) => void;
   onRetry?: (msg: Message) => void;
+  // Tap on a call-log bubble redials the contact — WhatsApp's "call back".
+  onCallBack?: () => void;
   onDismissFailed?: (msg: Message) => void;
   onDoubleTapLike?: (msg: Message) => void;
   onPressReactions?: (msg: Message) => void;
@@ -110,6 +112,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onPressQuoted,
   onRetry,
   onDismissFailed,
+  onCallBack,
   onDoubleTapLike,
   onPressReactions,
   onPressSender,
@@ -246,15 +249,19 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
     if (!isUploading && mediaUri) Linking.openURL(mediaUri).catch(() => {});
   };
 
+  // Missed/declined calls get WhatsApp's red handset; connected ones stay green.
+  const isMissedCall = type === 'call' && /فائتة|لم يتم الرد/.test(message.message || '');
   const pillIcon =
     type === 'location'
       ? '📍'
       : type === 'contact'
         ? '👤'
         : type === 'call'
-          ? isOutgoing
-            ? '📞'
-            : '📲'
+          ? isMissedCall
+            ? '📵'
+            : isOutgoing
+              ? '📞'
+              : '📲'
           : '💬';
   const pillLabel =
     type === 'location'
@@ -571,12 +578,32 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           ) : null}
 
           {isSpecialPill ? (
-            <View style={styles.pillRow}>
-              <Text style={styles.pillIcon}>{pillIcon}</Text>
-              <Text style={styles.pillText} numberOfLines={2}>
-                {pillLabel}
-              </Text>
-            </View>
+            type === 'call' && onCallBack ? (
+              <TouchableOpacity
+                style={styles.pillRow}
+                onPress={onCallBack}
+                activeOpacity={0.7}
+                disabled={selectionMode}
+              >
+                <Text style={styles.pillIcon}>{pillIcon}</Text>
+                <Text style={styles.pillText} numberOfLines={2}>
+                  {pillLabel}
+                </Text>
+                <Ionicons
+                  name="call"
+                  size={15}
+                  color={isMissedCall ? '#EA0038' : Colors.primary}
+                  style={styles.pillCallIcon}
+                />
+              </TouchableOpacity>
+            ) : (
+              <View style={styles.pillRow}>
+                <Text style={styles.pillIcon}>{pillIcon}</Text>
+                <Text style={styles.pillText} numberOfLines={2}>
+                  {pillLabel}
+                </Text>
+              </View>
+            )
           ) : null}
 
           {showText ? <MessageText text={displayCaption!} isOutgoing={isOutgoing} /> : null}
@@ -969,6 +996,9 @@ const styles = StyleSheet.create({
     color: '#111B21',
     flexShrink: 1,
     textAlign: 'right',
+  },
+  pillCallIcon: {
+    marginStart: 4,
   },
   revokedBox: {
     flexDirection: 'row-reverse',
