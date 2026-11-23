@@ -15,13 +15,14 @@
  */
 import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
-import * as TaskManager from 'expo-task-manager';
 import { apiClient } from './api';
 import { callService } from './callService';
 import { setPushUserId as _sp } from './notifications';
 
-// @notifee/react-native is native — an old binary / Expo Go has no native
-// side for it, so lazy-require and degrade to "no call UI, app still works".
+// @notifee/react-native and expo-task-manager are native — a binary built
+// without them (or Expo Go) has no native side, so lazy-require both and
+// degrade to "no call UI / no headless task, app still works". The static
+// import would throw at module-eval and take the whole app down.
 let notifee: any = null;
 let AndroidImportance: any = null;
 let AndroidCategory: any = null;
@@ -33,6 +34,12 @@ try {
   AndroidImportance = m.AndroidImportance;
   AndroidCategory = m.AndroidCategory;
   EventType = m.EventType;
+} catch {}
+
+let TaskManager: any = null;
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  TaskManager = require('expo-task-manager');
 } catch {}
 
 export const CALL_CHANNEL_ID = 'wavixa_calls';

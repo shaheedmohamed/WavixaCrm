@@ -52,5 +52,13 @@
     "web": "expo start --web",
     "lint": "expo lint"
   },
-  "private": true
+  "private": true,
+  "expo": {
+    "autolinking": {
+      "exclude": [
+        "@notifee/react-native",
+        "expo-task-manager"
+      ]
+    }
+  }
 }
