@@ -143,10 +143,10 @@ class CrmCallController extends Controller
             if (!($st['ready'] ?? false)) {
                 return response()->json([
                     'ok' => false,
-                    'err' => 'needs_pairing',
+                    'err' => 'مكالمات الرقم ده محتاجة ربط WhatsApp Web مرة واحدة — افتح رابط الـ QR من الإعدادات',
                     'needs_pairing' => true,
                     'phone' => $phone,
-                    'qr' => '/api/crm/call/qr?phone=' . $phone,
+                    'qr' => '/api/crm/call/qr?phone=' . $phone . '&token=' . urlencode((string) $request->bearerToken()),
                 ]);
             }
         } catch (\Throwable $e) {

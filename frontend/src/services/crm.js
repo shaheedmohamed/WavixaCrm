@@ -68,13 +68,26 @@ class CrmService {
 
   client() {
     const token = this.getToken();
-    return axios.create({
+    const c = axios.create({
       baseURL: `${API_BASE}/crm`,
       headers: {
         Accept: 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
+    // A revoked/expired token produces raw "Unauthenticated." alerts on every
+    // screen — clear it and bounce to CRM login instead of dead-ending.
+    c.interceptors.response.use(
+      (r) => r,
+      (err) => {
+        if (err?.response?.status === 401 && !location.pathname.startsWith('/crm/login')) {
+          this.logout();
+          location.href = '/crm/login';
+        }
+        return Promise.reject(err);
+      }
+    );
+    return c;
   }
 
   async login(email, password) {
