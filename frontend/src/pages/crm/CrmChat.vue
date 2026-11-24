@@ -3257,9 +3257,23 @@ const deleteMsg = async (m, forEveryone) => {
   }
 };
 
+// Groups live under a separate scope for agents — the chats list never
+// contains them, so the forward picker merges a one-off groups fetch in
+// (owners already get them in their default list; the dedupe is harmless).
+const forwardGroups = ref([]);
+const loadForwardGroups = async () => {
+  try {
+    const res = await crm.getConversations({ groups_only: 1 });
+    if (res.success) forwardGroups.value = res.conversations || [];
+  } catch {}
+};
+
 const forwardTargets = computed(() => {
   const q = forwardSearch.value.trim().toLowerCase();
-  const list = conversations.value || [];
+  const seen = new Set();
+  const list = [...(conversations.value || []), ...forwardGroups.value].filter(
+    (c) => (seen.has(c.id) ? false : (seen.add(c.id), true)),
+  );
   if (!q) return list;
   return list.filter((c) =>
     (c.contact_name || '').toLowerCase().includes(q) ||
@@ -3277,6 +3291,7 @@ const openForwardModal = (m) => {
   forwardSelected.value = [];
   showForwardModal.value = true;
   ctxMenu.value.show = false;
+  loadForwardGroups();
 };
 
 const forwardSelectedMsgs = () => {
@@ -3288,6 +3303,7 @@ const forwardSelectedMsgs = () => {
   forwardSelected.value = [];
   showForwardModal.value = true;
   exitSelectMode();
+  loadForwardGroups();
 };
 
 // Native share — Web Share API with file support, text/links fallback.

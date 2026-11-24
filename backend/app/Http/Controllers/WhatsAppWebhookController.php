@@ -1710,6 +1710,23 @@ public function messageRevoked(Request $request)
                         ? null
                         : preg_replace('/@.*$/', '', $fromJid)));
             $fromMe = (bool) ($data['fromMe'] ?? false);
+            // WA identifies our own group posts by our own LID, not the phone
+            // number — the engine can't match it, so they arrive fromMe=false
+            // and render as incoming group messages. Resolve the sender
+            // identity through the LID map; when it lands on the session's
+            // own number it's our message synced from the phone.
+            if (!$fromMe) {
+                $ownPn = preg_replace('/\D/', '', (string) $session->phone_number);
+                foreach (array_filter([$data['senderPhone'] ?? null, $data['senderLid'] ?? null]) as $sid) {
+                    $sidDigits = preg_replace('/\D/', '', (string) $sid);
+                    if (!$sidDigits) continue;
+                    if ($sidDigits === $ownPn) { $fromMe = true; break; }
+                    if (str_ends_with((string) $sid, '@lid')) {
+                        $pn = DB::table('whatsapp_lid_mappings')->where('lid', $sid)->value('pn');
+                        if ($pn && preg_replace('/\D/', '', $pn) === $ownPn) { $fromMe = true; break; }
+                    }
+                }
+            }
             // The stanza's notify attr carries the author's pushname — on
             // fromMe messages (owner replying from the WhatsApp app) that is
             // OUR name and must never become the customer's contact_name.

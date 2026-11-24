@@ -220,7 +220,13 @@ class CrmCallController extends Controller
     public function event(Request $request)
     {
         $phone = (string) $request->input('bridgePhone');
-        $session = WhatsAppSession::where('phone_number', $phone)->orWhere('phone_number', 'like', '%' . substr($phone, -10))->first();
+        // One number can have several session rows (re-pairs); a stale
+        // disconnected row must never win the lookup or events, pushes and
+        // call-log bubbles all land on a dead account's session.
+        $sessionQuery = fn () => WhatsAppSession::where('phone_number', $phone)
+            ->orWhere('phone_number', 'like', '%' . substr($phone, -10));
+        $session = $sessionQuery()->where('status', 'connected')->latest('id')->first()
+            ?? $sessionQuery()->latest('id')->first();
         $ownerId = $session?->user_id;
         if (!$ownerId) return response()->json(['ok' => true, 'skipped' => 'no owner']);
 
