@@ -255,6 +255,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
 
         // Voice calls via the WhatsApp Web call bridge
         Route::get('/call/state', [\App\Http\Controllers\Api\CrmCallController::class, 'state']);
+        Route::get('/call/status', [\App\Http\Controllers\Api\CrmCallController::class, 'status']);
         Route::post('/call/dial', [\App\Http\Controllers\Api\CrmCallController::class, 'dial']);
         Route::post('/call/answer', [\App\Http\Controllers\Api\CrmCallController::class, 'answer']);
         Route::post('/call/reject', [\App\Http\Controllers\Api\CrmCallController::class, 'reject']);

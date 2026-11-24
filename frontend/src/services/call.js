@@ -437,6 +437,9 @@ export const callTones = {
 // ---------------------------------------------------------------------------
 export const callApi = {
   state: () => api().get(`${API}/state`).then(r => r.data),
+  stateFor: (phone) => api().get(`${API}/state`, { params: { phone } }).then(r => r.data),
+  statusFor: (phone) => api().get(`${API}/status`, { params: { phone } }).then(r => r.data),
+  link: (phone) => api().post(`${API}/link`, { phone }).then(r => r.data),
   dial: (to, video = false) => api().post(`${API}/dial`, { to, video }).then(r => r.data),
   answer: () => api().post(`${API}/answer`).then(r => r.data),
   reject: () => api().post(`${API}/reject`).then(r => r.data),

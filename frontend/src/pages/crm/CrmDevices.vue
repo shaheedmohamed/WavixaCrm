@@ -90,6 +90,24 @@
               تاريخ الإضافة: {{ formatDate(d.created_at) }}
             </div>
           </div>
+
+          <!-- Voice calls status — the call bridge needs its own one-time
+               WhatsApp Web pairing, separate from the messaging session -->
+          <div v-if="d.status === 'connected' && d.phone_number" class="mb-2 flex items-center justify-between gap-2 rounded-xl border border-slate-700/60 bg-slate-900/40 px-3 py-2">
+            <div class="flex items-center gap-2 text-[11px]">
+              <svg class="w-3.5 h-3.5" :class="callReady(d) ? 'text-emerald-400' : 'text-slate-500'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+              <span :class="callReady(d) ? 'text-emerald-400 font-bold' : 'text-slate-400'">
+                {{ callReady(d) ? 'المكالمات مفعّلة' : 'المكالمات غير مفعّلة' }}
+              </span>
+            </div>
+            <button
+              v-if="!callReady(d)"
+              @click="openCallPair(d)"
+              class="px-2.5 py-1 rounded-lg bg-sky-600/20 hover:bg-sky-600/30 text-sky-400 border border-sky-500/30 text-[11px] font-bold transition-colors"
+            >
+              ربط المكالمات
+            </button>
+          </div>
         </div>
 
         <!-- Action Buttons -->
@@ -211,6 +229,49 @@
       </div>
     </div>
 
+    <!-- Modal: Pair calls bridge QR -->
+    <div
+      v-if="showCallModal"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+    >
+      <div class="bg-slate-900 border border-slate-700/80 rounded-3xl w-full max-w-md p-6 shadow-2xl relative text-center">
+        <button
+          @click="closeCallModal"
+          class="absolute top-5 left-5 text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+
+        <h2 class="text-xl font-bold text-white mb-1">تفعيل المكالمات الصوتية</h2>
+        <p class="text-xs text-slate-400 mb-5">
+          <span dir="ltr" class="font-mono text-sky-400">+{{ callPairPhone }}</span>
+          — امسح الرمز من نفس رقم الواتساب (ربط إضافي خاص بالمكالمات، يتم مرة واحدة فقط)
+        </p>
+
+        <div class="inline-block p-4 bg-white rounded-2xl shadow-xl shadow-black/50 border-4 border-sky-500/30">
+          <img
+            v-if="!callQrBroken"
+            :src="callQrSrc"
+            @error="callQrBroken = true"
+            alt="Calls QR"
+            class="w-56 h-56 mx-auto object-contain"
+          />
+          <div v-else class="w-56 h-56 flex flex-col items-center justify-center gap-3 text-slate-500 text-sm">
+            <svg class="animate-spin h-7 w-7 text-sky-500" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span>جاري تجهيز رمز الـ QR...</span>
+          </div>
+        </div>
+
+        <div class="mt-4 text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-sky-400 animate-ping"></span>
+          <span>بانتظار المسح — المكالمات ستُفعّل تلقائياً فور اكتمال الربط</span>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal: Rename Device -->
     <div
       v-if="showRenameModal"
@@ -242,6 +303,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import crm from '@/services/crm';
+import { callApi } from '@/services/call';
 
 const devices = ref([]);
 const loading = ref(true);
@@ -259,6 +321,22 @@ const showRenameModal = ref(false);
 const editDeviceName = ref('');
 const editDeviceId = ref(null);
 
+// Voice-call pairing — per-device bridge status + QR modal state
+const callState = ref({}); // sessionId -> { ready, online }
+const showCallModal = ref(false);
+const callPairPhone = ref('');
+const callPairDeviceId = ref(null);
+const callQrTick = ref(Date.now());
+const callQrBroken = ref(false);
+let callPollTimer = null;
+let callQrTimer = null;
+
+const callReady = (d) => !!(callState.value[d.id] && callState.value[d.id].ready);
+
+const callQrSrc = computed(
+  () => `/api/crm/call/qr?phone=${encodeURIComponent(callPairPhone.value)}&token=${encodeURIComponent(crm.getToken() || '')}&t=${callQrTick.value}`
+);
+
 const autoSuggestedName = computed(() => {
   return 'ج' + (devices.value.length + 1);
 });
@@ -269,9 +347,22 @@ const loadDevices = async () => {
     const res = await crm.getDevices();
     if (res.success) {
       devices.value = res.devices || [];
+      loadCallStates(devices.value);
     }
   } catch {} finally {
     loading.value = false;
+  }
+};
+
+// Read-only status — never provisions a bridge, so it's safe to call for
+// every connected number on page load.
+const loadCallStates = async (list) => {
+  for (const d of list || []) {
+    if (d.status !== 'connected' || !d.phone_number) continue;
+    try {
+      const st = await callApi.statusFor(String(d.phone_number).replace(/\D/g, ''));
+      callState.value[d.id] = { ready: !!st.ready, online: !!st.online };
+    } catch {}
   }
 };
 
@@ -357,6 +448,52 @@ const closeModal = () => {
   currentSessionId.value = null;
 };
 
+// Pairing the call bridge is explicit (it spins up its own Chromium per
+// number) — provision on click, then show the QR and poll until ready.
+const openCallPair = async (d) => {
+  const phone = String(d.phone_number).replace(/\D/g, '');
+  callPairPhone.value = phone;
+  callPairDeviceId.value = d.id;
+  try {
+    const r = await callApi.link(phone);
+    callState.value[d.id] = { ready: !!r.ready, online: !!r.online };
+    if (r.ready) return; // already paired — badge flips to مفعّلة
+  } catch {}
+  callQrBroken.value = false;
+  callQrTick.value = Date.now();
+  showCallModal.value = true;
+  startCallPolling();
+};
+
+const startCallPolling = () => {
+  stopCallPolling();
+  // the bridge rotates the login-page QR (~20s) — keep reloading the img
+  callQrTimer = setInterval(() => { callQrTick.value = Date.now(); callQrBroken.value = false; }, 12000);
+  callPollTimer = setInterval(async () => {
+    try {
+      const st = await callApi.stateFor(callPairPhone.value);
+      if (callPairDeviceId.value != null) {
+        callState.value[callPairDeviceId.value] = { ready: !!st.ready, online: !!st.online };
+      }
+      if (st.ready) {
+        stopCallPolling();
+        showCallModal.value = false;
+        alert('تم تفعيل المكالمات الصوتية لهذا الرقم بنجاح');
+      }
+    } catch {}
+  }, 3000);
+};
+
+const stopCallPolling = () => {
+  if (callPollTimer) { clearInterval(callPollTimer); callPollTimer = null; }
+  if (callQrTimer) { clearInterval(callQrTimer); callQrTimer = null; }
+};
+
+const closeCallModal = () => {
+  stopCallPolling();
+  showCallModal.value = false;
+};
+
 const openRenameModal = (d) => {
   editDeviceId.value = d.id;
   editDeviceName.value = d.device_name;
@@ -424,5 +561,6 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopPolling();
+  stopCallPolling();
 });
 </script>

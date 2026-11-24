@@ -66,6 +66,30 @@ class CrmCallController extends Controller
         return CallBridgeManager::url($phone);
     }
 
+    /**
+     * Read-only bridge status — unlike /state this never provisions an
+     * instance, so pages can poll it per device without spinning up
+     * Chromium for numbers that never asked for calls.
+     */
+    public function status(Request $request)
+    {
+        $phone = $this->callerPhone($request);
+        $r = CallBridgeManager::resolve($phone);
+        if (!$r) return response()->json(['ready' => false, 'provisioned' => false, 'phone' => $phone]);
+        try {
+            $j = Http::timeout(5)->get("http://127.0.0.1:{$r['port']}/state")->json() ?? [];
+        } catch (\Throwable $e) {
+            $j = [];
+        }
+        return response()->json([
+            'ready' => (bool) ($j['ready'] ?? false),
+            'online' => (bool) ($j['online'] ?? false),
+            'provisioned' => true,
+            'phone' => $phone,
+            'callState' => $j['callState'] ?? 'idle',
+        ]);
+    }
+
     public function state(Request $request)
     {
         $phone = $this->callerPhone($request);
