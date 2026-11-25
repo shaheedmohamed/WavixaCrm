@@ -51,14 +51,14 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
             ) : (
               <View style={styles.avatarPlaceholder}>
                 <Text style={styles.avatarLetter}>
-                  {user?.name ? user.name.charAt(0).toUpperCase() : 'W'}
+                  {user?.name ? user.name.charAt(0).toUpperCase() : 'C'}
                 </Text>
               </View>
             )}
             <View style={styles.onlineDot} />
           </View>
 
-          <Text style={styles.userName}>{user?.name || 'موظف CRM'}</Text>
+          <Text style={styles.userName}>{user?.name || 'موظف خدمة العملاء'}</Text>
           <Text style={styles.userEmail}>{user?.email}</Text>
 
           <View style={styles.badge}>
@@ -131,12 +131,12 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
         <View style={styles.section}>
           <TouchableOpacity
             style={styles.actionRow}
-            onPress={() => Alert.alert('Wavixa', 'تطبيق موظفي خدمة العملاء لنظام Wavixa')}
+            onPress={() => Alert.alert('CareBot', 'تطبيق خدمة العملاء وإدارة المحادثات — CareBot')}
             activeOpacity={0.7}
           >
             <Ionicons name="chevron-back" size={18} color="#8696A0" />
             <View style={styles.actionRight}>
-              <Text style={styles.actionText}>عن تطبيق Wavixa</Text>
+              <Text style={styles.actionText}>عن تطبيق CareBot</Text>
               <Ionicons name="information-circle-outline" size={20} color={Colors.primary} />
             </View>
           </TouchableOpacity>

@@ -57,7 +57,7 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
               {/* User Header */}
               <View style={styles.userSection}>
                 <Text style={styles.userName} numberOfLines={1}>
-                  {user?.name || 'موظف CRM'}
+                  {user?.name || 'موظف خدمة العملاء'}
                 </Text>
                 <Text style={styles.userRole}>
                   {isAgent ? 'موظف خدمة عملاء' : 'مدير النظام'}

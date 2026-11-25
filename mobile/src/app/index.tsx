@@ -17,7 +17,7 @@ import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
 import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
-import { WavixaLogo } from '../components/WavixaLogo';
+import { CareBotLogo } from '../components/CareBotLogo';
 import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
@@ -117,7 +117,7 @@ export default function IndexPage() {
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
-        <WavixaLogo size="large" lightText />
+        <CareBotLogo size="large" lightText />
         <ActivityIndicator
           size="small"
           color="#FFFFFF"

@@ -1,8 +1,8 @@
 {
   "expo": {
-    "name": "Wavixa",
+    "name": "CareBot",
     "slug": "wavixa-crm",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -50,28 +50,28 @@
       [
         "expo-audio",
         {
-          "microphonePermission": "اسمح لتطبيق Wavixa بتسجيل الرسائل الصوتية وإرسالها في المحادثات."
+          "microphonePermission": "اسمح لتطبيق CareBot بتسجيل الرسائل الصوتية وإرسالها في المحادثات."
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "اسمح لتطبيق Wavixa بالوصول إلى صورك وفيديوهاتك لإرسالها في المحادثات.",
-          "cameraPermission": "اسمح لتطبيق Wavixa باستخدام الكاميرا لالتقاط الصور والفيديو."
+          "photosPermission": "اسمح لتطبيق CareBot بالوصول إلى صورك وفيديوهاتك لإرسالها في المحادثات.",
+          "cameraPermission": "اسمح لتطبيق CareBot باستخدام الكاميرا لالتقاط الصور والفيديو."
         }
       ],
       [
         "expo-camera",
         {
-          "cameraPermission": "اسمح لتطبيق Wavixa باستخدام الكاميرا لالتقاط الصور والفيديو وإرسالها.",
-          "microphonePermission": "اسمح لتطبيق Wavixa بتسجيل الصوت أثناء تصوير الفيديو."
+          "cameraPermission": "اسمح لتطبيق CareBot باستخدام الكاميرا لالتقاط الصور والفيديو وإرسالها.",
+          "microphonePermission": "اسمح لتطبيق CareBot بتسجيل الصوت أثناء تصوير الفيديو."
         }
       ],
       [
         "expo-media-library",
         {
-          "photosPermission": "اسمح لتطبيق Wavixa بالوصول إلى صورك وفيديوهاتك لإرسالها في المحادثات.",
-          "savePhotosPermission": "اسمح لتطبيق Wavixa بحفظ الصور والفيديو في معرضك.",
+          "photosPermission": "اسمح لتطبيق CareBot بالوصول إلى صورك وفيديوهاتك لإرسالها في المحادثات.",
+          "savePhotosPermission": "اسمح لتطبيق CareBot بحفظ الصور والفيديو في معرضك.",
           "granularPermissions": [
             "photo",
             "video"

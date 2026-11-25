@@ -11,7 +11,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { WavixaLogo } from '../components/WavixaLogo';
+import { CareBotLogo } from '../components/CareBotLogo';
 import { KeyboardSafeView } from '../components/KeyboardSafeView';
 import { Colors } from '../constants/theme';
 
@@ -56,7 +56,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         >
           {/* Brand Card Header with Safe Status Bar padding */}
           <View style={[styles.topCard, { paddingTop: Math.max(insets.top + 16, 36) }]}>
-            <WavixaLogo size="large" lightText />
+            <CareBotLogo size="large" lightText />
             <Text style={styles.tagline}>بوابة الموظفين وخدمة العملاء</Text>
           </View>
 
@@ -64,7 +64,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           <View style={styles.formContainer}>
             <Text style={styles.welcomeTitle}>تسجيل الدخول</Text>
             <Text style={styles.welcomeSub}>
-              أدخل بيانات حساب الموظف المسجل في نظام الـ CRM
+              أدخل بيانات حسابك المسجل للمتابعة إلى المحادثات
             </Text>
 
             {error ? (
@@ -80,7 +80,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
               <Ionicons name="mail-outline" size={19} color="#8696A0" style={styles.inputIcon} />
               <TextInput
                 style={styles.input}
-                placeholder="crm@crm.com"
+                placeholder="name@carebot.com"
                 placeholderTextColor="#8696A0"
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -131,7 +131,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
             <View style={styles.footerInfo}>
               <Ionicons name="shield-checkmark" size={16} color={Colors.primary} />
-              <Text style={styles.footerText}>اتصال آمن ومباشر بنظام Wavixa</Text>
+              <Text style={styles.footerText}>اتصال آمن ومباشر مع CareBot</Text>
             </View>
           </View>
         </ScrollView>

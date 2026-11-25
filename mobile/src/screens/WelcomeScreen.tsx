@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../context/AuthContext';
-import { WavixaLogo } from '../components/WavixaLogo';
+import { CareBotLogo } from '../components/CareBotLogo';
 import { Colors } from '../constants/theme';
 
 interface WelcomeScreenProps {
@@ -34,7 +34,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
       <View style={styles.content}>
         {/* Top Logo */}
         <View style={styles.logoWrap}>
-          <WavixaLogo size="large" lightText />
+          <CareBotLogo size="large" lightText />
         </View>
 
         {/* Center Welcome Card */}
@@ -45,7 +45,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
             ) : (
               <View style={styles.avatarPlaceholder}>
                 <Text style={styles.avatarLetter}>
-                  {user?.name ? user.name.charAt(0).toUpperCase() : 'W'}
+                  {user?.name ? user.name.charAt(0).toUpperCase() : 'C'}
                 </Text>
               </View>
             )}
@@ -53,7 +53,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onContinue }) => {
           </View>
 
           <Text style={styles.greeting}>مرحباً بك مجدداً 👋</Text>
-          <Text style={styles.userName}>{user?.name || 'فريق Wavixa'}</Text>
+          <Text style={styles.userName}>{user?.name || 'فريق CareBot'}</Text>
 
           <View style={styles.roleBadge}>
             <MaterialCommunityIcons name="account-badge" size={15} color={Colors.primary} />

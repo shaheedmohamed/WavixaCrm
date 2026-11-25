@@ -55,7 +55,7 @@ export const CallScreen: React.FC = () => {
   return (
     <Modal visible={visible} animationType="fade" onRequestClose={() => {}}>
       <View style={[styles.container, { paddingTop: Math.max(insets.top, 40) + 30 }]}>
-        <Text style={styles.net}>مكالمة Wavixa</Text>
+        <Text style={styles.net}>مكالمة CareBot</Text>
 
         <View style={styles.avatar}>
           <Text style={styles.avatarText}>{initial}</Text>

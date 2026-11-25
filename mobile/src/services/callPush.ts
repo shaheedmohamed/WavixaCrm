@@ -70,7 +70,7 @@ const showIncomingCall = async (d: any) => {
   await notifee.displayNotification({
     id: CALL_NOTIF_ID,
     title: caller,
-    body: 'مكالمة صوتية واردة • Wavixa',
+    body: 'مكالمة صوتية واردة • CareBot',
     data: { type: 'call.incoming', peer, conversation_id: d?.conversation_id ?? '' },
     android: {
       channelId: CALL_CHANNEL_ID,

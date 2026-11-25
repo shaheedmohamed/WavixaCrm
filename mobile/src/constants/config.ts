@@ -23,6 +23,6 @@ export const Config = {
     `https://crm.wavixa.net/api/crm/status-media/${statusId}?token=${encodeURIComponent(token)}`,
 
   // App Metadata
-  appName: 'Wavixa',
-  appVersion: '1.0.0',
+  appName: 'CareBot',
+  appVersion: '1.0.2',
 };
