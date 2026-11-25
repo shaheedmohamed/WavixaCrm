@@ -54,6 +54,8 @@ export interface Conversation {
   transferred_by_agent?: { id: number; name: string } | null;
   resolved_by_agent?: { id: number; name: string } | null;
   last_outgoing_user?: { id: number; name: string } | null;
+  // Live "يكتب الآن…" flag — `by` carries the typer's name in groups.
+  typing?: { by?: string | null } | null;
 }
 
 export interface PinnedPreview {
@@ -82,6 +84,14 @@ export interface MessageReaction {
   timestamp?: number;
 }
 
+// A resolved @mention — backend decorateMentions() maps the raw JID onto
+// the contact-book/pushname name and the PN digits.
+export interface MentionRef {
+  jid: string;
+  phone?: string | null;
+  name?: string | null;
+}
+
 export interface Message {
   id: number;
   message_id: string;
@@ -100,6 +110,7 @@ export interface Message {
   media_meta?: MediaMeta | null;
   reactions?: MessageReaction[] | null;
   mentioned_jids?: string[] | null;
+  mentions?: MentionRef[] | null;
   is_forwarded?: boolean;
   timestamp: string;
   status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | null;

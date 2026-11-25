@@ -44,54 +44,154 @@
         مفيش مجموعات لسه — أنشئ مجموعة (مثلاً "محل المهندسين") وعيّن لها أجهزة، وبعدها ضيف الموظفين ليها من نموذج الموظف. كل موظفين المجموعة بيشوفوا نفس الشاتات.
       </div>
 
-      <div v-else class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <div
-          v-for="g in groups"
-          :key="g.id"
-          class="bg-slate-800/80 border border-slate-700/80 rounded-2xl p-4 flex flex-col justify-between hover:border-slate-600 transition-all"
-        >
-          <div>
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-sm font-bold text-white flex items-center gap-2">
-                <span class="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center">
-                  <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-                </span>
-                {{ g.name }}
-              </h3>
-              <span class="px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[10px] font-bold">
-                {{ g.agents_count }} موظف
-              </span>
-            </div>
-            <div class="flex flex-wrap gap-1.5 mt-2">
-              <template v-if="!g.session_ids || g.session_ids.length === 0">
-                <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">كل الأجهزة</span>
-              </template>
-              <template v-else>
-                <span
-                  v-for="sid in g.session_ids"
-                  :key="sid"
-                  class="px-2 py-0.5 rounded-md bg-slate-700 text-slate-200 text-xs font-bold"
+      <div v-else class="bg-slate-800/80 border border-slate-700/80 rounded-2xl overflow-hidden">
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm min-w-[640px]">
+            <thead>
+              <tr class="border-b border-slate-700/80 text-slate-400 text-[11px]">
+                <th class="text-right font-bold px-5 py-3.5">المجموعة</th>
+                <th class="text-center font-bold px-4 py-3.5">الموظفين</th>
+                <th class="text-right font-bold px-4 py-3.5">الأجهزة</th>
+                <th class="text-center font-bold px-4 py-3.5">إجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template v-for="g in groups" :key="g.id">
+                <tr
+                  @click="toggleGroupDetails(g.id)"
+                  class="border-b border-slate-800/60 hover:bg-slate-700/30 cursor-pointer transition-colors"
+                  :class="{ 'bg-slate-700/20': expandedGroupId === g.id }"
                 >
-                  {{ getDeviceName(sid) }}
-                </span>
+                  <!-- Group -->
+                  <td class="px-5 py-3.5">
+                    <div class="flex items-center gap-3">
+                      <svg
+                        class="w-4 h-4 text-slate-500 transition-transform shrink-0"
+                        :class="{ '-rotate-90 text-emerald-400': expandedGroupId === g.id }"
+                        fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                      ><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                      <div class="w-9 h-9 rounded-xl bg-emerald-500/10 text-emerald-400 flex items-center justify-center shrink-0">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                      </div>
+                      <span class="font-bold text-white whitespace-nowrap">{{ g.name }}</span>
+                    </div>
+                  </td>
+
+                  <!-- Members count -->
+                  <td class="px-4 py-3.5 text-center">
+                    <span class="px-2.5 py-1 rounded-full bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 text-[11px] font-bold whitespace-nowrap">
+                      {{ g.agents_count }} موظف
+                    </span>
+                  </td>
+
+                  <!-- Devices -->
+                  <td class="px-4 py-3.5">
+                    <div class="flex flex-wrap gap-1 max-w-[260px]">
+                      <template v-if="!g.session_ids || g.session_ids.length === 0">
+                        <span class="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[11px] font-bold">كل الأجهزة</span>
+                      </template>
+                      <template v-else>
+                        <span
+                          v-for="sid in g.session_ids.slice(0, 3)"
+                          :key="sid"
+                          class="px-2 py-0.5 rounded-md bg-slate-700 text-slate-200 text-[11px] font-bold whitespace-nowrap"
+                        >
+                          {{ getDeviceName(sid) }}
+                        </span>
+                        <span v-if="g.session_ids.length > 3" class="text-slate-500 text-[11px] font-bold">
+                          +{{ g.session_ids.length - 3 }}
+                        </span>
+                      </template>
+                    </div>
+                  </td>
+
+                  <!-- Actions -->
+                  <td class="px-4 py-3.5">
+                    <div class="flex items-center justify-center gap-1.5">
+                      <button
+                        @click.stop="openGroupModal(g)"
+                        class="px-2.5 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-[11px] font-bold transition-colors whitespace-nowrap"
+                      >
+                        تعديل
+                      </button>
+                      <button
+                        @click.stop="removeGroup(g.id)"
+                        class="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
+                        title="حذف المجموعة"
+                      >
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+
+                <!-- Expanded: group members & devices -->
+                <tr v-if="expandedGroupId === g.id" class="border-b border-slate-800/60 bg-slate-900/40">
+                  <td colspan="4" class="px-5 py-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <!-- Members -->
+                      <div class="rounded-2xl bg-slate-800/60 border border-slate-700/60 p-3">
+                        <p class="text-[11px] font-bold text-slate-400 mb-2">موظفين المجموعة ({{ groupMembers(g.id).length }})</p>
+                        <div v-if="groupMembers(g.id).length === 0" class="text-xs text-slate-500 py-3 text-center">
+                          مفيش موظفين في المجموعة دي لسه — عيّنهم من نموذج الموظف.
+                        </div>
+                        <div v-else class="space-y-1.5">
+                          <div
+                            v-for="m in groupMembers(g.id)"
+                            :key="m.id"
+                            class="flex items-center justify-between gap-2 p-2 rounded-xl bg-slate-900/50 border border-slate-800"
+                          >
+                            <div class="flex items-center gap-2 min-w-0">
+                              <div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-indigo-600 to-sky-500 text-white font-bold flex items-center justify-center text-[10px] shrink-0">
+                                {{ m.name ? m.name.trim().charAt(0) : 'A' }}
+                              </div>
+                              <div class="min-w-0">
+                                <p class="text-xs font-bold text-white truncate">{{ m.name }}</p>
+                                <p class="text-[10px] text-slate-500 font-mono truncate" dir="ltr">{{ m.email }}</p>
+                              </div>
+                            </div>
+                            <div class="flex items-center gap-1.5 shrink-0">
+                              <span
+                                class="px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap"
+                                :class="m.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'"
+                              >
+                                {{ m.status === 'active' ? 'نشط' : 'معطل' }}
+                              </span>
+                              <button
+                                @click.stop="openAgentConversations(m)"
+                                class="px-2 py-1 rounded-lg bg-sky-600/15 text-sky-300 hover:bg-sky-600/30 text-[10px] font-bold transition-colors"
+                                title="عرض المحادثات المفتوحة"
+                              >
+                                المحادثات
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      <!-- Devices -->
+                      <div class="rounded-2xl bg-slate-800/60 border border-slate-700/60 p-3">
+                        <p class="text-[11px] font-bold text-slate-400 mb-2">أجهزة المجموعة</p>
+                        <div v-if="!g.session_ids || g.session_ids.length === 0" class="flex items-center gap-2 py-2">
+                          <span class="px-2.5 py-1 rounded-md bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs font-bold">كل الأجهزة</span>
+                          <span class="text-[10px] text-slate-500">أعضاء المجموعة بيشوفوا شاتات كل الأجهزة</span>
+                        </div>
+                        <div v-else class="flex flex-wrap gap-1.5">
+                          <span
+                            v-for="sid in g.session_ids"
+                            :key="sid"
+                            class="px-2.5 py-1 rounded-md bg-slate-700 text-slate-200 text-xs font-bold"
+                          >
+                            {{ getDeviceName(sid) }}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
               </template>
-            </div>
-          </div>
-          <div class="pt-3 mt-3 border-t border-slate-700/60 flex items-center justify-between">
-            <button
-              @click="openGroupModal(g)"
-              class="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-bold transition-colors"
-            >
-              تعديل
-            </button>
-            <button
-              @click="removeGroup(g.id)"
-              class="text-rose-400 hover:text-rose-300 p-1.5 rounded-lg hover:bg-rose-500/10 transition-colors"
-              title="حذف المجموعة"
-            >
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
-            </button>
-          </div>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -604,6 +704,13 @@ const getDeviceName = (sessionId) => {
 };
 
 const groupName = (id) => groups.value.find((g) => g.id === id)?.name || '';
+
+// ---- Expandable group details ---------------------------------------------
+const expandedGroupId = ref(null);
+const toggleGroupDetails = (id) => {
+  expandedGroupId.value = expandedGroupId.value === id ? null : id;
+};
+const groupMembers = (id) => agents.value.filter((a) => a.group_id === id);
 
 // ---- Agent open conversations drawer -------------------------------------
 const showChatsModal = ref(false);

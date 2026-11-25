@@ -31,6 +31,8 @@ export interface MessagesResponse {
   conversation: Conversation;
   messages: Message[];
   pinned?: PinnedPreview | null;
+  // Live "يكتب الآن…" flag — `by` carries the typer's name in groups.
+  typing?: { by?: string | null } | null;
   has_more?: boolean;
   has_newer?: boolean;
 }

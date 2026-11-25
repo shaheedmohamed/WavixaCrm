@@ -282,7 +282,9 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
                 a?.is_pinned !== b?.is_pinned ||
                 a?.archived_at !== b?.archived_at ||
                 a?.contact_name !== b?.contact_name ||
-                a?.assigned_agent_id !== b?.assigned_agent_id
+                a?.assigned_agent_id !== b?.assigned_agent_id ||
+                Boolean(a?.typing) !== Boolean(b?.typing) ||
+                a?.typing?.by !== b?.typing?.by
               ) {
                 return res.conversations;
               }

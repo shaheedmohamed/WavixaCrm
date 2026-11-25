@@ -38,6 +38,7 @@ import { callService } from '../services/callService';
 import { ResolveModal } from '../components/ResolveModal';
 import { PinDurationModal } from '../components/PinDurationModal';
 import { ReactionDetailsSheet } from '../components/ReactionDetailsSheet';
+import { TypingDots } from '../components/TypingDots';
 import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs } from '../services/chatPrefs';
@@ -48,6 +49,7 @@ import { useAuth } from '../context/AuthContext';
 import {
   Conversation,
   MediaEditSpec,
+  MentionRef,
   Message,
   MessageReaction,
   PinnedPreview,
@@ -225,6 +227,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     () => cachedThread?.hasMore ?? false
   );
   const [loadingOlder, setLoadingOlder] = useState(false);
+  // Live "يكتب الآن…" flag — the messages poll carries it on every response.
+  const [typing, setTyping] = useState<{ by?: string | null } | null>(null);
   const [initialLoading, setInitialLoading] = useState(
     () => !cachedThread?.messages?.length && !initialConv.last_message
   );
@@ -431,6 +435,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         });
 
         setPinnedMsg(res.pinned || null);
+        setTyping(res.typing || null);
         if (res.conversation) {
           setConversation(res.conversation);
         }
@@ -930,6 +935,27 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     []
   );
 
+  // Tap on an @mention chip — same member card as the sender header. The
+  // backend-resolved mention already carries name + PN digits; a bare LID
+  // leaves `phone` null so the message/call actions stay disabled.
+  const handlePressMention = useCallback(
+    (m: MentionRef) => {
+      const digits = (m.jid || '').split('@')[0].replace(/\D/g, '');
+      const seed = m.name || m.jid || digits || '?';
+      const hash = Math.abs(seed.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0));
+      setMemberSheet({
+        phone: m.phone || (digits && digits.length < 15 ? digits : null),
+        name: m.name || null,
+        avatarUri:
+          conversation.session_id && m.jid && token
+            ? Config.getSenderAvatarUrl(conversation.session_id, m.jid, token)
+            : null,
+        color: REPLY_COLORS[hash % REPLY_COLORS.length],
+      });
+    },
+    [conversation.session_id, token]
+  );
+
 
   const openingSenderRef = useRef(false);
   const openSenderChat = useCallback(
@@ -1154,8 +1180,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const invertedMessages = useMemo(() => messages.slice().reverse(), [messages]);
 
+  const jumpSeq = useRef(0);
   const jumpToMessageKey = useCallback(
     (idOrWamid: string | number) => {
+      const flashTarget = (target: Message) => {
+        const key = target.client_temp_id || target.id || target.message_id;
+        setHighlightedMsgKey(key);
+        setTimeout(() => setHighlightedMsgKey(null), 1600);
+      };
       const idx = invertedMessages.findIndex(
         (m) =>
           m.id === idOrWamid ||
@@ -1165,14 +1197,54 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       if (idx !== -1) {
         try {
           flatListRef.current?.scrollToIndex({ index: idx, animated: true, viewPosition: 0.5 });
-          const target = invertedMessages[idx];
-          const key = target.client_temp_id || target.id || target.message_id;
-          setHighlightedMsgKey(key);
-          setTimeout(() => setHighlightedMsgKey(null), 1600);
+          flashTarget(invertedMessages[idx]);
         } catch {}
+        return;
       }
+
+      // Older than the loaded window (pinned banner / quoted-reply taps) —
+      // pull the slice centered on the target; the endpoint accepts DB ids
+      // and WA stanza ids alike. jumpSeq keeps a second tap from being
+      // overwritten by the first one's response.
+      const seq = ++jumpSeq.current;
+      chatService
+        .getMessages(initialConv.id, { around_id: idOrWamid, limit: 80 })
+        .then((res) => {
+          if (seq !== jumpSeq.current || !res?.success || !Array.isArray(res.messages)) return;
+          const rows = res.messages;
+          const targetIdx = rows.findIndex(
+            (m) =>
+              m.id === idOrWamid ||
+              String(m.message_id) === String(idOrWamid) ||
+              String(m.id) === String(idOrWamid)
+          );
+          if (targetIdx === -1) return;
+          setMessages((prev) => {
+            const merged = mergeChronologicalMessages(prev, rows, 'replace_window');
+            syncToCache(merged, res.pinned || null, Boolean(res.has_more));
+            return merged;
+          });
+          if (res.pinned) setPinnedMsg(res.pinned);
+          setHasMoreOlder(Boolean(res.has_more));
+          setHasNewerTail(Boolean(res.has_newer));
+          initialLoadDone.current = true;
+          scrolledUpRef.current = true;
+          setShowScrollBottom(true);
+          setTimeout(() => {
+            const invIdx = rows.length - 1 - targetIdx;
+            try {
+              flatListRef.current?.scrollToIndex({
+                index: invIdx,
+                animated: true,
+                viewPosition: 0.5,
+              });
+            } catch {}
+            flashTarget(rows[targetIdx]);
+          }, 350);
+        })
+        .catch(() => {});
     },
-    [invertedMessages]
+    [invertedMessages, initialConv.id, syncToCache]
   );
 
   const jumpToPinned = () => {
@@ -1348,6 +1420,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onDoubleTapLike={handleDoubleTapLike}
               onPressReactions={handlePressReactions}
               onPressSender={isGroup ? handlePressSender : undefined}
+              onPressMention={isGroup ? handlePressMention : undefined}
               selectionMode={selectionMode}
               isSelected={selectedIds.has(rowKey)}
               onToggleSelect={toggleSelect}
@@ -1373,6 +1446,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       handleDoubleTapLike,
       handlePressReactions,
       handlePressSender,
+      handlePressMention,
       selectionMode,
       selectedIds,
       toggleSelect,
@@ -1466,12 +1540,20 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               <Text style={styles.contactName} numberOfLines={1}>
                 {contactTitle}
               </Text>
-              <Text style={styles.contactSub} numberOfLines={1}>
-                {conversation.contact_phone ? `+${conversation.contact_phone}` : ''}
-                {conversation.session?.device_name
+              <Text
+                style={[styles.contactSub, typing ? styles.contactSubTyping : null]}
+                numberOfLines={1}
+              >
+                {typing
+                  ? typing.by
+                    ? `${typing.by} يكتب الآن…`
+                    : 'يكتب الآن…'
+                  : null}
+                {!typing && conversation.contact_phone ? `+${conversation.contact_phone}` : ''}
+                {!typing && conversation.session?.device_name
                   ? ` • ${conversation.session.device_name}`
                   : ''}
-                {conversation.assigned_agent
+                {!typing && conversation.assigned_agent
                   ? ` • مع ${
                       conversation.assigned_agent.id === user?.id
                         ? 'أنا'
@@ -1603,6 +1685,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             scrollEventThrottle={64}
             renderItem={renderMessageItem}
           />
+
+          {typing && (
+            <View style={styles.typingRow} pointerEvents="none">
+              <View style={styles.typingBubble}>
+                <TypingDots />
+              </View>
+            </View>
+          )}
 
           {showScrollBottom && (
             <TouchableOpacity
@@ -1896,6 +1986,28 @@ const styles = StyleSheet.create({
     marginTop: 1.5,
     textAlign: 'right',
     width: '100%',
+  },
+  contactSubTyping: {
+    color: '#53DEBD',
+    fontWeight: '600',
+  },
+  typingRow: {
+    alignItems: 'flex-start',
+    paddingHorizontal: 10,
+    marginTop: 2,
+    marginBottom: 4,
+  },
+  typingBubble: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderTopStartRadius: 3,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    elevation: 1,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    shadowOffset: { width: 0, height: 1 },
   },
   headerActions: {
     flexDirection: 'row',

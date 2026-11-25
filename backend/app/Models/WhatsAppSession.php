@@ -68,6 +68,48 @@ class WhatsAppSession extends Model
         return $query->where('session_token', $token);
     }
 
+    protected static function booted(): void
+    {
+        // A deleted device must drop out of every "assigned sessions" list —
+        // stale ids used to leave agents with zero allowed sessions, which
+        // 403s every session-gated endpoint (avatars, media, conversations).
+        static::deleted(function (WhatsAppSession $session) {
+            $prune = function (&$ids) use ($session) {
+                $next = array_values(array_filter(
+                    $ids,
+                    fn ($id) => (string) $id !== (string) $session->id
+                ));
+                if ($next === $ids) return false;
+                $ids = $next;
+                return true;
+            };
+
+            User::where('crm_parent_id', $session->user_id)
+                ->whereNotNull('crm_assigned_sessions')
+                ->get(['id', 'crm_assigned_sessions'])
+                ->each(function (User $agent) use ($prune, $session) {
+                    $assigned = $agent->crm_assigned_sessions;
+                    if (!is_array($assigned)) return;
+                    if ($prune($assigned)) {
+                        $agent->crm_assigned_sessions = $assigned;
+                        $agent->save();
+                    }
+                });
+
+            CrmGroup::where('owner_id', $session->user_id)
+                ->whereNotNull('session_ids')
+                ->get(['id', 'session_ids'])
+                ->each(function (CrmGroup $group) use ($prune) {
+                    $ids = $group->session_ids;
+                    if (!is_array($ids)) return;
+                    if ($prune($ids)) {
+                        $group->session_ids = $ids;
+                        $group->save();
+                    }
+                });
+        });
+    }
+
     /**
      * Determine the WhatsApp node service user id that is currently live.
      *

@@ -89,6 +89,11 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
     return <Ionicons name="checkmark" size={14} color="#8696A0" style={styles.ticks} />;
   };
 
+  const isTyping = Boolean(conversation.typing);
+  const typingLabel = conversation.typing?.by
+    ? `${conversation.typing.by} يكتب الآن…`
+    : 'يكتب الآن…';
+
   const previewText = () => {
     const t = conversation.last_message_type;
     if (t === 'image') return '📷 صورة';
@@ -147,15 +152,16 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
         </View>
 
         <View style={styles.bottomRow}>
-          {renderTicks()}
+          {isTyping ? null : renderTicks()}
           <Text
             style={[
               styles.lastMessage,
               showUnreadHighlight && styles.lastMessageUnread,
+              isTyping && styles.typingText,
             ]}
             numberOfLines={1}
           >
-            {previewText()}
+            {isTyping ? typingLabel : previewText()}
           </Text>
         </View>
 
@@ -327,6 +333,10 @@ const styles = StyleSheet.create({
     color: '#667781',
     flexShrink: 1,
     textAlign: 'right',
+  },
+  typingText: {
+    color: '#00A884',
+    fontWeight: '600',
   },
   lastMessageUnread: {
     color: '#111B21',

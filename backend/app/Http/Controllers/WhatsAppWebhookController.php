@@ -528,6 +528,29 @@ class WhatsAppWebhookController extends Controller
                     ->first()
                 : null;
 
+            // Persist a short-lived flag per owner for the mobile pollers —
+            // the realtime broadcast alone never reaches them. Entries
+            // self-prune after ~12s of silence, and a landed incoming message
+            // clears the flag in messageReceived().
+            $typingKey = "crm_typing:owner:{$session->user_id}";
+            $typing = array_filter(
+                Cache::get($typingKey) ?: [],
+                fn ($e) => ($e['t'] ?? 0) > now()->timestamp - 12
+            );
+            if ($conversation) {
+                if ($data['state'] === 'composing') {
+                    $typing[$conversation->id] = [
+                        'by' => $this->typingSenderName($session, $conversation, $data['participant'] ?? null),
+                        't' => now()->timestamp,
+                    ];
+                } else {
+                    unset($typing[$conversation->id]);
+                }
+            }
+            $typing
+                ? Cache::put($typingKey, $typing, now()->addMinutes(5))
+                : Cache::forget($typingKey);
+
             try {
                 event(new \App\Events\CrmRealtimeEvent($session->user_id, 'typing', [
                     'session_id' => $session->id,
@@ -544,6 +567,32 @@ class WhatsAppWebhookController extends Controller
             Log::error("Error processing chatstate webhook: " . $e->getMessage());
             return response()->json(['success' => false, 'message' => 'Error processing webhook'], 500);
         }
+    }
+
+    /**
+     * Resolve a typing stanza's `participant` jid into a display name for
+     * group chats — 1:1 chats need none (the contact title already says who).
+     */
+    private function typingSenderName(WhatsAppSession $session, WhatsAppConversation $conversation, ?string $participantJid): ?string
+    {
+        if (!str_contains((string) $conversation->contact_jid, '@g.us') || !$participantJid) {
+            return null;
+        }
+        $digits = preg_replace('/\D/', '', (string) $participantJid);
+        if (str_ends_with($participantJid, '@lid')) {
+            $pn = DB::table('whatsapp_lid_mappings')->where('lid', $participantJid)->value('pn');
+            if ($pn) {
+                $digits = preg_replace('/\D/', '', (string) $pn);
+            }
+        }
+        if (strlen($digits) < 5) {
+            return null;
+        }
+        $name = \App\Models\CrmContact::where('owner_id', $session->user_id)
+                ->where('phone_tail', substr($digits, -10))
+                ->value('name')
+            ?? DB::table('whatsapp_pushnames')->where('jid', "{$digits}@s.whatsapp.net")->value('pushname');
+        return $name && preg_match('/[\p{L}\p{N}]/u', (string) $name) ? $name : "+{$digits}";
     }
 
     /** Push a delivery/read status change to the CRM realtime channel. */
@@ -1831,6 +1880,17 @@ public function messageRevoked(Request $request)
                 $convUpdate['contact_phone'] = $contactPhone;
             }
             $conversation->update($convUpdate);
+
+            // The customer's reply just landed — a lingering "typing…" flag
+            // would keep glowing under a message that already arrived.
+            if (!$fromMe) {
+                $tKey = "crm_typing:owner:{$session->user_id}";
+                $tMap = Cache::get($tKey) ?: [];
+                if (isset($tMap[$conversation->id])) {
+                    unset($tMap[$conversation->id]);
+                    $tMap ? Cache::put($tKey, $tMap, now()->addMinutes(5)) : Cache::forget($tKey);
+                }
+            }
 
             // The owner's uploaded address book wins over pushnames.
             try {

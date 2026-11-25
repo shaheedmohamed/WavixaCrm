@@ -87,6 +87,35 @@ class CrmController extends Controller
         return $holder;
     }
 
+    /**
+     * Restrict a conversation query to what this agent may see: a 1:1 chat
+     * claimed by a colleague drops off every other board — the holder alone
+     * keeps it. Groups stay collaborative and the unassigned pool stays
+     * shared; owners/admins keep full visibility.
+     */
+    private function applyAgentVisibility($query, User $user): void
+    {
+        if ($user->crm_role !== 'agent') {
+            return;
+        }
+        $query->where(function ($q) use ($user) {
+            $q->whereNull('assigned_agent_id')
+              ->orWhere('assigned_agent_id', $user->id)
+              ->orWhere('contact_jid', 'like', '%@g.us')
+              // Assignment pointing at a deleted account is a stale lock,
+              // same rule conversationLocker applies: the chat stays in the
+              // pool so a teammate can still pick it up.
+              ->orWhere(function ($w) {
+                  $w->whereNotNull('assigned_agent_id')
+                    ->whereNotExists(function ($sub) {
+                        $sub->select(\DB::raw(1))
+                            ->from('users')
+                            ->whereColumn('users.id', 'whatsapp_conversations.assigned_agent_id');
+                    });
+              });
+        });
+    }
+
     /** WhatsApp group conversations live under @g.us JIDs. */
     private function isGroupConv(WhatsAppConversation $conversation): bool
     {
@@ -303,6 +332,19 @@ class CrmController extends Controller
         }
 
         return WhatsAppSession::where('user_id', $owner->id)->pluck('id')->toArray();
+    }
+
+    /**
+     * Live "typing…" flags keyed by conversation id — written by the
+     * chatstate webhook, self-pruned after ~12s without a refresh.
+     */
+    private function typingMap(int $ownerId): array
+    {
+        $fresh = now()->timestamp - 12;
+        return array_filter(
+            \Illuminate\Support\Facades\Cache::get("crm_typing:owner:{$ownerId}") ?: [],
+            fn ($e) => ($e['t'] ?? 0) > $fresh
+        );
     }
 
     /**
@@ -1428,12 +1470,15 @@ class CrmController extends Controller
         $scope = $request->input('scope');
 
         if ($user->crm_role === 'agent') {
-            // Agents never see archived or completed (مكتمل) chats — every
-            // open thread on their sessions is listed for the whole team,
-            // claimed or not, read or not; only writing is exclusive to the
-            // holder. Search additionally spans resolved threads and quiet
-            // history exactly like an owner's, since search is how an agent
-            // finds a chat to open or forward to.
+            // Agents never see archived or completed (مكتمل) chats — and a
+            // 1:1 chat claimed by a colleague is invisible to them entirely.
+            // Only the unassigned pool, the agent's own chats, and
+            // collaborative groups are listed; writing stays exclusive to
+            // the holder via the claim lock. Search still spans resolved
+            // threads and quiet history like an owner's — minus chats held
+            // by teammates, since that's how an agent finds a chat to open
+            // or forward to.
+            $this->applyAgentVisibility($query, $user);
             if ($request->boolean('archived')) {
                 $query->whereRaw('1 = 0');
             } elseif ($request->filled('search')) {
@@ -1451,15 +1496,16 @@ class CrmController extends Controller
                 // customer message throws them back into the shared pool.
                 $query->where('resolved_by', $user->id);
             } else {
-                // Shared inbox: every teammate sees every open chat on their
-                // sessions — visibility is never gated on unread_count or on
-                // who is handling the thread. A chat must stay listed even
-                // after someone reads it (in the CRM, or straight from the
-                // phone's WhatsApp via the message-read sync) or replies to
-                // it outside the app; the claim lock, not the list, decides
-                // who may reply. Completed (مكتمل) chats live in the
-                // resolved tab only — a fresh customer message re-pools them
-                // via the webhook clearing resolved_at.
+                // The pool lists every open chat that isn't held by a
+                // colleague — unclaimed threads plus the agent's own, never
+                // gated on unread_count. A chat must stay listed even after
+                // someone reads it (in the CRM, or straight from the phone's
+                // WhatsApp via the message-read sync) or replies to it
+                // outside the app; the claim decides who may reply, and the
+                // moment a teammate claims a chat it vanishes from everyone
+                // else's board. Completed (مكتمل) chats live in the resolved
+                // tab only — a fresh customer message re-pools them via the
+                // webhook clearing resolved_at.
                 $query->whereNull('resolved_at')->whereNull('archived_at');
 
                 $isGroupsScope = $scope === 'groups' || $request->boolean('groups_only');
@@ -1542,6 +1588,14 @@ class CrmController extends Controller
             ->orderBy('last_message_at', 'desc')
             ->paginate($request->input('per_page', 40));
 
+        // Live "يكتب الآن…" flags for the mobile pollers.
+        $typingMap = $this->typingMap((int) $this->resolveOwner()->id);
+        foreach ($conversations->items() as $conv) {
+            $conv->typing = isset($typingMap[$conv->id])
+                ? ['by' => $typingMap[$conv->id]['by'] ?? null]
+                : null;
+        }
+
         return response()->json([
             'success' => true,
             'conversations' => $conversations->items(),
@@ -1571,11 +1625,16 @@ class CrmController extends Controller
         $peek = $request->boolean('peek');
 
         $caller = $request->user();
+
+        // A chat held by a colleague is off the agent's board entirely —
+        // the thread refuses to open too, not just the list. 423 mirrors
+        // the send-time lock the clients already handle (the mobile boots
+        // the viewer back to the list with the holder's name).
+        if ($caller && ($locker = $this->conversationLocker($conversation, $caller))) {
+            return $this->lockedResponse($locker);
+        }
+
         if (!$peek && $caller && $caller->crm_role === 'agent') {
-            // Reading is never locked — the shared inbox keeps every open
-            // chat viewable by the whole team, including one held by a
-            // colleague; only writing is exclusive (sendMessage/sendMedia/
-            // sendTyping still refuse via conversationLocker).
             // Auto-claim is limited to live unassigned chats: a resolved chat
             // must NOT silently reopen just because a stale poll or a second
             // tab refetches its messages — that made "مكتمل" bounce straight
@@ -1836,10 +1895,13 @@ class CrmController extends Controller
             $this->decorateMentions($conversation, $messages);
         }
 
+        $typing = $this->typingMap((int) $conversation->user_id)[$conversation->id] ?? null;
+
         return response()->json([
             'success' => true,
             'conversation' => $conversation,
             'pinned' => $this->pinnedPreview($conversation),
+            'typing' => $typing ? ['by' => $typing['by'] ?? null] : null,
             'messages' => $messages,
             'has_more' => $hasMore,
             'has_newer' => $hasNewer,
@@ -3860,6 +3922,9 @@ class CrmController extends Controller
         $conversation = WhatsAppConversation::whereIn('session_id', $allowed)
             ->where('id', $id)
             ->firstOrFail();
+        if ($locker = $this->conversationLocker($conversation, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
 
         $rows = WhatsAppMessage::where('conversation_id', $conversation->id)
             ->whereIn('message_type', ['image', 'video', 'document', 'audio', 'voice', 'sticker'])
@@ -4526,12 +4591,14 @@ class CrmController extends Controller
     /** Every starred message across all sessions this user can see. */
     public function getGlobalStarredMessages(Request $request)
     {
-        $allowed = $this->getAllowedSessionIds($request->user());
+        $user = $request->user();
+        $allowed = $this->getAllowedSessionIds($user);
 
         $messages = WhatsAppMessage::query()
             ->whereNotNull('starred_at')
-            ->whereHas('conversation', function ($q) use ($allowed) {
+            ->whereHas('conversation', function ($q) use ($allowed, $user) {
                 $q->whereIn('session_id', $allowed);
+                $this->applyAgentVisibility($q, $user);
             })
             ->with([
                 'conversation:id,session_id,user_id,contact_jid,contact_name,contact_username,contact_phone,contact_avatar,assigned_agent_id,last_message_at,unread_count,archived_at,is_pinned',
@@ -4587,7 +4654,8 @@ class CrmController extends Controller
      */
     public function searchMessages(Request $request)
     {
-        $allowed = $this->getAllowedSessionIds($request->user());
+        $user = $request->user();
+        $allowed = $this->getAllowedSessionIds($user);
         $q = trim((string) $request->query('q', ''));
         if ($q === '') {
             return response()->json(['success' => true, 'messages' => []]);
@@ -4601,8 +4669,11 @@ class CrmController extends Controller
                   ->orWhere('media_caption', 'like', "%{$q}%")
                   ->orWhere('media_meta->fileName', 'like', "%{$q}%");
             })
-            ->whereHas('conversation', function ($c) use ($allowed) {
+            // Message-body hits inside a colleague's chat must not leak the
+            // thread back to the rest of the team.
+            ->whereHas('conversation', function ($c) use ($allowed, $user) {
                 $c->whereIn('session_id', $allowed);
+                $this->applyAgentVisibility($c, $user);
             })
             ->with([
                 'conversation:id,session_id,user_id,contact_jid,contact_name,contact_username,contact_phone,contact_avatar,assigned_agent_id,last_message_at,unread_count,archived_at,is_pinned',
@@ -4650,6 +4721,9 @@ class CrmController extends Controller
         $allowed = $this->getAllowedSessionIds($request->user());
         $conv = WhatsAppConversation::where('id', $conversationId)
             ->whereIn('session_id', $allowed)->firstOrFail();
+        if ($locker = $this->conversationLocker($conv, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
         $messages = WhatsAppMessage::where('conversation_id', $conv->id)
             ->whereNotNull('starred_at')
             ->orderBy('starred_at', 'desc')->orderBy('id', 'desc')

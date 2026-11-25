@@ -25,7 +25,7 @@ import {
   senderAvatarSrc,
   videoThumbSrc,
 } from '../services/media';
-import { Conversation, Message } from '../types/crm';
+import { Conversation, MentionRef, Message } from '../types/crm';
 import { Colors } from '../constants/theme';
 
 interface MessageBubbleProps {
@@ -58,6 +58,8 @@ interface MessageBubbleProps {
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (msg: Message) => void;
+  // Tap on an @mention chip — opens the same member card as the sender header.
+  onPressMention?: (m: MentionRef) => void;
 }
 
 const SENDER_COLORS = [
@@ -116,6 +118,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   onDoubleTapLike,
   onPressReactions,
   onPressSender,
+  onPressMention,
   selectionMode = false,
   isSelected = false,
   onToggleSelect,
@@ -606,7 +609,14 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             )
           ) : null}
 
-          {showText ? <MessageText text={displayCaption!} isOutgoing={isOutgoing} /> : null}
+          {showText ? (
+            <MessageText
+              text={displayCaption!}
+              isOutgoing={isOutgoing}
+              mentions={message.mentions}
+              onPressMention={onPressMention}
+            />
+          ) : null}
 
           {isAudio && mediaUri ? null : (
             <View style={styles.metaRow}>
