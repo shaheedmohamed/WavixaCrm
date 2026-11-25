@@ -2080,13 +2080,27 @@ class CrmController extends Controller
             // Post even with an empty id list: the engine then skips the
             // tick-blueing receipts but still writes the markChatAsRead
             // app-state mutation, which is what clears the unread badge on
-            // the owner's phone.
+            // the owner's phone. Deferred until after the response is flushed
+            // (php-fpm fastcgi_finish_request) — it's a second WA round-trip
+            // and must not sit inside the send/read request path.
             $token = $session->session_token ?: (string) $session->id;
-            $this->engineClient()->post("{$this->engineUrl}/internal/messages/read", [
-                'sessionId' => $token,
-                'chatJid' => $conversation->contact_jid,
-                'messageIds' => $ids,
-            ]);
+            $convId = $conversation->id;
+            $chatJid = $conversation->contact_jid;
+            $engineUrl = $this->engineUrl;
+            $apiKey = $this->apiKey;
+            defer(function () use ($engineUrl, $apiKey, $token, $chatJid, $ids, $convId) {
+                try {
+                    Http::withHeaders(['Authorization' => 'Bearer ' . $apiKey])
+                        ->timeout(30)
+                        ->post("{$engineUrl}/internal/messages/read", [
+                            'sessionId' => $token,
+                            'chatJid' => $chatJid,
+                            'messageIds' => $ids,
+                        ]);
+                } catch (\Throwable $e) {
+                    Log::debug("CRM read receipts failed for conversation {$convId}: " . $e->getMessage());
+                }
+            });
         } catch (\Throwable $e) {
             Log::debug("CRM read receipts failed for conversation {$conversation->id}: " . $e->getMessage());
         }

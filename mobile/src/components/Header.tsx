@@ -44,16 +44,8 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile }) => 
           <CareBotLogo size="medium" />
         </View>
 
-        {/* Left side: workload pill + three-dot menu */}
+        {/* Left side: three-dot menu at the edge, workload pill inner */}
         <View style={styles.leftSlot}>
-          {isAgent && user?.max_active_chats ? (
-            <View style={styles.workloadBadge}>
-              <Text style={styles.workloadText}>
-                {user.active_chats || 0}/{user.max_active_chats}
-              </Text>
-            </View>
-          ) : null}
-
           <TouchableOpacity
             activeOpacity={0.7}
             onPress={onOpenMenu}
@@ -62,6 +54,14 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile }) => 
           >
             <MaterialCommunityIcons name="dots-vertical" size={23} color="#FFFFFF" />
           </TouchableOpacity>
+
+          {isAgent && user?.max_active_chats ? (
+            <View style={styles.workloadBadge}>
+              <Text style={styles.workloadText}>
+                {user.active_chats || 0}/{user.max_active_chats}
+              </Text>
+            </View>
+          ) : null}
         </View>
       </View>
     </View>
