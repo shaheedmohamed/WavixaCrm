@@ -3191,6 +3191,37 @@ class CrmController extends Controller
             return response()->json(['success' => true, 'mode' => 'everyone']);
         }
 
+        // "Delete for me" must also reach WhatsApp — emit a deleteMessageForMe
+        // app-state mutation so the message drops from the owner's phone and
+        // linked devices, not just the CRM row.
+        $session = $conversation->session;
+        if ($message->message_id && $session) {
+            if (!$this->sessionIsLive($session)) {
+                return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
+            }
+            $token = $session->session_token ?: (string) $session->id;
+            $msgTs = (int) ($message->timestamp ?: 0);
+            try {
+                $res = $this->engineClient()->post("{$this->engineUrl}/api/whatsapp/delete-message-for-me", [
+                    'sessionId' => $token,
+                    'to' => $this->resolveDestJid($conversation),
+                    'messageId' => $message->message_id,
+                    'fromMe' => $message->direction === 'outgoing',
+                    'timestamp' => $msgTs > 1e11 ? (int) ($msgTs / 1000) : $msgTs,
+                    'deleteMedia' => true,
+                ]);
+                $engineData = $res->json();
+                if (!$res->successful() || !($engineData['success'] ?? false)) {
+                    $err = $engineData['message'] ?? ('HTTP ' . $res->status());
+                    Log::warning("CRM deleteMessage for-me engine rejected: {$err}");
+                    return response()->json(['success' => false, 'message' => 'فشل حذف الرسالة: ' . $err], 502);
+                }
+            } catch (\Throwable $e) {
+                Log::error("CRM deleteMessage for-me engine error: " . $e->getMessage());
+                return response()->json(['success' => false, 'message' => 'فشل حذف الرسالة: ' . $e->getMessage()], 500);
+            }
+        }
+
         $message->delete();
         try {
             event(new \App\Events\CrmRealtimeEvent($conversation->user_id, 'message.deleted', [

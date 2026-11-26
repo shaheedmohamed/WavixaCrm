@@ -1015,10 +1015,12 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           text: 'حذف لدي فقط',
           style: 'destructive',
           onPress: async () => {
-            setMessages((prev) => prev.filter((x) => x.id !== m.id));
             try {
               await chatService.deleteMessage(m.id, conversation.id, false);
-            } catch {}
+              setMessages((prev) => prev.filter((x) => x.id !== m.id));
+            } catch (err: any) {
+              Alert.alert('خطأ', err.response?.data?.message || 'تعذر حذف الرسالة');
+            }
           },
         },
         ...(m.direction === 'outgoing'
@@ -1047,13 +1049,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     if (sel.length === 0) return;
     const allOutgoing = sel.every((m) => m.direction === 'outgoing');
     const doLocal = async () => {
-      const ids = new Set(sel.map((m) => m.id));
-      setMessages((prev) => prev.filter((x) => !ids.has(x.id)));
       clearSelection();
+      let failed = 0;
       for (const m of sel) {
         try {
           await chatService.deleteMessage(m.id, conversation.id, false);
-        } catch {}
+          setMessages((prev) => prev.filter((x) => x.id !== m.id));
+        } catch {
+          failed++;
+        }
+      }
+      if (failed) {
+        Alert.alert('خطأ', `تعذر حذف ${failed} رسالة — تأكد أن الجهاز متصل`);
       }
     };
     const buttons: any[] = [

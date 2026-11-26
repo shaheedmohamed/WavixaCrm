@@ -24,5 +24,5 @@ export const Config = {
 
   // App Metadata
   appName: 'CareBot',
-  appVersion: '1.0.3',
+  appVersion: '1.0.4',
 };
