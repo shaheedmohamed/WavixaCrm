@@ -48,8 +48,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile }) => 
         <View style={styles.leftSlot}>
           <TouchableOpacity
             activeOpacity={0.7}
-            onPress={onOpenMenu}
-            style={styles.iconButton}
+            onPress={onOpenMenu}            style={styles.iconButton}
             hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
           >
             <MaterialCommunityIcons name="dots-vertical" size={23} color="#FFFFFF" />

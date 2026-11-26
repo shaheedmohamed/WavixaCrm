@@ -40,7 +40,8 @@
           "color": "#00A884",
           "sounds": [
             "./assets/notify_ding.wav",
-            "./assets/ringtone.wav"
+            "./assets/ringtone.wav",
+            "./assets/notify_tone.wav"
           ]
         }
       ],

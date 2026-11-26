@@ -124,9 +124,9 @@ const MessageTextComponent: React.FC<Props> = ({ text, isOutgoing = false, style
 
 const styles = StyleSheet.create({
   text: {
-    fontSize: 13,
+    fontSize: 15,
     color: '#111B21',
-    lineHeight: 18.5,
+    lineHeight: 21,
     textAlign: 'right',
     writingDirection: 'rtl',
   },

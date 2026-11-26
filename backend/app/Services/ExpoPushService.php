@@ -71,14 +71,22 @@ class ExpoPushService
                                 'priority' => 'HIGH',
                                 'notification' => array_filter([
                                     'tag' => $tag,
-                                    'channel_id' => 'wavixa_messages',
-                                    'sound' => 'notify_ding',
+                                    // v2 channel: channel sound is immutable —
+                                    // must match CHANNEL_ID in the app's
+                                    // services/notifications.ts.
+                                    'channel_id' => 'wavixa_messages_v2',
+                                    'sound' => 'notify_tone',
                                     'notification_priority' => 'PRIORITY_HIGH',
                                     'notification_count' => $count,
                                     'default_vibrate_timings' => true,
                                     'default_light_settings' => true,
                                 ], fn ($v) => $v !== null),
                             ], fn ($v) => $v !== null),
+                            'apns' => [
+                                'payload' => [
+                                    'aps' => ['sound' => 'notify_tone.wav'],
+                                ],
+                            ],
                             'data' => array_map('strval', $data),
                         ],
                     ]);

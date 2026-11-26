@@ -4,8 +4,11 @@ import { AndroidImportance, AndroidNotificationVisibility } from 'expo-notificat
 import * as Device from 'expo-device';
 import { apiClient } from './api';
 
-export const CHANNEL_ID = 'wavixa_messages';
-export const SOUND_NAME = 'notify_ding.wav';
+// v2: channel sound is immutable once created — the old wavixa_messages
+// channel on installed devices is locked to notify_ding, so a new id is
+// required for the notification tone to actually change.
+export const CHANNEL_ID = 'wavixa_messages_v2';
+export const SOUND_NAME = 'notify_tone.wav';
 
 // The logged-in account — pushes carrying a different data.user_id belong
 // to a stale token of another login sharing this device and get dropped.

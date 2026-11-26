@@ -44,7 +44,7 @@ import { chatCache } from '../services/chatCache';
 import { chatPrefs } from '../services/chatPrefs';
 import { mediaSrc, isPlaceholderText } from '../services/media';
 import { Config } from '../constants/config';
-import { playIncomingMessage } from '../services/notifySound';
+import { playChatIncoming } from '../services/notifySound';
 import { useAuth } from '../context/AuthContext';
 import {
   Conversation,
@@ -288,6 +288,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const msgLoadSeq = useRef(0);
   const knownIncomingIds = useRef<Set<string | number>>(new Set());
+  // Row keys that landed while the chat was open — drives the slide-in entry
+  // animation. Consumed (deleted) on first render so nothing replays.
+  const freshAnimKeys = useRef<Set<string>>(new Set());
   const initialLoadDone = useRef(false);
   const scrolledUpRef = useRef(false);
   const messagesRef = useRef<Message[]>(messages);
@@ -367,7 +370,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           );
           if (freshIncoming.length > 0) {
             if (!chatPrefs.isMuted(initialConv.id)) {
-              playIncomingMessage();
+              playChatIncoming();
             }
             if (scrolledUpRef.current) {
               setNewBelowCount((c) => c + freshIncoming.length);
@@ -404,6 +407,18 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             res.messages,
             mode === 'initial' ? 'replace_window' : 'append_newer'
           );
+
+          // Rows that are brand-new while the chat is open get the slide-in
+          // entry — the initial window and older pages must not animate.
+          if (mode === 'poll' && initialLoadDone.current) {
+            const prevKeys = new Set(
+              prev.map((m) => String(m.client_temp_id || m.id || m.message_id))
+            );
+            for (const m of merged) {
+              const k = String(m.client_temp_id || m.id || m.message_id);
+              if (!prevKeys.has(k)) freshAnimKeys.current.add(k);
+            }
+          }
 
           if (merged.length === prev.length) {
             let identical = true;
@@ -589,6 +604,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       };
 
       setReplyTarget(null);
+      freshAnimKeys.current.add(tempId);
       setMessages((prev) => [...prev, optimisticMsg]);
       scrollToLatest(true);
       executeTextSend(tempId, text, replyId);
@@ -743,6 +759,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
       setReplyTarget(null);
       setPendingMedia(null);
+      freshAnimKeys.current.add(tempId);
       setMessages((prev) => [...prev, optimisticMsg]);
       scrollToLatest(true);
 
@@ -1380,6 +1397,17 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         (olderMsg.from || '') !== (item.from || '');
 
       const rowKey = item.client_temp_id || item.id || item.message_id;
+      // One-shot: delete() returns true only the first time this key renders.
+      const entryAnimation = freshAnimKeys.current.delete(String(rowKey))
+        ? item.direction
+        : null;
+      // WhatsApp run spacing — bubbles in a same-sender streak sit almost
+      // flush; a direction/sender switch (or a new day) re-opens the gap.
+      const tightAbove =
+        !isFirstOfDay &&
+        olderMsg !== null &&
+        olderMsg.direction === item.direction &&
+        (!isGroup || item.direction !== 'incoming' || (olderMsg.from || '') === (item.from || ''));
 
       return (
         <View>
@@ -1411,6 +1439,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               message={item}
               isGroup={isGroup}
               isFirstInRun={isFirstInRun}
+              tightAbove={tightAbove}
+              entryAnimation={entryAnimation}
               conversation={conversation}
               contactTitle={contactTitle}
               quoted={

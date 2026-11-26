@@ -1,11 +1,15 @@
 import { createAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
-// Same 3-note chime (C6-E6-G6) the CRM web synthesizes via WebAudio,
-// pre-rendered to a wav so playback is instant and reliable.
-const DING = require('../../assets/notify_ding.wav');
+// WhatsApp message tone — incoming message while INSIDE the open chat.
+const CHAT_TONE = require('../../assets/chat_incoming.wav');
+// iPhone-style notification tone — incoming message alert while the app
+// is open on another screen (chat list etc). Same family as the push
+// notification sound so in-app and tray alerts match.
+const NOTIFY_TONE = require('../../assets/notify_tone.wav');
 
-let player: ReturnType<typeof createAudioPlayer> | null = null;
-let lastPlayAt = 0;
+type Player = ReturnType<typeof createAudioPlayer>;
+const players: Partial<Record<'chat' | 'notify', Player>> = {};
+const lastPlayAt: Record<'chat' | 'notify', number> = { chat: 0, notify: 0 };
 let audioModeSet = false;
 
 const ensureMode = async () => {
@@ -19,17 +23,24 @@ const ensureMode = async () => {
   } catch {}
 };
 
-/** WhatsApp-style ding for a new incoming message while the app is open. */
-export const playIncomingMessage = async () => {
+const play = async (kind: 'chat' | 'notify') => {
   const now = Date.now();
-  if (now - lastPlayAt < 800) return; // bursts → single ding (same as web)
-  lastPlayAt = now;
+  if (now - lastPlayAt[kind] < 800) return; // bursts → single sound
+  lastPlayAt[kind] = now;
   try {
     await ensureMode();
-    if (!player) {
-      player = createAudioPlayer(DING);
-    }
-    player.seekTo(0);
+    // Fresh player per play: a finished player left at the end position can
+    // silently no-op when play() races seekTo(0) on Android.
+    const old = players[kind];
+    const player = createAudioPlayer(kind === 'chat' ? CHAT_TONE : NOTIFY_TONE);
+    players[kind] = player;
     player.play();
+    old?.remove();
   } catch {}
 };
+
+/** Incoming message while the user is inside that chat — WhatsApp tone. */
+export const playChatIncoming = () => play('chat');
+
+/** Incoming message while the app is open on another screen — notification tone. */
+export const playIncomingMessage = () => play('notify');

@@ -1596,6 +1596,11 @@ class CrmController extends Controller
                 : null;
         }
 
+        // Typing flags only arrive for contacts whose presence the engine
+        // subscribed to — batch-subscribe the visible page (debounced per
+        // session) so list-level "يكتب…" works without opening each chat.
+        $this->subscribePresenceBatch($conversations->items());
+
         return response()->json([
             'success' => true,
             'conversations' => $conversations->items(),
@@ -1665,6 +1670,13 @@ class CrmController extends Controller
         // the next message starts a fresh bundled notification.
         if (!$peek && $caller) {
             \App\Services\ExpoPushService::clearConversation($caller->id, $conversation->id);
+        }
+
+        // WhatsApp only pushes this contact's typing chatstate to devices
+        // subscribed to their presence — subscribe on open (debounced) so
+        // "يكتب الآن…" actually reaches the CRM.
+        if (!$peek) {
+            $this->subscribePresence($conversation);
         }
 
         $conversation->loadMissing([
@@ -2103,6 +2115,110 @@ class CrmController extends Controller
             });
         } catch (\Throwable $e) {
             Log::debug("CRM read receipts failed for conversation {$conversation->id}: " . $e->getMessage());
+        }
+    }
+
+    /**
+     * Ask the engine to presence-subscribe to this conversation's contact —
+     * WhatsApp only pushes typing chatstate stanzas to subscribed devices, so
+     * without this "يكتب الآن…" never arrives. Debounced per conversation
+     * (the engine also dedupes per jid for 90s) and deferred past the
+     * response flush so it never sits in the request path.
+     */
+    private function subscribePresence(WhatsAppConversation $conversation): void
+    {
+        try {
+            $session = $conversation->session;
+            if (!$session || $session->status !== 'connected' || !$conversation->contact_jid) {
+                return;
+            }
+            $jid = (string) $conversation->contact_jid;
+            if (str_ends_with($jid, '@broadcast')) {
+                return;
+            }
+            if (!Cache::add("crm_psub:{$conversation->id}", 1, 60)) {
+                return; // subscribed recently — chat open polls fire every 4s
+            }
+            $jids = [$jid];
+            // Migrated accounts may emit chatstate under the LID or the PN
+            // form — subscribe to the twin too when we know it.
+            $twin = DB::table('whatsapp_lid_mappings')
+                ->when(str_ends_with($jid, '@lid'),
+                    fn ($q) => $q->where('lid', $jid),
+                    fn ($q) => $q->where('pn', $jid))
+                ->first();
+            if ($twin) {
+                $jids[] = str_ends_with($jid, '@lid') ? $twin->pn : $twin->lid;
+            }
+            $token = $session->session_token ?: (string) $session->id;
+            $engineUrl = $this->engineUrl;
+            $apiKey = $this->apiKey;
+            defer(function () use ($engineUrl, $apiKey, $token, $jids) {
+                try {
+                    Http::withHeaders(['Authorization' => 'Bearer ' . $apiKey])
+                        ->timeout(10)
+                        ->post("{$engineUrl}/internal/presence/subscribe", [
+                            'sessionId' => $token,
+                            'jids' => $jids,
+                        ]);
+                } catch (\Throwable $e) {
+                    Log::debug('CRM presence subscribe failed: ' . $e->getMessage());
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::debug('CRM presence subscribe failed: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Batch presence-subscribe for a page of conversations (chat-list poll).
+     * Grouped by session and debounced per session for 90s — matching the
+     * engine's own per-jid dedupe window — so the 4s list poll only actually
+     * touches the socket a couple of times per minute per device.
+     */
+    private function subscribePresenceBatch(array $conversations): void
+    {
+        try {
+            $bySession = [];
+            foreach ($conversations as $conv) {
+                $jid = (string) ($conv->contact_jid ?? '');
+                if (!$jid || str_ends_with($jid, '@broadcast')) {
+                    continue;
+                }
+                $bySession[(int) $conv->session_id][] = $jid;
+            }
+            if (!$bySession) {
+                return;
+            }
+            $sessions = WhatsAppSession::whereIn('id', array_keys($bySession))
+                ->where('status', 'connected')
+                ->get(['id', 'session_token']);
+            $engineUrl = $this->engineUrl;
+            $apiKey = $this->apiKey;
+            foreach ($sessions as $session) {
+                if (!Cache::add("crm_psub_batch:{$session->id}", 1, 90)) {
+                    continue;
+                }
+                $jids = array_values(array_unique($bySession[$session->id] ?? []));
+                if (!$jids) {
+                    continue;
+                }
+                $token = $session->session_token ?: (string) $session->id;
+                defer(function () use ($engineUrl, $apiKey, $token, $jids) {
+                    try {
+                        Http::withHeaders(['Authorization' => 'Bearer ' . $apiKey])
+                            ->timeout(10)
+                            ->post("{$engineUrl}/internal/presence/subscribe", [
+                                'sessionId' => $token,
+                                'jids' => array_slice($jids, 0, 20),
+                            ]);
+                    } catch (\Throwable $e) {
+                        Log::debug('CRM presence batch subscribe failed: ' . $e->getMessage());
+                    }
+                });
+            }
+        } catch (\Throwable $e) {
+            Log::debug('CRM presence batch subscribe failed: ' . $e->getMessage());
         }
     }
 
@@ -3120,8 +3236,11 @@ class CrmController extends Controller
      */
     public function deleteMessage(Request $request)
     {
+        // message_id arrives as a numeric DB id from the app OR a WA stanza
+        // id string — no |string rule (numeric JSON would 422), the lookup
+        // below already matches both columns.
         $request->validate([
-            'message_id' => 'required|string',
+            'message_id' => 'required',
             'conversation_id' => 'required|integer',
             'for_everyone' => 'nullable|boolean',
         ]);
@@ -3131,10 +3250,13 @@ class CrmController extends Controller
             ->where('id', $request->conversation_id)
             ->firstOrFail();
 
+        $mid = (string) $request->message_id;
         $message = WhatsAppMessage::where('conversation_id', $conversation->id)
-            ->where(function ($q) use ($request) {
-                $q->where('message_id', $request->message_id)
-                  ->orWhere('id', $request->message_id);
+            ->where(function ($q) use ($mid) {
+                $q->where('message_id', $mid);
+                if (ctype_digit($mid)) {
+                    $q->orWhere('id', (int) $mid);
+                }
             })
             ->firstOrFail();
 

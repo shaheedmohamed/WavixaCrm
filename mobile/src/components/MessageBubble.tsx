@@ -8,7 +8,9 @@ import {
   Image,
   Linking,
   ActivityIndicator,
+ I18nManager,
 } from 'react-native';
+import ReAnimated, { withSpring, withTiming } from 'react-native-reanimated';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { MessageText } from './MessageText';
 import { AudioMessageBubble } from './AudioMessageBubble';
@@ -34,6 +36,12 @@ interface MessageBubbleProps {
   // First message of a consecutive same-sender run in a group — controls the
   // avatar + name header (WhatsApp only shows it there, others just indent).
   isFirstInRun?: boolean;
+  // Bubble directly above shares the same direction — pull the gap tight like
+  // WhatsApp's consecutive-message runs instead of uniform spacing.
+  tightAbove?: boolean;
+  // Set when the row just landed while the chat was open — drives the
+  // slide-in entry (undefined on history loads and older-page mounts).
+  entryAnimation?: 'incoming' | 'outgoing' | null;
   conversation?: Pick<Conversation, 'id' | 'contact_jid' | 'contact_avatar' | 'session_id'> | null;
   contactTitle?: string;
   quoted?: Message | null;
@@ -72,6 +80,33 @@ const SENDER_COLORS = [
   '#EA580C',
 ];
 
+// Slide-in entry for messages that arrive while the chat is open — the bubble
+// rises from the composer's edge with a soft spring, like WhatsApp's send.
+const bubbleEntry = (direction: 'incoming' | 'outgoing') => () => {
+  'worklet';
+  const sign = I18nManager.isRTL
+    ? direction === 'outgoing' ? -1 : 1
+    : direction === 'outgoing' ? 1 : -1;
+  return {
+    initialValues: {
+      opacity: 0,
+      transform: [
+        { translateX: 34 * sign },
+        { translateY: 26 },
+        { scale: 0.92 },
+      ],
+    },
+    animations: {
+      opacity: withTiming(1, { duration: 170 }),
+      transform: [
+        { translateX: withSpring(0, { damping: 19, stiffness: 240, mass: 0.65 }) },
+        { translateY: withSpring(0, { damping: 19, stiffness: 240, mass: 0.65 }) },
+        { scale: withSpring(1, { damping: 16, stiffness: 260, mass: 0.65 }) },
+      ],
+    },
+  };
+};
+
 const formatTime = (ts: string) => {
   try {
     const d = new Date(ts);
@@ -106,6 +141,8 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   message,
   isGroup = false,
   isFirstInRun = false,
+  tightAbove = false,
+  entryAnimation = null,
   conversation,
   contactTitle,
   quoted,
@@ -310,11 +347,23 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
     );
   };
 
+  // WhatsApp keeps the outer-top corner tight — which corner that is follows
+  // the layout direction, so flip it on RTL builds.
+  const tightCorner = isOutgoing
+    ? I18nManager.isRTL
+      ? styles.tightCornerTopLeft
+      : styles.tightCornerTopRight
+    : I18nManager.isRTL
+      ? styles.tightCornerTopRight
+      : styles.tightCornerTopLeft;
+
   return (
-    <View
+    <ReAnimated.View
+      entering={entryAnimation ? bubbleEntry(entryAnimation) : undefined}
       style={[
         styles.container,
         isOutgoing ? styles.containerOutgoing : styles.containerIncoming,
+        tightAbove ? styles.containerTight : styles.containerRunStart,
       ]}
     >
       <View
@@ -357,6 +406,7 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           style={[
             styles.bubble,
             isOutgoing ? styles.bubbleOutgoing : styles.bubbleIncoming,
+            tightCorner,
             isFailed && styles.bubbleFailed,
           ]}
           onLongPress={() => {
@@ -682,14 +732,21 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
           ) : null}
         </TouchableOpacity>
       ) : null}
-    </View>
+    </ReAnimated.View>
   );
 };
 
 const styles = StyleSheet.create({
   container: {
-    paddingHorizontal: 10,
-    marginVertical: 2.5,
+    paddingHorizontal: 8,
+    marginBottom: 1.5,
+  },
+  // Same-direction run: nearly flush like WhatsApp's stacked bubbles.
+  containerTight: {
+    marginTop: 1.5,
+  },
+  containerRunStart: {
+    marginTop: 7,
   },
   containerOutgoing: {
     alignItems: 'flex-end',
@@ -700,7 +757,7 @@ const styles = StyleSheet.create({
   bubbleRow: {
     flexDirection: 'row',
     alignItems: 'flex-end',
-    maxWidth: '86%',
+    maxWidth: '80%',
     gap: 6,
   },
   bubbleRowOutgoing: {
@@ -744,24 +801,28 @@ const styles = StyleSheet.create({
   },
   bubble: {
     maxWidth: '100%',
-    minWidth: 92,
-    borderRadius: 14,
-    paddingHorizontal: 10,
-    paddingTop: 6,
-    paddingBottom: 4,
+    minWidth: 84,
+    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingTop: 5.5,
+    paddingBottom: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.12,
     shadowRadius: 1.5,
     elevation: 1,
   },
+  tightCornerTopLeft: {
+    borderTopLeftRadius: 4,
+  },
+  tightCornerTopRight: {
+    borderTopRightRadius: 4,
+  },
   bubbleOutgoing: {
     backgroundColor: '#D9FDD3',
-    borderTopRightRadius: 3,
   },
   bubbleIncoming: {
     backgroundColor: '#FFFFFF',
-    borderTopLeftRadius: 3,
   },
   bubbleFailed: {
     borderWidth: 1,
@@ -809,11 +870,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'flex-end',
-    marginTop: 2,
+    marginTop: 1,
     gap: 3,
   },
   timeText: {
-    fontSize: 10,
+    fontSize: 10.5,
     color: '#667781',
   },
   sentByText: {
