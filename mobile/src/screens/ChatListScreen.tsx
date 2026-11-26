@@ -24,12 +24,15 @@ import { NewChatModal } from '../components/NewChatModal';
 import { QuickReplyModal } from '../components/QuickReplyModal';
 import { ChatContextMenuModal } from '../components/ChatContextMenuModal';
 import { AddToListModal } from '../components/AddToListModal';
+import { SnoozeModal } from '../components/SnoozeModal';
+import { ConversationNotesModal } from '../components/ConversationNotesModal';
 import { prewarmMediaPermissions } from './ChatRoomScreen';
 import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
 import { playIncomingMessage } from '../services/notifySound';
 import { initNotifications } from '../services/notifications';
+import { realtime } from '../services/realtime';
 import { useAuth } from '../context/AuthContext';
 import { ChatAvatar } from '../components/ChatAvatar';
 import { AvatarPeekModal } from '../components/AvatarPeekModal';
@@ -91,6 +94,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [newChatVisible, setNewChatVisible] = useState(false);
   const [quickRepliesVisible, setQuickRepliesVisible] = useState(false);
   const [contextConv, setContextConv] = useState<Conversation | null>(null);
+  const [snoozeConv, setSnoozeConv] = useState<Conversation | null>(null);
+  const [notesConv, setNotesConv] = useState<Conversation | null>(null);
   const [transferConvId, setTransferConvId] = useState<number | null>(null);
   const [resolveConvId, setResolveConvId] = useState<number | null>(null);
   const [listModalState, setListModalState] = useState<{
@@ -319,6 +324,25 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     return () => clearInterval(timer);
   }, [fetchConversations]);
 
+  // Live presence — the "متصل الآن" dot should flip the moment a stanza
+  // lands, not on the next 6.5s poll.
+  useEffect(() => {
+    const off = realtime.on((ev) => {
+      if (ev.type !== 'presence') return;
+      const d = ev.data || {};
+      if (!d.conversation_id) return;
+      const patch = {
+        presence: d.state,
+        last_seen_at: d.last_seen_at ?? null,
+      };
+      setConversations((prev) =>
+        prev.map((c) => (c.id === d.conversation_id ? { ...c, ...patch } : c))
+      );
+      chatCache.patchConversationEverywhere(d.conversation_id, patch);
+    });
+    return off;
+  }, []);
+
   useEffect(() => {
     if (activeConversationId === null) {
       Promise.resolve().then(() => {
@@ -355,13 +379,13 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     return list;
   }, [conversations, selectedScope, chatLists, searchQuery, debouncedSearch, prefsTick]);
 
-  const listNamesByConvId = useMemo(() => {
-    const map = new Map<number, string[]>();
+  const listTagsByConvId = useMemo(() => {
+    const map = new Map<number, { name: string; color?: string | null }[]>();
     for (const l of chatLists) {
       if (l.name === FAVORITES_LIST_NAME) continue;
       for (const cid of l.conversation_ids || []) {
         const arr = map.get(cid) || [];
-        arr.push(l.name);
+        arr.push({ name: l.name, color: l.color });
         map.set(cid, arr);
       }
     }
@@ -457,6 +481,37 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     chatPrefs.setMarkedUnread(conv.id, !cur);
   }, []);
 
+  // Snooze — the server hides the chat from every normal scope until the
+  // timer expires; mirror that locally instead of waiting for the poll.
+  const handleSnooze = useCallback(
+    async (conv: Conversation, minutes: number | null) => {
+      try {
+        if (minutes === null) {
+          await chatService.unsnoozeConversation(conv.id);
+          const patch = { snoozed_until: null, snoozed_by: null };
+          setConversations((prev) =>
+            prev.map((c) => (c.id === conv.id ? { ...c, ...patch } : c))
+          );
+          chatCache.patchConversationEverywhere(conv.id, patch);
+        } else {
+          const res = await chatService.snoozeConversation(conv.id, { minutes });
+          const until =
+            res?.snoozed_until || new Date(Date.now() + minutes * 60000).toISOString();
+          chatCache.patchConversationEverywhere(conv.id, { snoozed_until: until });
+          setConversations((prev) =>
+            selectedScope === 'snoozed'
+              ? prev.map((c) => (c.id === conv.id ? { ...c, snoozed_until: until } : c))
+              : prev.filter((c) => c.id !== conv.id)
+          );
+        }
+      } catch (err: any) {
+        Alert.alert('تنبيه', err?.response?.data?.message || 'تعذر تأجيل المحادثة');
+        fetchConversations('silent');
+      }
+    },
+    [selectedScope, fetchConversations]
+  );
+
   const handleClaimToMine = useCallback(async (conv: Conversation) => {
     try {
       const res = await chatService.claimConversation(conv.id);
@@ -499,10 +554,11 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   );
 
   const handleCreateList = useCallback(
-    async (name: string, convIds: number[]) => {
+    async (name: string, convIds: number[], color?: string | null) => {
       try {
         const res = await chatService.saveChatList({
           name,
+          color,
           conversation_ids: convIds,
         });
         if (res?.success && res.list) {
@@ -515,6 +571,18 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         }
       } catch {
         Alert.alert('خطأ', 'تعذر إنشاء القائمة');
+      }
+    },
+    [loadChatLists]
+  );
+
+  const handleSetListColor = useCallback(
+    async (list: ChatList, color: string | null) => {
+      try {
+        await chatService.saveChatList({ id: list.id, name: list.name, color });
+        await loadChatLists();
+      } catch {
+        Alert.alert('خطأ', 'تعذر تحديث لون القائمة');
       }
     },
     [loadChatLists]
@@ -614,7 +682,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
           isMuted={chatPrefs.isMuted(item.id)}
           isFavorite={chatPrefs.isFavorite(item.id)}
           isMarkedUnread={chatPrefs.isMarkedUnread(item.id)}
-          listNames={listNamesByConvId.get(item.id) || []}
+          listTags={listTagsByConvId.get(item.id) || []}
           selectionMode={selectionMode}
           isSelected={selectedIds.has(item.id)}
           onPress={() => handlePressItem(item)}
@@ -626,7 +694,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     },
     [
       user?.id,
-      listNamesByConvId,
+      listTagsByConvId,
       selectionMode,
       selectedIds,
       handlePressItem,
@@ -1008,6 +1076,21 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onClaim={handleClaimToMine}
         onTransfer={(conv) => setTransferConvId(conv.id)}
         onResolve={(conv) => setResolveConvId(conv.id)}
+        onSnooze={(conv) => setSnoozeConv(conv)}
+        onOpenNotes={(conv) => setNotesConv(conv)}
+      />
+
+      <SnoozeModal
+        conversation={snoozeConv}
+        onClose={() => setSnoozeConv(null)}
+        onSnooze={handleSnooze}
+      />
+
+      <ConversationNotesModal
+        conversation={notesConv}
+        currentUserId={user?.id}
+        isAgent={isAgent}
+        onClose={() => setNotesConv(null)}
       />
 
       <TransferModal
@@ -1042,6 +1125,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onClose={() => setListModalState({ visible: false, convs: [], createOnly: false })}
         onToggleListMember={handleToggleListMember}
         onCreateList={handleCreateList}
+        onSetListColor={handleSetListColor}
         onDeleteList={handleDeleteList}
         onToggleFavorite={handleToggleFavorite}
         onClaimToMine={handleClaimToMine}

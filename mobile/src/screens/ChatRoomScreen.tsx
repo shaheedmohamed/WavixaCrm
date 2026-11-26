@@ -36,6 +36,7 @@ import { TransferModal } from '../components/TransferModal';
 import { GroupMemberSheet } from '../components/GroupMemberSheet';
 import { callService } from '../services/callService';
 import { ResolveModal } from '../components/ResolveModal';
+import { ConversationNotesModal } from '../components/ConversationNotesModal';
 import { PinDurationModal } from '../components/PinDurationModal';
 import { ReactionDetailsSheet } from '../components/ReactionDetailsSheet';
 import { TypingDots } from '../components/TypingDots';
@@ -45,6 +46,7 @@ import { chatPrefs } from '../services/chatPrefs';
 import { mediaSrc, isPlaceholderText } from '../services/media';
 import { Config } from '../constants/config';
 import { playChatIncoming } from '../services/notifySound';
+import { realtime } from '../services/realtime';
 import { useAuth } from '../context/AuthContext';
 import {
   Conversation,
@@ -97,6 +99,26 @@ const dayLabel = (t?: string | null) => {
       month: 'long',
       year: 'numeric',
     });
+  } catch {
+    return '';
+  }
+};
+
+const formatLastSeen = (iso?: string | null) => {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    const now = new Date();
+    const hh = d.getHours();
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ampm = hh >= 12 ? 'م' : 'ص';
+    const h12 = hh % 12 || 12;
+    const time = `${h12}:${mm} ${ampm}`;
+    const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((startOf(now) - startOf(d)) / 86400000);
+    if (diff === 0) return `آخر ظهور اليوم ${time}`;
+    if (diff === 1) return `آخر ظهور أمس ${time}`;
+    return `آخر ظهور ${d.getDate()}/${d.getMonth() + 1} ${time}`;
   } catch {
     return '';
   }
@@ -277,6 +299,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [quickRepliesVisible, setQuickRepliesVisible] = useState(false);
   const [transferVisible, setTransferVisible] = useState(false);
   const [resolveVisible, setResolveVisible] = useState(false);
+  const [notesVisible, setNotesVisible] = useState(false);
   const [pinDurationVisible, setPinDurationVisible] = useState(false);
   const [selectedMsgForPin, setSelectedMsgForPin] = useState<Message | null>(null);
   const [reactionSheetKey, setReactionSheetKey] = useState<string | number | null>(null);
@@ -484,6 +507,26 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     }, 4000);
     return () => clearInterval(timer);
   }, [fetchLatestWindow, isDeadConversation]);
+
+  // Live presence — flip the header badge the moment a stanza arrives
+  // instead of waiting on the 4s poll.
+  useEffect(() => {
+    const off = realtime.on((ev) => {
+      if (ev.type !== 'presence') return;
+      const d = ev.data || {};
+      if (d.conversation_id !== initialConv.id) return;
+      setConversation((prev) => ({
+        ...prev,
+        presence: d.state,
+        last_seen_at: d.last_seen_at ?? null,
+      }));
+      chatCache.patchConversationEverywhere(initialConv.id, {
+        presence: d.state,
+        last_seen_at: d.last_seen_at ?? null,
+      });
+    });
+    return off;
+  }, [initialConv.id]);
 
   const handleLoadOlder = useCallback(async () => {
     if (loadingOlder || !hasMoreOlder || initialLoading) return;
@@ -1578,7 +1621,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
                 {contactTitle}
               </Text>
               <Text
-                style={[styles.contactSub, typing ? styles.contactSubTyping : null]}
+                style={[
+                  styles.contactSub,
+                  typing ? styles.contactSubTyping : null,
+                  !typing && conversation.presence === 'available'
+                    ? styles.contactSubOnline
+                    : null,
+                ]}
                 numberOfLines={1}
               >
                 {typing
@@ -1586,7 +1635,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
                     ? `${typing.by} يكتب الآن…`
                     : 'يكتب الآن…'
                   : null}
-                {!typing && conversation.contact_phone ? `+${conversation.contact_phone}` : ''}
+                {!typing && !isGroup && conversation.presence === 'available'
+                  ? 'متصل الآن'
+                  : null}
+                {!typing && !isGroup && conversation.presence !== 'available' && conversation.last_seen_at
+                  ? formatLastSeen(conversation.last_seen_at)
+                  : null}
+                {!typing && (isGroup || !conversation.presence || (!conversation.last_seen_at && conversation.presence !== 'available')) && conversation.contact_phone ? `+${conversation.contact_phone}` : ''}
                 {!typing && conversation.session?.device_name
                   ? ` • ${conversation.session.device_name}`
                   : ''}
@@ -1603,6 +1658,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         </View>
 
         <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setNotesVisible(true)}
+            style={styles.actionIconBtn}
+            hitSlop={8}
+          >
+            <MaterialCommunityIcons name="note-text-outline" size={22} color="#FFFFFF" />
+          </TouchableOpacity>
+
           <TouchableOpacity
             onPress={handleCallContact}
             style={styles.actionIconBtn}
@@ -1853,6 +1916,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         }}
       />
 
+      <ConversationNotesModal
+        conversation={notesVisible ? conversation : null}
+        currentUserId={user?.id}
+        isAgent={isAgent}
+        onClose={() => setNotesVisible(false)}
+      />
+
       <PinDurationModal
         visible={pinDurationVisible}
         onClose={() => setPinDurationVisible(false)}
@@ -2027,6 +2097,10 @@ const styles = StyleSheet.create({
   contactSubTyping: {
     color: '#53DEBD',
     fontWeight: '600',
+  },
+  contactSubOnline: {
+    color: '#7DF3C4',
+    fontWeight: '700',
   },
   typingRow: {
     alignItems: 'flex-start',

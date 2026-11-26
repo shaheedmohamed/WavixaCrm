@@ -6,7 +6,7 @@ use Illuminate\Database\Eloquent\Model;
 
 class CrmChatList extends Model
 {
-    protected $fillable = ['owner_id', 'name'];
+    protected $fillable = ['owner_id', 'name', 'color'];
 
     public function items()
     {

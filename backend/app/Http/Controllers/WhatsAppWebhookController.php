@@ -649,6 +649,66 @@ class WhatsAppWebhookController extends Controller
     }
 
     /**
+     * Peer presence stanzas (available/unavailable) — only arrive for
+     * contacts the engine presence-subscribed to. Stored on the conversation
+     * so the CRM can show "متصل الآن" / "آخر ظهور".
+     */
+    public function presence(Request $request)
+    {
+        try {
+            $data = $request->validate([
+                'userId' => 'required|string',
+                'from' => 'required|string',
+                'state' => 'required|string|in:available,unavailable',
+                'last' => 'nullable|integer',
+            ]);
+
+            $session = $this->resolveSession($data['userId']);
+            if (!$session) {
+                return response()->json(['success' => false, 'message' => 'Session not found'], 404);
+            }
+
+            $chatJid = $data['from'];
+            if (str_ends_with($chatJid, '@lid')) {
+                $chatJid = DB::table('whatsapp_lid_mappings')->where('lid', $chatJid)->value('pn') ?? $chatJid;
+            }
+
+            $conversation = $this->findConversationByJid($session, $chatJid);
+            if ($conversation) {
+                $updates = ['presence' => $data['state']];
+                if ($data['state'] === 'unavailable') {
+                    // `last` = epoch seconds when the peer's privacy shares
+                    // last-seen; otherwise the stanza's arrival IS the last
+                    // moment they were online.
+                    $updates['last_seen_at'] = !empty($data['last'])
+                        ? \Carbon\Carbon::createFromTimestamp((int) $data['last'])
+                        : now();
+                } else {
+                    $updates['last_seen_at'] = now();
+                }
+                $conversation->update($updates);
+
+                try {
+                    event(new \App\Events\CrmRealtimeEvent($session->user_id, 'presence', [
+                        'session_id' => $session->id,
+                        'conversation_id' => $conversation->id,
+                        'chat_jid' => $conversation->contact_jid,
+                        'state' => $data['state'],
+                        'last_seen_at' => optional($conversation->last_seen_at)->toIso8601String(),
+                    ]));
+                } catch (\Throwable $e) {
+                    Log::debug('CRM broadcast (presence) failed: ' . $e->getMessage());
+                }
+            }
+
+            return response()->json(['success' => true]);
+        } catch (\Exception $e) {
+            Log::error("Error processing presence webhook: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'Error processing webhook'], 500);
+        }
+    }
+
+    /**
      * Resolve a typing stanza's `participant` jid into a display name for
      * group chats — 1:1 chats need none (the contact title already says who).
      */
@@ -873,6 +933,7 @@ class WhatsAppWebhookController extends Controller
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                         'rating', 'rating_note', 'last_outgoing_user_id',
                         'transferred_by', 'transferred_at', 'transfer_count',
+                        'presence', 'last_seen_at', 'snoozed_until', 'snoozed_by',
                     ]),
                     [
                         'assigned_agent' => $fresh->assignedAgent ? [

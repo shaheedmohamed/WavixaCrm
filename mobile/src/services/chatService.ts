@@ -12,6 +12,7 @@ import {
   GroupMembersResponse,
   StatusesResponse,
   StatusItemsResponse,
+  ConversationNote,
 } from '../types/crm';
 
 export interface ConversationsParams {
@@ -194,6 +195,7 @@ export const chatService = {
   async saveChatList(payload: {
     id?: number;
     name: string;
+    color?: string | null;
     conversation_ids?: number[];
   }): Promise<{ success: boolean; list: ChatList }> {
     const response = await apiClient.post('/crm/chat-lists', payload);
@@ -209,6 +211,33 @@ export const chatService = {
     const response = await apiClient.post(`/crm/chat-lists/${id}/remove-members`, {
       conversation_ids: conversationIds,
     });
+    return response.data;
+  },
+
+  // Snooze — park the chat until the timer expires, then it resurfaces alone.
+  async snoozeConversation(conversationId: number, payload: { minutes?: number; until?: string } = {}) {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/snooze`, payload);
+    return response.data;
+  },
+
+  async unsnoozeConversation(conversationId: number) {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/unsnooze`);
+    return response.data;
+  },
+
+  // Internal team notes — shift handover, visible to the whole team.
+  async getNotes(conversationId: number): Promise<{ success: boolean; notes: ConversationNote[] }> {
+    const response = await apiClient.get(`/crm/conversations/${conversationId}/notes`);
+    return response.data;
+  },
+
+  async addNote(conversationId: number, body: string): Promise<{ success: boolean; note: ConversationNote }> {
+    const response = await apiClient.post(`/crm/conversations/${conversationId}/notes`, { body });
+    return response.data;
+  },
+
+  async deleteNote(noteId: number): Promise<{ success: boolean }> {
+    const response = await apiClient.delete(`/crm/notes/${noteId}`);
     return response.data;
   },
 

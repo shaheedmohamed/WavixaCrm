@@ -10,6 +10,7 @@ import {
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ChatAvatar } from './ChatAvatar';
+import { useNow } from '../hooks/useNow';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
@@ -32,6 +33,8 @@ interface ChatContextMenuModalProps {
   onClaim?: (conv: Conversation) => void;
   onTransfer?: (conv: Conversation) => void;
   onResolve?: (conv: Conversation) => void;
+  onSnooze?: (conv: Conversation) => void;
+  onOpenNotes?: (conv: Conversation) => void;
 }
 
 export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
@@ -51,11 +54,14 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
   onClaim,
   onTransfer,
   onResolve,
+  onSnooze,
+  onOpenNotes,
   currentUserId,
   isAgent,
 }) => {
   const insets = useSafeAreaInsets();
   const [showMuteStep, setShowMuteStep] = useState(false);
+  const now = useNow(30_000, !!conversation);
 
   useEffect(() => {
     if (!conversation) {
@@ -73,6 +79,9 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
   const isArchived = Boolean(conversation.archived_at);
   const isPinned = Boolean(conversation.is_pinned);
   const hasUnread = (conversation.unread_count || 0) > 0 || isMarkedUnread;
+  const isSnoozed =
+    !!conversation.snoozed_until &&
+    new Date(conversation.snoozed_until).getTime() > now;
 
   // Distribution actions — same rules as the web desk: groups are never
   // exclusively held; agents claim unassigned work and can only act on the
@@ -300,6 +309,50 @@ export const ChatContextMenuModal: React.FC<ChatContextMenuModalProps> = ({
                   {isFavorite ? 'إزالة من المفضلة' : 'إضافة إلى المفضلة'}
                 </Text>
               </TouchableOpacity>
+
+              {onSnooze && (
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={() => {
+                    onClose();
+                    onSnooze(conversation);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconBox, { backgroundColor: '#EEF2FF' }]}>
+                    <MaterialCommunityIcons
+                      name={isSnoozed ? 'alarm-off' : 'alarm-snooze'}
+                      size={20}
+                      color="#6366F1"
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>
+                    {isSnoozed ? 'إدارة التأجيل / إلغاؤه' : 'ذكّرني لاحقاً (تأجيل)'}
+                  </Text>
+                  <Ionicons name="chevron-back" size={18} color="#8696A0" />
+                </TouchableOpacity>
+              )}
+
+              {onOpenNotes && (
+                <TouchableOpacity
+                  style={styles.actionRow}
+                  onPress={() => {
+                    onClose();
+                    onOpenNotes(conversation);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.iconBox, { backgroundColor: '#FFFBEA' }]}>
+                    <MaterialCommunityIcons
+                      name="note-text-outline"
+                      size={20}
+                      color="#92700C"
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>ملاحظات داخلية</Text>
+                  <Ionicons name="chevron-back" size={18} color="#8696A0" />
+                </TouchableOpacity>
+              )}
 
               <TouchableOpacity
                 style={styles.actionRow}

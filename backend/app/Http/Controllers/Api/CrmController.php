@@ -272,6 +272,7 @@ class CrmController extends Controller
                         'assigned_agent_id', 'assigned_at', 'resolved_at', 'resolved_by',
                         'rating', 'rating_note', 'last_outgoing_user_id',
                         'transferred_by', 'transferred_at', 'transfer_count',
+                        'presence', 'last_seen_at', 'snoozed_until', 'snoozed_by',
                     ]),
                     [
                         'assigned_agent' => $conversation->assignedAgent ? [
@@ -1527,6 +1528,8 @@ class CrmController extends Controller
                         'mine' => $query->where('assigned_agent_id', $user->id),
                         'unassigned' => $query->whereNull('assigned_agent_id'),
                         'unread' => $query->where('unread_count', '>', 0),
+                        'waiting' => $query->where('last_message_direction', 'incoming'),
+                        'snoozed' => $query->where('snoozed_until', '>', now()),
                         default => null,
                     };
                 }
@@ -1553,6 +1556,12 @@ class CrmController extends Controller
                 'mine' => $query->where('assigned_agent_id', $user->id)->whereNull('resolved_at'),
                 'unread' => $query->where('unread_count', '>', 0),
                 'resolved' => $query->whereNotNull('resolved_at'),
+                // SLA view: chats whose last word is the customer's, oldest
+                // wait first — the ones burning the longest answer first.
+                'waiting' => $query->whereNull('resolved_at')
+                    ->where('last_message_direction', 'incoming')
+                    ->whereNotNull('last_message_at'),
+                'snoozed' => $query->where('snoozed_until', '>', now()),
                 default => null,
             };
 
@@ -1574,6 +1583,16 @@ class CrmController extends Controller
                  fn ($q) => $q->whereNull('archived_at'));
         }
 
+        // Actively snoozed chats leave every normal tab until their timer
+        // expires — they resurface on their own. The 'snoozed' scope lists
+        // them, and search still reaches them so nobody loses a thread.
+        if ($scope !== 'snoozed' && !$request->filled('search')) {
+            $query->where(function ($q) {
+                $q->whereNull('snoozed_until')
+                  ->orWhere('snoozed_until', '<=', now());
+            });
+        }
+
         if ($request->filled('search')) {
             $search = trim($request->search);
             $query->where(function ($q) use ($search) {
@@ -1584,8 +1603,11 @@ class CrmController extends Controller
             });
         }
 
-        $conversations = $query->orderBy('is_pinned', 'desc')
-            ->orderBy('last_message_at', 'desc')
+        $conversations = $query
+            ->when($scope === 'waiting', fn ($q) => $q->orderBy('last_message_at', 'asc'))
+            ->when($scope !== 'waiting', fn ($q) => $q->orderBy('is_pinned', 'desc'))
+            ->when($scope === 'snoozed', fn ($q) => $q->orderBy('snoozed_until', 'asc'))
+            ->when($scope !== 'waiting', fn ($q) => $q->orderBy('last_message_at', 'desc'))
             ->paginate($request->input('per_page', 40));
 
         // Live "يكتب الآن…" flags for the mobile pollers.
@@ -4675,6 +4697,120 @@ class CrmController extends Controller
         }
     }
 
+    // ---- Snooze / remind-me-later ----------------------------------------
+
+    /**
+     * Park a chat until a future moment — it leaves every normal tab and
+     * resurfaces by itself once snoozed_until passes.
+     */
+    public function snoozeConversation(Request $request, $id)
+    {
+        $data = $request->validate([
+            'minutes' => 'nullable|integer|min:1|max:43200',
+            'until' => 'nullable|date|after:now',
+        ]);
+        if (empty($data['minutes']) && empty($data['until'])) {
+            $data['minutes'] = 120;
+        }
+
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($id);
+        if ($locker = $this->conversationLocker($conv, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
+
+        $until = !empty($data['until'])
+            ? \Carbon\Carbon::parse($data['until'])
+            : now()->addMinutes((int) $data['minutes']);
+        $conv->update([
+            'snoozed_until' => $until,
+            'snoozed_by' => $request->user()->id,
+        ]);
+        $this->broadcastConversation($conv->refresh());
+
+        return response()->json([
+            'success' => true,
+            'snoozed_until' => $until->toIso8601String(),
+        ]);
+    }
+
+    public function unsnoozeConversation(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($id);
+        if ($locker = $this->conversationLocker($conv, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
+        $conv->update(['snoozed_until' => null, 'snoozed_by' => null]);
+        $this->broadcastConversation($conv->refresh());
+        return response()->json(['success' => true]);
+    }
+
+    // ---- Internal conversation notes --------------------------------------
+
+    public function getNotes(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($id);
+        $notes = \App\Models\CrmConversationNote::where('conversation_id', $conv->id)
+            ->with('author:id,name')
+            ->orderBy('id')
+            ->get()
+            ->map(fn ($n) => [
+                'id' => $n->id,
+                'body' => $n->body,
+                'created_at' => $n->created_at?->toIso8601String(),
+                'author' => $n->author ? ['id' => $n->author->id, 'name' => $n->author->name] : null,
+            ]);
+        return response()->json(['success' => true, 'notes' => $notes]);
+    }
+
+    public function addNote(Request $request, $id)
+    {
+        $data = $request->validate(['body' => 'required|string|max:2000']);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($id);
+        $note = \App\Models\CrmConversationNote::create([
+            'conversation_id' => $conv->id,
+            'user_id' => $request->user()->id,
+            'body' => trim($data['body']),
+        ]);
+
+        try {
+            event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'conversation.note', [
+                'conversation_id' => $conv->id,
+                'note_id' => $note->id,
+            ]));
+        } catch (\Throwable $e) {
+            Log::debug('CRM broadcast (note) failed: ' . $e->getMessage());
+        }
+
+        $note->load('author:id,name');
+        return response()->json([
+            'success' => true,
+            'note' => [
+                'id' => $note->id,
+                'body' => $note->body,
+                'created_at' => $note->created_at?->toIso8601String(),
+                'author' => $note->author ? ['id' => $note->author->id, 'name' => $note->author->name] : null,
+            ],
+        ]);
+    }
+
+    public function deleteNote(Request $request, $id)
+    {
+        $note = \App\Models\CrmConversationNote::findOrFail($id);
+        $user = $request->user();
+        // Agents may only remove their own notes; owners/admins clean any.
+        if ($user->crm_role === 'agent' && $note->user_id !== $user->id) {
+            return response()->json(['success' => false, 'message' => 'غير مسموح'], 403);
+        }
+        $allowed = $this->getAllowedSessionIds($user);
+        WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($note->conversation_id);
+        $note->delete();
+        return response()->json(['success' => true]);
+    }
+
     // ---- Custom chat lists (WhatsApp-style filter lists) ------------------
 
     /** GET the agent's lists with member conversation ids. */
@@ -4687,6 +4823,7 @@ class CrmController extends Controller
             ->map(fn ($l) => [
                 'id' => $l->id,
                 'name' => $l->name,
+                'color' => $l->color,
                 'conversation_ids' => $l->items->pluck('conversation_id')->values(),
             ]);
         return response()->json(['success' => true, 'lists' => $lists]);
@@ -4698,6 +4835,7 @@ class CrmController extends Controller
         $data = $request->validate([
             'id' => 'nullable|integer',
             'name' => 'required|string|max:100',
+            'color' => 'nullable|string|max:20|regex:/^#[0-9a-fA-F]{6}$/',
             'conversation_ids' => 'nullable|array|max:500',
             'conversation_ids.*' => 'integer',
         ]);
@@ -4706,6 +4844,9 @@ class CrmController extends Controller
             ? \App\Models\CrmChatList::where('owner_id', $request->user()->id)->findOrFail($data['id'])
             : new \App\Models\CrmChatList(['owner_id' => $request->user()->id]);
         $list->name = $data['name'];
+        if (array_key_exists('color', $data)) {
+            $list->color = $data['color'];
+        }
         $list->save();
 
         $convIds = WhatsAppConversation::whereIn('session_id', $allowed)
@@ -4714,7 +4855,7 @@ class CrmController extends Controller
             \App\Models\CrmChatListItem::firstOrCreate(['list_id' => $list->id, 'conversation_id' => $cid]);
         }
         return response()->json(['success' => true, 'list' => [
-            'id' => $list->id, 'name' => $list->name,
+            'id' => $list->id, 'name' => $list->name, 'color' => $list->color,
             'conversation_ids' => $list->items()->pluck('conversation_id')->values(),
         ]]);
     }

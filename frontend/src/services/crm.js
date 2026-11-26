@@ -320,6 +320,30 @@ class CrmService {
     return resp.data;
   }
 
+  // Snooze — park the chat until the timer expires, then it resurfaces alone.
+  async snoozeConversation(id, payload = {}) {
+    const resp = await this.client().post('/conversations/' + id + '/snooze', payload);
+    return resp.data;
+  }
+  async unsnoozeConversation(id) {
+    const resp = await this.client().post('/conversations/' + id + '/unsnooze');
+    return resp.data;
+  }
+
+  // Internal team notes attached to a conversation (shift handover).
+  async getNotes(conversationId) {
+    const resp = await this.client().get('/conversations/' + conversationId + '/notes');
+    return resp.data;
+  }
+  async addNote(conversationId, body) {
+    const resp = await this.client().post('/conversations/' + conversationId + '/notes', { body });
+    return resp.data;
+  }
+  async deleteNote(noteId) {
+    const resp = await this.client().delete('/notes/' + noteId);
+    return resp.data;
+  }
+
   async sendMedia(formData) {
     const resp = await this.client().post('/messages/send-media', formData, {
       headers: {

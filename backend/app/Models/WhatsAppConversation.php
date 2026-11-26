@@ -41,6 +41,10 @@ class WhatsAppConversation extends Model
         'transfer_count',
         'group_past_participants',
         'handle_seconds',
+        'presence',
+        'last_seen_at',
+        'snoozed_until',
+        'snoozed_by',
     ];
 
     protected $casts = [
@@ -60,6 +64,9 @@ class WhatsAppConversation extends Model
         'transfer_count' => 'integer',
         'group_past_participants' => 'array',
         'handle_seconds' => 'integer',
+        'last_seen_at' => 'datetime',
+        'snoozed_until' => 'datetime',
+        'snoozed_by' => 'integer',
     ];
 
     public function user(): BelongsTo
@@ -100,5 +107,10 @@ class WhatsAppConversation extends Model
     public function logs(): HasMany
     {
         return $this->hasMany(WhatsAppAutoReplyLog::class, 'conversation_id');
+    }
+
+    public function notes(): HasMany
+    {
+        return $this->hasMany(CrmConversationNote::class, 'conversation_id');
     }
 }

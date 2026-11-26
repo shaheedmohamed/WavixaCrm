@@ -56,6 +56,19 @@ export interface Conversation {
   last_outgoing_user?: { id: number; name: string } | null;
   // Live "يكتب الآن…" flag — `by` carries the typer's name in groups.
   typing?: { by?: string | null } | null;
+  // Peer presence pushed by the engine — drives the "متصل الآن" badge.
+  presence?: 'available' | 'unavailable' | null;
+  last_seen_at?: string | null;
+  // Snoozed chats hide from normal tabs until this timestamp passes.
+  snoozed_until?: string | null;
+  snoozed_by?: number | null;
+}
+
+export interface ConversationNote {
+  id: number;
+  body: string;
+  created_at?: string | null;
+  author?: { id: number; name: string } | null;
 }
 
 export interface PinnedPreview {
@@ -173,6 +186,7 @@ export interface MediaEditSpec {
 export interface ChatList {
   id: number;
   name: string;
+  color?: string | null;
   conversation_ids: number[];
 }
 
@@ -217,6 +231,8 @@ export type FilterScope =
   | 'unassigned'
   | 'unread'
   | 'favorites'
+  | 'waiting'
+  | 'snoozed'
   | 'resolved'
   | 'archived'
   | 'all'

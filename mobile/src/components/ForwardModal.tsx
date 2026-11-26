@@ -279,7 +279,11 @@ export const ForwardModal: React.FC<ForwardModalProps> = ({
         )}
 
         <TouchableOpacity
-          style={[styles.sendBtn, (selected.length === 0 || sending) && styles.sendBtnDisabled]}
+          style={[
+            styles.sendBtn,
+            { marginBottom: Math.max(insets.bottom, 12) },
+            (selected.length === 0 || sending) && styles.sendBtnDisabled,
+          ]}
           onPress={doForward}
           disabled={selected.length === 0 || sending}
           activeOpacity={0.85}

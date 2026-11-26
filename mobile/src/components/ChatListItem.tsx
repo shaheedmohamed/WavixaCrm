@@ -2,10 +2,16 @@ import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { ChatAvatar } from './ChatAvatar';
+import { useNow } from '../hooks/useNow';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
 export const CHAT_LIST_ITEM_HEIGHT = 78;
+
+export interface ChatListTag {
+  name: string;
+  color?: string | null;
+}
 
 interface ChatListItemProps {
   conversation: Conversation;
@@ -17,7 +23,7 @@ interface ChatListItemProps {
   isMuted?: boolean;
   isFavorite?: boolean;
   isMarkedUnread?: boolean;
-  listNames?: string[];
+  listTags?: ChatListTag[];
   selectionMode?: boolean;
   isSelected?: boolean;
 }
@@ -61,7 +67,7 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
   isMuted = false,
   isFavorite = false,
   isMarkedUnread = false,
-  listNames = [],
+  listTags = [],
   selectionMode = false,
   isSelected = false,
 }) => {
@@ -117,6 +123,21 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
       ? conversation.last_outgoing_user.name
       : null;
 
+  // SLA wait badge — the customer's last message is still unanswered.
+  const now = useNow(30_000);
+  const waitingMinutes =
+    !conversation.resolved_at &&
+    conversation.last_message_direction === 'incoming' &&
+    conversation.last_message_at
+      ? Math.max(
+          0,
+          Math.floor((now - new Date(conversation.last_message_at).getTime()) / 60000)
+        )
+      : 0;
+  const isSnoozed =
+    !!conversation.snoozed_until && new Date(conversation.snoozed_until).getTime() > now;
+  const isOnline = conversation.presence === 'available';
+
   return (
     <TouchableOpacity
       style={[styles.card, isSelected && styles.cardSelected]}
@@ -139,6 +160,7 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
         disabled={!onAvatarPress}
       >
         <ChatAvatar conversation={conversation} title={title} size={50} badge />
+        {isOnline && <View style={styles.onlineDot} />}
       </TouchableOpacity>
 
       <View style={styles.centerInfo}>
@@ -217,13 +239,39 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
             </View>
           ) : null}
 
-          {listNames.slice(0, 2).map((ln) => (
-            <View key={ln} style={styles.listTag}>
-              <Text style={styles.listTagText} numberOfLines={1}>
-                {ln}
+          {isSnoozed && (
+            <View style={styles.snoozedTag}>
+              <MaterialCommunityIcons name="sleep" size={10} color="#6366F1" />
+              <Text style={styles.snoozedTagText} numberOfLines={1}>
+                مؤجلة
               </Text>
             </View>
-          ))}
+          )}
+
+          {waitingMinutes >= 1 && (
+            <View style={styles.waitingTag}>
+              <Ionicons name="time-outline" size={10} color="#DC2626" />
+              <Text style={styles.waitingTagText} numberOfLines={1}>
+                من {waitingMinutes >= 60
+                  ? `${Math.floor(waitingMinutes / 60)}س${waitingMinutes % 60 ? ` ${waitingMinutes % 60}د` : ''}`
+                  : `${waitingMinutes} د`}
+              </Text>
+            </View>
+          )}
+
+          {listTags.slice(0, 2).map((lt) => {
+            const c = lt.color || '#7C3AED';
+            return (
+              <View
+                key={lt.name}
+                style={[styles.listTag, { backgroundColor: `${c}1F`, borderColor: c }]}
+              >
+                <Text style={[styles.listTagText, { color: c }]} numberOfLines={1}>
+                  {lt.name}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       </View>
 
@@ -301,6 +349,17 @@ const styles = StyleSheet.create({
   avatarContainer: {
     position: 'relative',
     marginLeft: 12,
+  },
+  onlineDot: {
+    position: 'absolute',
+    bottom: 1,
+    left: 1,
+    width: 14,
+    height: 14,
+    borderRadius: 7,
+    backgroundColor: '#25D366',
+    borderWidth: 2,
+    borderColor: '#FFFFFF',
   },
   centerInfo: {
     flex: 1,
@@ -419,16 +478,43 @@ const styles = StyleSheet.create({
     color: '#667781',
   },
   listTag: {
-    backgroundColor: '#F3E8FF',
     paddingHorizontal: 6,
     paddingVertical: 1,
     borderRadius: 5,
+    borderWidth: 1,
     maxWidth: 72,
   },
   listTagText: {
     fontSize: 9,
     fontWeight: '700',
-    color: '#7C3AED',
+  },
+  snoozedTag: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+  },
+  snoozedTagText: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: '#6366F1',
+  },
+  waitingTag: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#FEF2F2',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 5,
+  },
+  waitingTagText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#DC2626',
   },
   leftMeta: {
     alignItems: 'flex-start',

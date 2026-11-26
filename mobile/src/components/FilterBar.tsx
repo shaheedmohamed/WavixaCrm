@@ -53,6 +53,8 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
       : [{ id: 'groups' as FilterScope, label: 'المجموعات', icon: 'account-group-outline' }]),
     { id: 'mine', label: 'محادثاتي', icon: 'account-outline' },
     { id: 'unassigned', label: 'جديد / متاح', icon: 'account-plus-outline' },
+    { id: 'waiting', label: 'بانتظار رد', icon: 'timer-sand' },
+    { id: 'snoozed', label: 'مؤجلة', icon: 'sleep' },
     ...customLists.map((l) => ({
       id: `list:${l.id}` as FilterScope,
       label: l.name,
@@ -105,11 +107,20 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
               activeOpacity={0.75}
             >
               {item.icon && (
-                <MaterialCommunityIcons
-                  name={item.icon as any}
-                  size={14}
-                  color={isActive ? '#FFFFFF' : '#667781'}
-                />
+                item.customList?.color ? (
+                  <View
+                    style={[
+                      styles.listColorDot,
+                      { backgroundColor: item.customList.color },
+                    ]}
+                  />
+                ) : (
+                  <MaterialCommunityIcons
+                    name={item.icon as any}
+                    size={14}
+                    color={isActive ? '#FFFFFF' : '#667781'}
+                  />
+                )
               )}
 
               <Text style={[styles.chipText, isActive && styles.chipTextActive]}>
@@ -143,6 +154,11 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
 });
 
 const styles = StyleSheet.create({
+  listColorDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
   wrapper: {
     backgroundColor: '#FFFFFF',
     borderBottomWidth: StyleSheet.hairlineWidth,

@@ -18,6 +18,14 @@ import { ChatList, Conversation } from '../types/crm';
 import { FAVORITES_LIST_NAME } from '../services/chatPrefs';
 import { Colors } from '../constants/theme';
 
+// WhatsApp-Business-style label colors — the picked swatch tints the
+// list's tag on every conversation row (and the web UI shares the column).
+const LIST_COLORS = [
+  '#E11D48', '#F97316', '#F59E0B', '#16A34A',
+  '#0D9488', '#2563EB', '#7C3AED', '#DB2777',
+  '#4B5563', '#111B21',
+];
+
 interface AddToListModalProps {
   visible: boolean;
   conversations: Conversation[];
@@ -28,7 +36,8 @@ interface AddToListModalProps {
   initialCreateOnly?: boolean;
   onClose: () => void;
   onToggleListMember: (list: ChatList, convIds: number[], shouldBeMember: boolean) => Promise<void>;
-  onCreateList: (name: string, convIds: number[]) => Promise<void>;
+  onCreateList: (name: string, convIds: number[], color?: string | null) => Promise<void>;
+  onSetListColor?: (list: ChatList, color: string | null) => Promise<void>;
   onDeleteList: (list: ChatList) => Promise<void>;
   onToggleFavorite: (conv: Conversation) => void;
   onClaimToMine?: (conv: Conversation) => Promise<void>;
@@ -46,6 +55,7 @@ export const AddToListModal: React.FC<AddToListModalProps> = ({
   onClose,
   onToggleListMember,
   onCreateList,
+  onSetListColor,
   onDeleteList,
   onToggleFavorite,
   onClaimToMine,
@@ -53,14 +63,18 @@ export const AddToListModal: React.FC<AddToListModalProps> = ({
 }) => {
   const insets = useSafeAreaInsets();
   const [newListName, setNewListName] = useState('');
+  const [newListColor, setNewListColor] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [busyListId, setBusyListId] = useState<number | string | null>(null);
   const [showCreateBox, setShowCreateBox] = useState(initialCreateOnly);
+  const [colorEditListId, setColorEditListId] = useState<number | null>(null);
 
   useEffect(() => {
     if (visible) {
       Promise.resolve().then(() => {
         setNewListName('');
+        setNewListColor(null);
+        setColorEditListId(null);
         setShowCreateBox(
           initialCreateOnly ||
             chatLists.filter((l) => l.name !== FAVORITES_LIST_NAME).length === 0
@@ -80,8 +94,9 @@ export const AddToListModal: React.FC<AddToListModalProps> = ({
     if (!trimmed || creating) return;
     setCreating(true);
     try {
-      await onCreateList(trimmed, convIds);
+      await onCreateList(trimmed, convIds, newListColor);
       setNewListName('');
+      setNewListColor(null);
       if (initialCreateOnly) {
         onClose();
       } else {
@@ -294,6 +309,30 @@ export const AddToListModal: React.FC<AddToListModalProps> = ({
                       )}
                     </TouchableOpacity>
                   </View>
+                  <Text style={styles.createLabel}>لون التاج (اختياري):</Text>
+                  <View style={styles.swatchRow}>
+                    <TouchableOpacity
+                      style={[styles.swatch, styles.swatchNone, !newListColor && styles.swatchSelected]}
+                      onPress={() => setNewListColor(null)}
+                    >
+                      {!newListColor && <Ionicons name="checkmark" size={13} color="#667781" />}
+                    </TouchableOpacity>
+                    {LIST_COLORS.map((c) => (
+                      <TouchableOpacity
+                        key={c}
+                        style={[
+                          styles.swatch,
+                          { backgroundColor: c },
+                          newListColor === c && styles.swatchSelected,
+                        ]}
+                        onPress={() => setNewListColor(c)}
+                      >
+                        {newListColor === c && (
+                          <Ionicons name="checkmark" size={13} color="#FFFFFF" />
+                        )}
+                      </TouchableOpacity>
+                    ))}
+                  </View>
                 </View>
               )}
 
@@ -310,51 +349,113 @@ export const AddToListModal: React.FC<AddToListModalProps> = ({
                     convIds.length > 0 &&
                     convIds.every((id) => list.conversation_ids?.includes(id));
                   const isBusy = busyListId === list.id;
+                  const listColor = list.color || null;
 
                   return (
-                    <TouchableOpacity
-                      key={list.id}
-                      style={styles.listRow}
-                      disabled={isBusy || convIds.length === 0}
-                      onPress={async () => {
-                        if (convIds.length === 0) return;
-                        setBusyListId(list.id);
-                        try {
-                          await onToggleListMember(list, convIds, !allIncluded);
-                        } finally {
-                          setBusyListId(null);
-                        }
-                      }}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.iconCircle, { backgroundColor: '#F3E8FF' }]}>
-                        <MaterialCommunityIcons name="format-list-bulleted" size={18} color="#7C3AED" />
-                      </View>
-                      <View style={styles.rowTextWrap}>
-                        <Text style={styles.rowTitle}>{list.name}</Text>
-                        <Text style={styles.rowSub}>
-                          {list.conversation_ids?.length || 0} محادثة
-                        </Text>
-                      </View>
-
+                    <View key={list.id}>
                       <TouchableOpacity
-                        onPress={() => confirmDelete(list)}
-                        style={styles.deleteListBtn}
-                        hitSlop={8}
+                        style={styles.listRow}
+                        disabled={isBusy || convIds.length === 0}
+                        onPress={async () => {
+                          if (convIds.length === 0) return;
+                          setBusyListId(list.id);
+                          try {
+                            await onToggleListMember(list, convIds, !allIncluded);
+                          } finally {
+                            setBusyListId(null);
+                          }
+                        }}
+                        onLongPress={
+                          onSetListColor
+                            ? () =>
+                                setColorEditListId((prev) =>
+                                  prev === list.id ? null : list.id
+                                )
+                            : undefined
+                        }
+                        activeOpacity={0.7}
                       >
-                        <Ionicons name="trash-outline" size={16} color="#94A3B8" />
+                        <TouchableOpacity
+                          style={[
+                            styles.iconCircle,
+                            listColor
+                              ? { backgroundColor: listColor }
+                              : { backgroundColor: '#F3E8FF' },
+                          ]}
+                          onPress={
+                            onSetListColor
+                              ? () =>
+                                  setColorEditListId((prev) =>
+                                    prev === list.id ? null : list.id
+                                  )
+                              : undefined
+                          }
+                          disabled={!onSetListColor}
+                        >
+                          <MaterialCommunityIcons
+                            name="format-list-bulleted"
+                            size={18}
+                            color={listColor ? '#FFFFFF' : '#7C3AED'}
+                          />
+                        </TouchableOpacity>
+                        <View style={styles.rowTextWrap}>
+                          <Text style={styles.rowTitle}>{list.name}</Text>
+                          <Text style={styles.rowSub}>
+                            {list.conversation_ids?.length || 0} محادثة
+                          </Text>
+                        </View>
+
+                        <TouchableOpacity
+                          onPress={() => confirmDelete(list)}
+                          style={styles.deleteListBtn}
+                          hitSlop={8}
+                        >
+                          <Ionicons name="trash-outline" size={16} color="#94A3B8" />
+                        </TouchableOpacity>
+
+                        {convIds.length > 0 && (
+                          isBusy ? (
+                            <ActivityIndicator size="small" color={Colors.primary} />
+                          ) : (
+                            <View style={[styles.checkbox, allIncluded && styles.checkboxChecked]}>
+                              {allIncluded && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
+                            </View>
+                          )
+                        )}
                       </TouchableOpacity>
 
-                      {convIds.length > 0 && (
-                        isBusy ? (
-                          <ActivityIndicator size="small" color={Colors.primary} />
-                        ) : (
-                          <View style={[styles.checkbox, allIncluded && styles.checkboxChecked]}>
-                            {allIncluded && <Ionicons name="checkmark" size={14} color="#FFFFFF" />}
-                          </View>
-                        )
+                      {onSetListColor && colorEditListId === list.id && (
+                        <View style={styles.inlineSwatchRow}>
+                          <TouchableOpacity
+                            style={[styles.swatch, styles.swatchNone, !listColor && styles.swatchSelected]}
+                            onPress={async () => {
+                              await onSetListColor(list, null);
+                              setColorEditListId(null);
+                            }}
+                          >
+                            <MaterialCommunityIcons name="format-color-fill" size={12} color="#94A3B8" />
+                          </TouchableOpacity>
+                          {LIST_COLORS.map((c) => (
+                            <TouchableOpacity
+                              key={c}
+                              style={[
+                                styles.swatch,
+                                { backgroundColor: c },
+                                listColor === c && styles.swatchSelected,
+                              ]}
+                              onPress={async () => {
+                                await onSetListColor(list, c);
+                                setColorEditListId(null);
+                              }}
+                            >
+                              {listColor === c && (
+                                <Ionicons name="checkmark" size={13} color="#FFFFFF" />
+                              )}
+                            </TouchableOpacity>
+                          ))}
+                        </View>
                       )}
-                    </TouchableOpacity>
+                    </View>
                   );
                 })
               )}
@@ -570,6 +671,37 @@ const styles = StyleSheet.create({
   },
   deleteListBtn: {
     padding: 4,
+  },
+  swatchRow: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 2,
+  },
+  inlineSwatchRow: {
+    flexDirection: 'row-reverse',
+    flexWrap: 'wrap',
+    gap: 8,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    backgroundColor: '#F8FAFB',
+    borderRadius: 10,
+    marginTop: -4,
+    marginBottom: 2,
+  },
+  swatch: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  swatchNone: {
+    backgroundColor: '#E2E8F0',
+  },
+  swatchSelected: {
+    borderWidth: 2.5,
+    borderColor: '#111B21',
   },
   emptyListsBox: {
     alignItems: 'center',

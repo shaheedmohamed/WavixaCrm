@@ -65,6 +65,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/whatsapp/contacts-sync', [\App\Http\Controllers\WhatsAppWebhookController::class, 'contactsSync']);
         Route::post('/whatsapp/message-media', [\App\Http\Controllers\WhatsAppWebhookController::class, 'messageMedia']);
         Route::post('/whatsapp/chatstate', [\App\Http\Controllers\WhatsAppWebhookController::class, 'chatstate']);
+        Route::post('/whatsapp/presence', [\App\Http\Controllers\WhatsAppWebhookController::class, 'presence']);
 
         // Telegram service webhooks
         Route::post('/telegram/connected', [TelegramWebhookController::class, 'connected']);
@@ -236,6 +237,11 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/conversations/{id}/media', [\App\Http\Controllers\Api\CrmController::class, 'getConversationMedia']);
         Route::post('/messages/reaction', [\App\Http\Controllers\Api\CrmController::class, 'sendReaction']);
         Route::post('/messages/typing', [\App\Http\Controllers\Api\CrmController::class, 'sendTyping']);
+        Route::post('/conversations/{id}/snooze', [\App\Http\Controllers\Api\CrmController::class, 'snoozeConversation']);
+        Route::post('/conversations/{id}/unsnooze', [\App\Http\Controllers\Api\CrmController::class, 'unsnoozeConversation']);
+        Route::get('/conversations/{id}/notes', [\App\Http\Controllers\Api\CrmController::class, 'getNotes']);
+        Route::post('/conversations/{id}/notes', [\App\Http\Controllers\Api\CrmController::class, 'addNote']);
+        Route::delete('/notes/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteNote']);
 
         // WhatsApp statuses (stories) — captured from status@broadcast traffic
         Route::get('/statuses', [\App\Http\Controllers\Api\CrmController::class, 'getStatuses']);
