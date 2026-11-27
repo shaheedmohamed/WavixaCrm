@@ -16,6 +16,8 @@ interface MessageActionsSheetProps {
   onPin: (msg: Message) => void;
   onStar: (msg: Message) => void;
   onDelete: (msg: Message) => void;
+  /** WhatsApp "Message info" — delivery/read timeline (outgoing only). */
+  onInfo: (msg: Message) => void;
   /** Enter WhatsApp-style multi-select starting with this message. */
   onSelect: (msg: Message) => void;
 }
@@ -32,10 +34,12 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   onPin,
   onStar,
   onDelete,
+  onInfo,
   onSelect,
 }) => {
   const insets = useSafeAreaInsets();
   if (!message) return null;
+  const isOutgoing = message.direction === 'outgoing' || message.sent_by_user_id != null;
 
   const items = [
     {
@@ -72,6 +76,15 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
             onPress: () => {
               Clipboard.setStringAsync(message.message || '').catch(() => {});
             },
+          },
+        ]
+      : []),
+    ...(isOutgoing
+      ? [
+          {
+            icon: <Ionicons name="information-circle-outline" size={19} color="#54656F" />,
+            label: 'معلومات الرسالة',
+            onPress: () => onInfo(message),
           },
         ]
       : []),

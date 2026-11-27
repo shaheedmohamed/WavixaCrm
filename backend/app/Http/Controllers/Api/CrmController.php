@@ -5295,6 +5295,7 @@ class CrmController extends Controller
             'token' => 'required|string|max:200',
             'platform' => 'nullable|string|max:20',
             'device_name' => 'nullable|string|max:100',
+            'version_code' => 'nullable|integer|min:0',
         ]);
         $user = $request->user();
 
@@ -5319,6 +5320,7 @@ class CrmController extends Controller
                 'token' => $data['token'],
                 'platform' => $data['platform'] ?? null,
                 'device_name' => $data['device_name'] ?? null,
+                'version_code' => $data['version_code'] ?? null,
                 'registered_at' => now()->toIso8601String(),
             ])
             ->values()
@@ -5351,6 +5353,122 @@ class CrmController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * WhatsApp-style link preview — fetch a URL server-side and return its
+     * OpenGraph card. Cached per URL so a shared link is fetched once for
+     * every agent/device. Private/reserved IPs are refused: this is a
+     * reachable endpoint on an authenticated route, but the URL itself is
+     * attacker-controlled, so SSRF hardening still applies.
+     */
+    public function linkPreview(Request $request)
+    {
+        $url = trim((string) $request->query('url', ''));
+        if (! preg_match('#^https?://#i', $url) || strlen($url) > 2000) {
+            return response()->json(['success' => false, 'message' => 'invalid url'], 422);
+        }
+
+        $host = parse_url($url, PHP_URL_HOST);
+        if (! $host || ! filter_var($host, FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME)) {
+            return response()->json(['success' => false, 'message' => 'bad host'], 422);
+        }
+
+        // SSRF guard — resolve once and refuse private/reserved targets.
+        $ips = gethostbynamel($host) ?: [];
+        foreach ($ips as $ip) {
+            if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                return response()->json(['success' => false, 'message' => 'forbidden host'], 422);
+            }
+        }
+        if (empty($ips)) {
+            return response()->json(['success' => false, 'message' => 'unresolvable host'], 422);
+        }
+
+        $cacheKey = 'link_preview_' . md5($url);
+        $cached = Cache::get($cacheKey);
+        if (is_array($cached)) {
+            return response()->json(['success' => true, 'preview' => $cached]);
+        }
+
+        try {
+            $resp = \Illuminate\Support\Facades\Http::timeout(8)
+                ->withHeaders([
+                    'User-Agent' => 'Mozilla/5.0 (compatible; WavixaBot/1.0; +https://crm.wavixa.net)',
+                    'Accept' => 'text/html,application/xhtml+xml',
+                ])
+                ->withOptions(['allow_redirects' => ['max' => 4, 'track_redirects' => true], 'stream' => false])
+                ->get($url);
+
+            if (! $resp->successful()) {
+                return response()->json(['success' => true, 'preview' => null]);
+            }
+
+            // Redirect could have landed us on a private host — re-check.
+            // Guzzle's track_redirects exposes the chain via headers.
+            $history = $resp->header('X-Guzzle-Redirect-History');
+            $last = is_array($history) ? end($history) : null;
+            $final = $last ?: $url;
+            $finalHost = parse_url($final, PHP_URL_HOST);
+            if ($finalHost && $finalHost !== $host) {
+                foreach (gethostbynamel($finalHost) ?: [] as $ip) {
+                    if (! filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+                        return response()->json(['success' => true, 'preview' => null]);
+                    }
+                }
+            }
+
+            $html = $resp->body();
+            // Bound the parse — huge pages still only need the <head>.
+            $headPos = stripos($html, '</head>');
+            if ($headPos !== false) $html = substr($html, 0, $headPos + 7);
+            $html = mb_substr($html, 0, 500 * 1024);
+
+            $meta = function (string $prop) use ($html) {
+                // og:title / og:description / og:image / twitter:* variants
+                if (preg_match('/<meta[^>]+(?:property|name)=["\'](?:og:|twitter:)?' . preg_quote($prop, '/') . '["\'][^>]*content=["\']([^"\']*)["\']/i', $html, $m)
+                    || preg_match('/<meta[^>]+content=["\']([^"\']*)["\'][^>]+(?:property|name)=["\'](?:og:|twitter:)?' . preg_quote($prop, '/') . '["\']/i', $html, $m)) {
+                    return html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+                }
+                return null;
+            };
+
+            $title = $meta('title');
+            if (! $title && preg_match('/<title[^>]*>([^<]{1,300})<\/title>/i', $html, $m)) {
+                $title = html_entity_decode(trim($m[1]), ENT_QUOTES, 'UTF-8');
+            }
+            $desc = $meta('description');
+            $image = $meta('image') ?? $meta('image:url');
+            if ($image && ! preg_match('#^https?://#i', $image)) {
+                // Resolve relative og:image against the final URL.
+                $base = rtrim($final, '/');
+                if (str_starts_with($image, '//')) $image = 'https:' . $image;
+                elseif (str_starts_with($image, '/')) {
+                    $p = parse_url($final);
+                    $image = ($p['scheme'] ?? 'https') . '://' . ($p['host'] ?? '') . $image;
+                } else $image = null;
+            }
+            if ($image && strlen($image) > 1000) $image = null;
+
+            $preview = [
+                'url' => $url,
+                'title' => $title ? mb_substr($title, 0, 200) : null,
+                'description' => $desc ? mb_substr($desc, 0, 300) : null,
+                'image' => $image,
+                'domain' => $host,
+            ];
+            if (! $preview['title'] && ! $preview['description'] && ! $preview['image']) {
+                $preview = null;
+            }
+
+            // Negative results are cached briefly — dead sites shouldn't be
+            // re-fetched on every bubble render.
+            Cache::put($cacheKey, $preview, $preview ? now()->addDay() : now()->addMinutes(30));
+            return response()->json(['success' => true, 'preview' => $preview]);
+        } catch (\Throwable $e) {
+            Cache::put($cacheKey, null, now()->addMinutes(15));
+            return response()->json(['success' => true, 'preview' => null]);
+        }
     }
 
     /** Local archive flag — the WhatsApp-side patch rides app-state, synced

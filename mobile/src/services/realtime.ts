@@ -61,6 +61,20 @@ class RealtimeClient {
     this.socketId = null;
   }
 
+  /** Foreground-return nudge: if the socket died while suspended, reconnect
+   *  now instead of waiting out the backoff timer; if it's alive this is a
+   *  no-op. */
+  kick() {
+    if (this.stopped || !this.channel) return;
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) return;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.attempts = 0;
+    this.open();
+  }
+
   private open() {
     if (this.stopped || !this.channel) return;
     let ws: WebSocket;

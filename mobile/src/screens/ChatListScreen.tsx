@@ -40,6 +40,7 @@ import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
 import { playIncomingMessage } from '../services/notifySound';
 import { initNotifications } from '../services/notifications';
 import { realtime } from '../services/realtime';
+import { appEvents } from '../services/appEvents';
 import { useAuth } from '../context/AuthContext';
 import { ChatAvatar } from '../components/ChatAvatar';
 import { AvatarPeekModal } from '../components/AvatarPeekModal';
@@ -366,6 +367,17 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     return () => clearInterval(timer);
   }, [fetchConversations]);
 
+  // Foreground return — the OS may have suspended socket+timers; pull a
+  // fresh list immediately instead of resuming a stale view.
+  useEffect(
+    () =>
+      appEvents.onForeground(() => {
+        fetchConversations('silent');
+        refreshUser();
+      }),
+    [fetchConversations, refreshUser]
+  );
+
   // Live presence — the "متصل الآن" dot should flip the moment a stanza
   // lands, not on the next 6.5s poll.
   useEffect(() => {
@@ -401,6 +413,13 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       if (ev.type === 'message.new') {
         if (!d.conversation_id) return;
         const patchConv = d.conversation;
+        // The banner already alerted for this message — seeding the
+        // conversation's last_message_at (same value/format the poll
+        // compares) keeps the poll-diff below from dinging a second time.
+        const m0 = d.message || {};
+        if (m0.direction === 'incoming' && patchConv?.last_message_at) {
+          lastSeenIncoming.current.set(d.conversation_id, patchConv.last_message_at);
+        }
         const found = conversationsRef.current.some((c) => c.id === d.conversation_id);
         setConversations((prev) => {
           if (!found) return prev;

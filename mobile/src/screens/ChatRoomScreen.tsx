@@ -31,6 +31,7 @@ import { MediaComposerModal, PendingMedia } from '../components/MediaComposerMod
 import { CameraCaptureModal } from '../components/CameraCaptureModal';
 import { MediaViewerModal, GalleryMediaItem } from '../components/MediaViewerModal';
 import { MessageActionsSheet } from '../components/MessageActionsSheet';
+import { MessageInfoModal } from '../components/MessageInfoModal';
 import { ContactInfoModal } from '../components/ContactInfoModal';
 import { ForwardModal } from '../components/ForwardModal';
 import { QuickReplyModal } from '../components/QuickReplyModal';
@@ -49,6 +50,7 @@ import { mediaSrc, isPlaceholderText } from '../services/media';
 import { Config } from '../constants/config';
 import { playChatIncoming } from '../services/notifySound';
 import { realtime } from '../services/realtime';
+import { appEvents } from '../services/appEvents';
 import { useAuth } from '../context/AuthContext';
 import {
   Conversation,
@@ -274,6 +276,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [mediaQueueTotal, setMediaQueueTotal] = useState(0);
   const [viewerState, setViewerState] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
   const [actionsFor, setActionsFor] = useState<Message | null>(null);
+  const [infoFor, setInfoFor] = useState<Message | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string | number>>(new Set());
   const [forwardTarget, setForwardTarget] = useState<Message | null>(null);
   const [forwardTargets, setForwardTargets] = useState<Message[]>([]);
@@ -635,7 +638,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   );
 
   const fetchLatestWindow = useCallback(
-    async (mode: 'initial' | 'poll') => {
+    async (mode: 'initial' | 'poll', forceFull = false) => {
       if (isDeadConversation) return;
       const seq = ++msgLoadSeq.current;
 
@@ -647,7 +650,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         if (!m.client_temp_id && m.id > newestKnown) newestKnown = m.id;
       }
       const deltaPoll =
-        mode === 'poll' && newestKnown > 0 && ++pollSeq.current % 6 !== 0;
+        !forceFull && mode === 'poll' && newestKnown > 0 && ++pollSeq.current % 6 !== 0;
 
       try {
         const res = await chatService.getMessages(
@@ -784,6 +787,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     }, 4000);
     return () => clearInterval(timer);
   }, [fetchLatestWindow, isDeadConversation]);
+
+  // Foreground return — the socket/timers may have been suspended; pull a
+  // full window right away so statuses and missed rows reconcile at once.
+  useEffect(
+    () =>
+      appEvents.onForeground(() => {
+        fetchLatestWindow('poll', true);
+      }),
+    [fetchLatestWindow]
+  );
 
   // Live presence — flip the header badge the moment a stanza arrives
   // instead of waiting on the 4s poll.
@@ -2408,8 +2421,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         onPin={handleActionPin}
         onStar={handleActionStar}
         onDelete={handleActionDelete}
+        onInfo={(m) => setInfoFor(m)}
         onSelect={toggleSelect}
       />
+
+      <MessageInfoModal message={infoFor} onClose={() => setInfoFor(null)} />
 
       <ForwardModal
         visible={!!forwardTarget || forwardTargets.length > 0}

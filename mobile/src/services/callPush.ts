@@ -13,11 +13,12 @@
  * Answer / Decline action presses are handled by notifee.onBackgroundEvent —
  * registered at module top level so the headless JS runtime picks them up.
  */
-import { Platform } from 'react-native';
+import { Platform, AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { apiClient } from './api';
 import { callService } from './callService';
-import { setPushUserId as _sp } from './notifications';
+import { setPushUserId as _sp, CHANNEL_ID as MSG_CHANNEL_ID } from './notifications';
+import { requestOpenConversation } from './pushNav';
 
 // @notifee/react-native and expo-task-manager are native — a binary built
 // without them (or Expo Go) has no native side, so lazy-require both and
@@ -131,10 +132,62 @@ const isForCurrentUser = async (d: any): Promise<boolean> => {
   return uid == null || String(d.user_id) === String(uid);
 };
 
+// ── Actionable message pushes (vc >= 7) ──────────────────────────────
+// The backend's version gate sends msg.incoming as DATA-ONLY to builds new
+// enough to render it themselves — same headless pipeline that delivers
+// incoming calls. The Notifee card gets رد/مقروء actions; the tray entry
+// reuses the messages channel + per-conversation tag so lines bundle
+// exactly like the server-posted notifications did.
+const MSG_NOTIF_PREFIX = 'msg_';
+
+const showMessageNotification = async (d: any) => {
+  if (!notifee) return;
+  const convId = String(d?.conversation_id ?? '');
+  if (!convId) return;
+  const tag = String(d?.tag || `conv_${convId}`);
+  const title = String(d?.title || 'رسالة جديدة');
+  const body = String(d?.body || '');
+  await notifee.displayNotification({
+    id: `${MSG_NOTIF_PREFIX}${convId}`,
+    title,
+    body: body.length > 500 ? `${body.slice(0, 500)}…` : body,
+    data: { type: 'msg.incoming', conversation_id: convId },
+    android: {
+      channelId: MSG_CHANNEL_ID,
+      tag,
+      smallIcon: 'notification_icon',
+      color: '#00A884',
+      autoCancel: true,
+      number: Number(d?.count) || undefined,
+      timestamp: Date.now(),
+      showTimestamp: true,
+      pressAction: { id: 'default', launchActivity: 'default' },
+      actions: [
+        {
+          title: '↩ رد',
+          pressAction: { id: 'reply' },
+          input: { placeholder: 'اكتب رداً…', allowFreeFormInput: true },
+        },
+        { title: '✓ مقروء', pressAction: { id: 'mark_read' } },
+      ],
+    },
+  });
+};
+
+const MSG_NOTIF_ID = (convId: string | number) => `${MSG_NOTIF_PREFIX}${convId}`;
+
+const handleMessagePushData = async (d: any) => {
+  // Foreground: the realtime channel + in-app banner already cover this —
+  // don't paint a tray card while the agent is staring at the app.
+  if (AppState.currentState === 'active') return;
+  await showMessageNotification(d);
+};
+
 const handleCallPushData = async (d: any) => {
   if (!(await isForCurrentUser(d))) return;
   if (d?.type === 'call.incoming') await showIncomingCall(d);
   else if (d?.type === 'call.end') await dismissCallNotification();
+  else if (d?.type === 'msg.incoming') await handleMessagePushData(d);
 };
 
 // Data-only FCM in background/killed state lands in this expo-notifications
@@ -155,17 +208,70 @@ if (Platform.OS === 'android') {
   } catch {}
 }
 
-// Action presses (رد / رفض) when the app was killed. 'answer' also launches
-// the activity — the in-app path below confirms it once auth is hydrated.
+// Action presses when the app was killed. Call 'answer' also launches the
+// activity — the in-app path below confirms it once auth is hydrated.
 if (notifee) {
   try {
     notifee.onBackgroundEvent(async ({ type, detail }: any) => {
+      const data = detail?.notification?.data;
+
+      // ── Message notification actions ──
+      if (data?.type === 'msg.incoming') {
+        const convId = String(data?.conversation_id ?? '');
+        if (!convId) return;
+        const action = detail?.pressAction?.id;
+        if (type === EventType?.PRESS) {
+          try { await notifee.cancelNotification(MSG_NOTIF_ID(convId)); } catch {}
+          requestOpenConversation(convId);
+          return;
+        }
+        if (type !== EventType?.ACTION_PRESS) return;
+        if (action === 'reply') {
+          const text = String(detail?.input ?? '').trim();
+          if (text) {
+            try {
+              await apiClient.post('/crm/messages/send', {
+                conversation_id: Number(convId),
+                message: text,
+              });
+            } catch {}
+          }
+          // Clear the tray entry — the reply went out, the conversation's
+          // unread burst is answered.
+          try { await notifee.cancelNotification(MSG_NOTIF_ID(convId)); } catch {}
+        } else if (action === 'mark_read') {
+          // getMessages without ?peek zeroes unread_count server-side.
+          try {
+            await apiClient.get(`/crm/conversations/${convId}/messages`, {
+              params: { limit: 1 },
+            });
+          } catch {}
+          try { await notifee.cancelNotification(MSG_NOTIF_ID(convId)); } catch {}
+        }
+        return;
+      }
+
+      // ── Call notification actions ──
       if (type !== EventType?.ACTION_PRESS) return;
       const action = detail?.pressAction?.id;
-      if (detail?.notification?.data?.type !== 'call.incoming') return;
+      if (data?.type !== 'call.incoming') return;
       await dismissCallNotification();
       if (action === 'decline') {
         try { await apiClient.post('/crm/call/reject'); } catch {}
+      }
+    });
+  } catch {}
+}
+
+// Warm taps on Notifee cards while the app is alive (bg→fg launch) land
+// here — route them through the same open-conversation bus.
+if (notifee) {
+  try {
+    notifee.onForegroundEvent(({ type, detail }: any) => {
+      const data = detail?.notification?.data;
+      if (data?.type !== 'msg.incoming') return;
+      if (type === EventType?.PRESS) {
+        requestOpenConversation(data?.conversation_id);
       }
     });
   } catch {}
@@ -179,7 +285,14 @@ export const handleInitialCallNotification = async () => {
   if (!notifee) return;
   try {
     const initial = await notifee.getInitialNotification();
-    if (initial?.notification?.data?.type !== 'call.incoming') return;
+    const data = initial?.notification?.data;
+    // Cold-start tap on a message card → queue the open; cold-start tap on
+    // a call card → hydrate the call UI.
+    if (data?.type === 'msg.incoming') {
+      requestOpenConversation(data?.conversation_id);
+      return;
+    }
+    if (data?.type !== 'call.incoming') return;
     await dismissCallNotification();
     await callService.syncFromBridge();
     if (initial.pressAction?.id === 'answer' && callService.state.phase === 'incoming') {

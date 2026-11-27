@@ -17,13 +17,19 @@ class ExpoPushService
 {
     private const SA_PATH = 'firebase/service-account.json';
 
+    // First versionCode whose build renders msg.incoming data pushes itself
+    // (headless Notifee with reply/read actions). Older builds still need
+    // the OS-posted `notification` payload or they'd see nothing at all.
+    private const ACTIONABLE_PUSH_MIN_VC = 7;
+
     public static function notifyIncoming(int $userId, string $title, string $body, array $data = []): void
     {
         try {
             $user = \App\Models\User::find($userId);
-            $tokens = collect($user?->expo_push_tokens ?? [])
-                ->pluck('token')->filter()->unique()->values();
-            if ($tokens->isEmpty()) return;
+            $tokenRows = collect($user?->expo_push_tokens ?? [])
+                ->filter(fn ($t) => ! empty($t['token'] ?? null))
+                ->unique('token')->values();
+            if ($tokenRows->isEmpty()) return;
 
             $accessToken = self::accessToken();
             if (!$accessToken) return;
@@ -56,7 +62,23 @@ class ExpoPushService
                 }
             }
 
-            foreach ($tokens as $token) {
+            foreach ($tokenRows as $row) {
+                $token = $row['token'];
+                $actionable = (int) ($row['version_code'] ?? 0) >= self::ACTIONABLE_PUSH_MIN_VC;
+                if ($actionable) {
+                    // Data-only → the app's headless task renders Notifee
+                    // with رد/مقروء actions and its own tag bundling.
+                    self::sendDataPushToToken($accessToken, $projectId, $token, [
+                        'type' => 'msg.incoming',
+                        'user_id' => (string) $userId,
+                        'conversation_id' => (string) ($data['conversation_id'] ?? ''),
+                        'title' => $title,
+                        'body' => $body,
+                        'tag' => (string) ($tag ?? ''),
+                        'count' => (string) $count,
+                    ]);
+                    continue;
+                }
                 Http::timeout(10)
                     ->withToken($accessToken)
                     ->post("https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send", [
@@ -136,6 +158,31 @@ class ExpoPushService
             }
         } catch (\Throwable $e) {
             Log::debug('FCM data push failed: ' . $e->getMessage());
+        }
+    }
+
+    /** Single-token data-only send — used when notifyIncoming picks the
+     *  actionable push for a build new enough to render it. */
+    private static function sendDataPushToToken(string $accessToken, string $projectId, string $token, array $data): void
+    {
+        try {
+            Http::timeout(10)
+                ->withToken($accessToken)
+                ->post("https://fcm.googleapis.com/v1/projects/{$projectId}/messages:send", [
+                    'message' => [
+                        'token' => $token,
+                        'android' => [
+                            'priority' => 'HIGH',
+                            'direct_boot_ok' => true,
+                        ],
+                        'data' => array_map('strval', array_filter(
+                            $data,
+                            fn ($v) => $v !== null && $v !== ''
+                        )),
+                    ],
+                ]);
+        } catch (\Throwable $e) {
+            Log::debug('FCM data push (token) failed: ' . $e->getMessage());
         }
     }
 

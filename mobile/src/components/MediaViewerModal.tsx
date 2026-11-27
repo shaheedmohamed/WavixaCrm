@@ -7,10 +7,12 @@ import {
   Image,
   ScrollView,
   Dimensions,
-  Linking,
   TouchableOpacity,
   FlatList,
+  ActivityIndicator,
 } from 'react-native';
+import { File, Paths } from 'expo-file-system';
+import * as MediaLibrary from 'expo-media-library/legacy';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -134,16 +136,48 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     []
   );
 
+  const [saving, setSaving] = useState(false);
+  const [saveNote, setSaveNote] = useState<'ok' | 'err' | null>(null);
+  const saveNoteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   if (!items || items.length === 0) return null;
 
   const clampedIndex = Math.max(0, Math.min(currentIndex, items.length - 1));
   const currentItem = items[clampedIndex] || items[0];
   if (!currentItem) return null;
 
-  const handleDownload = () => {
+  const flashSaveNote = (v: 'ok' | 'err') => {
+    if (saveNoteTimer.current) clearTimeout(saveNoteTimer.current);
+    setSaveNote(v);
+    saveNoteTimer.current = setTimeout(() => setSaveNote(null), 2200);
+  };
+
+  // WhatsApp-style "Save to gallery": remote media is pulled to cache
+  // first, then handed to MediaLibrary so it lands in the device gallery.
+  const handleDownload = async () => {
     const dl = currentItem.downloadUri || currentItem.uri;
-    if (dl) {
-      Linking.openURL(dl).catch(() => {});
+    if (!dl || saving) return;
+    setSaving(true);
+    try {
+      const perm = await MediaLibrary.requestPermissionsAsync();
+      if (!perm.granted) {
+        flashSaveNote('err');
+        return;
+      }
+      let localUri = dl;
+      if (/^https?:/i.test(dl)) {
+        const ext = currentItem.kind === 'video' ? 'mp4' : 'jpg';
+        const dest = new File(Paths.cache, `wavixa_${Date.now()}.${ext}`);
+        const f = await File.createDownloadTask(dl, dest).downloadAsync();
+        if (!f) throw new Error('empty download');
+        localUri = f.uri;
+      }
+      await MediaLibrary.saveToLibraryAsync(localUri);
+      flashSaveNote('ok');
+    } catch {
+      flashSaveNote('err');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -186,9 +220,26 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
             </View>
 
             <TouchableOpacity onPress={handleDownload} style={styles.headerBtn} hitSlop={12}>
-              <Ionicons name="download-outline" size={22} color="#FFFFFF" />
+              {saving ? (
+                <ActivityIndicator size="small" color="#FFFFFF" />
+              ) : (
+                <Ionicons name="download-outline" size={22} color="#FFFFFF" />
+              )}
             </TouchableOpacity>
           </View>
+
+          {saveNote ? (
+            <View style={[styles.saveToast, { top: Math.max(insets.top + 8, 18) + 48 }]}>
+              <Ionicons
+                name={saveNote === 'ok' ? 'checkmark-circle' : 'alert-circle'}
+                size={15}
+                color={saveNote === 'ok' ? '#4ADE80' : '#F87171'}
+              />
+              <Text style={styles.saveToastText}>
+                {saveNote === 'ok' ? 'اتحفظ في المعرض' : 'تعذر الحفظ'}
+              </Text>
+            </View>
+          ) : null}
 
           <View style={styles.stage}>
             {/* Page order is the gallery order: items run old → new, and the
@@ -299,6 +350,23 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     backgroundColor: 'rgba(12, 19, 23, 0.85)',
     zIndex: 20,
+  },
+  saveToast: {
+    position: 'absolute',
+    alignSelf: 'center',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.75)',
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    zIndex: 30,
+  },
+  saveToastText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
   },
   headerBtn: {
     width: 40,

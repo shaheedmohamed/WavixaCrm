@@ -72,6 +72,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     const [recMode, setRecModeState] = useState<RecMode>('off');
     const [recordSecs, setRecordSecs] = useState(0);
     const [willCancel, setWillCancel] = useState(false);
+    const [recPaused, setRecPaused] = useState(false);
 
     const recModeRef = useRef<RecMode>('off');
     const didStartRef = useRef(false);
@@ -104,13 +105,13 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
 
     useEffect(() => {
       let t: ReturnType<typeof setInterval> | null = null;
-      if (recMode !== 'off') {
+      if (recMode !== 'off' && !recPaused) {
         t = setInterval(() => setRecordSecs((s) => s + 1), 1000);
       }
       return () => {
         if (t) clearInterval(t);
       };
-    }, [recMode]);
+    }, [recMode, recPaused]);
 
     const formatRecTime = (sec: number) => {
       const m = Math.floor(sec / 60);
@@ -125,9 +126,22 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onSendText(trimmed);
     };
 
+    const togglePauseRecording = () => {
+      try {
+        if (recPaused) {
+          recorder.record();
+        } else {
+          recorder.pause();
+        }
+        recVibrate();
+        setRecPaused(!recPaused);
+      } catch {}
+    };
+
     const startRecording = async (mode: RecMode) => {
       setRecMode(mode);
       setRecordSecs(0);
+      setRecPaused(false);
       didStartRef.current = false;
       try {
         const perm = await requestRecordingPermissionsAsync();
@@ -156,6 +170,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       didStartRef.current = false;
       setRecMode('off');
       setWillCancel(false);
+      setRecPaused(false);
       setRecordSecs(0);
       setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
     };
@@ -166,6 +181,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       didStartRef.current = false;
       setRecMode('off');
       setWillCancel(false);
+      setRecPaused(false);
       setRecordSecs(0);
       if (!didStart) return;
       try {
@@ -305,10 +321,20 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
                   <Ionicons name="trash-outline" size={20} color="#EF4444" />
                 </TouchableOpacity>
 
+                <TouchableOpacity onPress={togglePauseRecording} style={styles.pauseRecBtn} hitSlop={8}>
+                  <Ionicons
+                    name={recPaused ? 'play' : 'pause'}
+                    size={19}
+                    color={recPaused ? Colors.primary : '#54656F'}
+                  />
+                </TouchableOpacity>
+
                 <View style={styles.recordingInfo}>
-                  <Text style={styles.recordingHint}>جاري تسجيل مقطع صوتي...</Text>
+                  <Text style={[styles.recordingHint, recPaused && styles.recordingHintPaused]}>
+                    {recPaused ? 'متوقف مؤقتاً' : 'جاري تسجيل مقطع صوتي...'}
+                  </Text>
                   <Text style={styles.recordingTimer}>{formatRecTime(recordSecs)}</Text>
-                  <View style={styles.recordingBlinkDot} />
+                  {!recPaused && <View style={styles.recordingBlinkDot} />}
                 </View>
               </>
             ) : (
@@ -463,6 +489,16 @@ const styles = StyleSheet.create({
   },
   trashRecBtn: {
     padding: 4,
+  },
+  pauseRecBtn: {
+    padding: 4,
+    width: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recordingHintPaused: {
+    color: '#B45309',
+    fontWeight: '700',
   },
   recordingInfo: {
     flexDirection: 'row',

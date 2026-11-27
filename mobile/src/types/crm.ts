@@ -127,6 +127,10 @@ export interface Message {
   is_forwarded?: boolean;
   timestamp: string;
   status?: 'pending' | 'sent' | 'delivered' | 'read' | 'failed' | null;
+  sent_at?: string | null;
+  delivered_at?: string | null;
+  read_at?: string | null;
+  created_at?: string | null;
   reply_to_id?: string | null;
   starred_at?: string | null;
   starred_by_user_id?: number | null;

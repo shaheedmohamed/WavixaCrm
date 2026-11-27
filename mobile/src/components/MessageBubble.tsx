@@ -13,6 +13,7 @@ import {
 import ReAnimated, { withSpring, withTiming } from 'react-native-reanimated';
 import { Ionicons, MaterialCommunityIcons, FontAwesome5 } from '@expo/vector-icons';
 import { MessageText } from './MessageText';
+import { LinkPreviewCard } from './LinkPreviewCard';
 import { AudioMessageBubble } from './AudioMessageBubble';
 import { VideoMessageBubble } from './VideoMessageBubble';
 import { useAuth } from '../context/AuthContext';
@@ -666,6 +667,10 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
               mentions={message.mentions}
               onPressMention={onPressMention}
             />
+          ) : null}
+
+          {showText && !mediaUri ? (
+            <LinkPreviewCard text={displayCaption} outgoing={isOutgoing} />
           ) : null}
 
           {isAudio && mediaUri ? null : (

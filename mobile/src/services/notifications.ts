@@ -2,7 +2,9 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 import { AndroidImportance, AndroidNotificationVisibility } from 'expo-notifications';
 import * as Device from 'expo-device';
+import * as Application from 'expo-application';
 import { apiClient } from './api';
+import { requestOpenConversation } from './pushNav';
 
 // v2: channel sound is immutable once created — the old wavixa_messages
 // channel on installed devices is locked to notify_ding, so a new id is
@@ -22,6 +24,33 @@ const SILENT = {
   shouldSetBadge: false,
   shouldShowBanner: false,
   shouldShowList: false,
+};
+
+// ── Tap → open chat ──────────────────────────────────────────────────
+// Warm-start taps on OS-posted notifications (legacy FCM `notification`
+// payload) arrive here carrying the server's `data` extras. Module scope
+// so it works no matter which screen is mounted.
+try {
+  Notifications.addNotificationResponseReceivedListener((response) => {
+    try {
+      const d = response?.notification?.request?.content?.data as
+        | { conversation_id?: string | number }
+        | undefined;
+      if (d?.conversation_id) requestOpenConversation(d.conversation_id);
+    } catch {}
+  });
+} catch {}
+
+/** Cold-start tap — app was killed, the FCM post launched us. Call once
+ *  after auth is hydrated (pushNav queues it if called early anyway). */
+export const consumeInitialNotificationResponse = async () => {
+  try {
+    const response = await Notifications.getLastNotificationResponseAsync();
+    const d = response?.notification?.request?.content?.data as
+      | { conversation_id?: string | number }
+      | undefined;
+    if (d?.conversation_id) requestOpenConversation(d.conversation_id);
+  } catch {}
 };
 
 // FCM is the single source of push UI — foreground and background — so a
@@ -138,6 +167,10 @@ export const registerPushToken = async (): Promise<string | null> => {
         token,
         platform: Platform.OS,
         device_name: Device.deviceName ?? 'mobile',
+        // The backend picks notification style by build — vc >= 7 renders
+        // its own actionable Notifee card; older builds get the OS-posted
+        // FCM notification.
+        version_code: parseInt(String(Application.nativeBuildVersion ?? '0'), 10) || null,
       })
       .catch(() => {});
 
