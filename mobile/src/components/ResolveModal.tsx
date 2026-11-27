@@ -6,12 +6,11 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
-  ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { KeyboardSafeView } from './KeyboardSafeView';
+import { SlideToConfirm } from './SlideToConfirm';
 import { chatService } from '../services/chatService';
-import { Colors } from '../constants/theme';
 
 interface ResolveModalProps {
   visible: boolean;
@@ -93,7 +92,8 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
             textAlign="right"
           />
 
-          {/* Actions */}
+          {/* Actions — the confirm is a deliberate drag so a stray tap can't
+              close out a customer's ticket. */}
           <View style={styles.actions}>
             <TouchableOpacity
               style={styles.cancelBtn}
@@ -103,17 +103,16 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
               <Text style={styles.cancelText}>إلغاء</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-              style={[styles.confirmBtn, submitting && styles.confirmBtnDisabled]}
-              onPress={handleResolve}
-              disabled={submitting}
-            >
-              {submitting ? (
-                <ActivityIndicator color="#FFFFFF" size="small" />
-              ) : (
-                <Text style={styles.confirmText}>تأكيد الإنهاء</Text>
-              )}
-            </TouchableOpacity>
+            <View style={styles.slideWrap}>
+              <SlideToConfirm
+                key={visible ? 'open' : 'closed'}
+                label="اسحب للإنهاء"
+                onConfirm={handleResolve}
+                disabled={submitting}
+                loading={submitting}
+                height={48}
+              />
+            </View>
           </View>
         </View>
       </KeyboardSafeView>
@@ -198,8 +197,8 @@ const styles = StyleSheet.create({
   },
   cancelBtn: {
     flex: 1,
-    height: 44,
-    borderRadius: 12,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#F0F2F5',
     alignItems: 'center',
     justifyContent: 'center',
@@ -209,20 +208,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 13,
   },
-  confirmBtn: {
-    flex: 1.5,
-    height: 44,
-    borderRadius: 12,
-    backgroundColor: Colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  confirmBtnDisabled: {
-    opacity: 0.7,
-  },
-  confirmText: {
-    color: '#FFFFFF',
-    fontWeight: '800',
-    fontSize: 13,
+  slideWrap: {
+    flex: 2,
   },
 });

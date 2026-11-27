@@ -14,10 +14,16 @@ import {
 import { StatusBar } from 'expo-status-bar';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS, useSharedValue } from 'react-native-reanimated';
 import { Header } from '../components/Header';
 import { SearchBar } from '../components/SearchBar';
-import { FilterBar } from '../components/FilterBar';
+import { FilterBar, buildFilterItems } from '../components/FilterBar';
 import { ChatListItem, CHAT_LIST_ITEM_HEIGHT } from '../components/ChatListItem';
+import {
+  SwipeableConversationRow,
+  ConvSwipeAction,
+} from '../components/SwipeableConversationRow';
 import { BottomNav, BottomTabType } from '../components/BottomNav';
 import { ThreeDotMenu } from '../components/ThreeDotMenu';
 import { NewChatModal } from '../components/NewChatModal';
@@ -114,6 +120,12 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const lastSeenIncoming = useRef<Map<number, string>>(new Map());
   const firstSyncDone = useRef(false);
   const activeConvIdRef = useRef<number | null>(activeConversationId ?? null);
+
+  // Owned by this screen and handed to each conversation row: a row that has
+  // claimed a horizontal swipe blocks the container's filter-tab switch.
+  const rowSwipeLock = useSharedValue(0);
+  const tabSwipeStartX = useSharedValue(0);
+  const tabSwipeStartY = useSharedValue(0);
 
   useEffect(() => {
     activeConvIdRef.current = activeConversationId ?? null;
@@ -656,6 +668,181 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     [conversations, selectedIds]
   );
 
+  // Same chip order the FilterBar renders — needed to resolve which scope a
+  // horizontal swipe lands on.
+  const scopeOrder = useMemo(
+    () =>
+      buildFilterItems({
+        unreadCount,
+        favoritesCount,
+        chatLists,
+        isAgent,
+        hideGroups: groupsInChats,
+      }).map((f) => f.id),
+    [unreadCount, favoritesCount, chatLists, isAgent, groupsInChats]
+  );
+
+  const stepScope = useCallback(
+    (dir: 1 | -1) => {
+      try {
+        Vibration.vibrate(10);
+      } catch {}
+      setSelectedScope((prev) => {
+        const idx = scopeOrder.indexOf(prev);
+        if (idx === -1) return prev;
+        return scopeOrder[idx + dir] ?? prev;
+      });
+    },
+    [scopeOrder]
+  );
+
+  // Tab-switch swipe. Manually activated so it loses every conflict it should:
+  // a claimed row swipe (rowSwipeLock) and any vertically-dominant scroll.
+  const tabSwipeGesture = Gesture.Pan()
+    .enabled(!selectionMode)
+    .manualActivation(true)
+    .onTouchesDown((e) => {
+      'worklet';
+      const t = e.allTouches[0];
+      if (t) {
+        tabSwipeStartX.value = t.absoluteX;
+        tabSwipeStartY.value = t.absoluteY;
+      }
+    })
+    .onTouchesMove((e, state) => {
+      'worklet';
+      const t = e.allTouches[0];
+      if (!t) return;
+      const dx = t.absoluteX - tabSwipeStartX.value;
+      const dy = t.absoluteY - tabSwipeStartY.value;
+      // Two fingers never hit a row swipe (rows are single-pointer), so the
+      // tab switch activates immediately — it works even over a full list.
+      if (e.numberOfTouches >= 2) {
+        if (Math.abs(dy) > 20 && Math.abs(dy) > Math.abs(dx)) {
+          state.fail();
+          return;
+        }
+        if (Math.abs(dx) > 40) state.activate();
+        return;
+      }
+      if (rowSwipeLock.value) {
+        state.fail();
+        return;
+      }
+      if (Math.abs(dy) > 14 && Math.abs(dy) > Math.abs(dx) * 1.1) {
+        state.fail();
+        return;
+      }
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.6) {
+        state.activate();
+      }
+    })
+    .onEnd((e) => {
+      'worklet';
+      // Chips run right→left (row-reverse): swiping left advances the order.
+      if (e.translationX < -24) runOnJS(stepScope)(1);
+      else if (e.translationX > 24) runOnJS(stepScope)(-1);
+    });
+
+  // Row swipe shortcuts — the same rules the long-press context menu uses.
+  const buildSwipeActions = useCallback(
+    (item: Conversation): { leftActions: ConvSwipeAction[]; rightActions: ConvSwipeAction[] } => {
+      const isGroup = Boolean(item.is_group);
+      const heldByMe = Boolean(user?.id && item.assigned_agent_id === user.id);
+      const canClaim = Boolean(isAgent && !item.assigned_agent_id && !isGroup);
+      const canResolve = Boolean(!isGroup && (!isAgent || heldByMe));
+
+      const rightActions: ConvSwipeAction[] = [];
+      if (canResolve) {
+        rightActions.push({
+          key: 'resolve',
+          label: 'إنهاء',
+          icon: 'check-circle-outline',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#059669',
+          onPress: () => setResolveConvId(item.id),
+        });
+      } else if (canClaim) {
+        rightActions.push({
+          key: 'claim',
+          label: 'استلام',
+          icon: 'hand-back-right-outline',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#00A884',
+          onPress: () => handleClaimToMine(item),
+        });
+      } else if (!isAgent) {
+        rightActions.push({
+          key: 'archive',
+          label: item.archived_at ? 'إلغاء الأرشفة' : 'أرشفة',
+          icon: item.archived_at ? 'archive-arrow-up-outline' : 'archive-arrow-down-outline',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#2563EB',
+          onPress: () => handleToggleArchive(item),
+        });
+      } else {
+        rightActions.push({
+          key: 'more',
+          label: 'المزيد',
+          icon: 'dots-horizontal',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#54656F',
+          onPress: () => setContextConv(item),
+        });
+      }
+      rightActions.push({
+        key: 'snooze',
+        label: 'تأجيل',
+        icon: 'alarm-snooze',
+        iconSet: 'mci',
+        color: '#FFFFFF',
+        bg: '#6366F1',
+        onPress: () => setSnoozeConv(item),
+      });
+
+      const muted = chatPrefs.isMuted(item.id);
+      const markedUnread = chatPrefs.isMarkedUnread(item.id);
+      const leftActions: ConvSwipeAction[] = [
+        {
+          key: 'pin',
+          label: item.is_pinned ? 'إلغاء تثبيت' : 'تثبيت',
+          icon: item.is_pinned ? 'pin-off-outline' : 'pin-outline',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#0D9488',
+          onPress: () => handleTogglePin(item),
+        },
+      ];
+      if ((item.unread_count || 0) === 0) {
+        leftActions.push({
+          key: 'unread',
+          label: markedUnread ? 'كمقروءة' : 'غير مقروءة',
+          icon: markedUnread ? 'email-open-outline' : 'email-mark-as-unread',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#54656F',
+          onPress: () => handleToggleUnread(item),
+        });
+      } else {
+        leftActions.push({
+          key: 'mute',
+          label: muted ? 'إلغاء الكتم' : 'كتم',
+          icon: muted ? 'bell-ring-outline' : 'bell-off-outline',
+          iconSet: 'mci',
+          color: '#FFFFFF',
+          bg: '#D97706',
+          onPress: () => handleMute(item, muted ? null : 'forever'),
+        });
+      }
+      return { leftActions, rightActions };
+    },
+    [user, isAgent, handleClaimToMine, handleToggleArchive, handleTogglePin, handleToggleUnread, handleMute]
+  );
+
   const handleBottomTabPress = useCallback(
     (tab: BottomTabType) => {
       setActiveTab(tab);
@@ -675,21 +862,29 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const renderItem = useCallback(
     ({ item }: { item: Conversation }) => {
       void prefsTick;
+      const { leftActions, rightActions } = buildSwipeActions(item);
       return (
-        <ChatListItem
-          conversation={item}
-          currentUserId={user?.id}
-          isMuted={chatPrefs.isMuted(item.id)}
-          isFavorite={chatPrefs.isFavorite(item.id)}
-          isMarkedUnread={chatPrefs.isMarkedUnread(item.id)}
-          listTags={listTagsByConvId.get(item.id) || []}
-          selectionMode={selectionMode}
-          isSelected={selectedIds.has(item.id)}
-          onPress={() => handlePressItem(item)}
-          onPressIn={() => chatCache.prefetchThread(item.id)}
-          onLongPress={() => handleLongPressItem(item)}
-          onAvatarPress={() => setPeekConv(item)}
-        />
+        <SwipeableConversationRow
+          leftActions={leftActions}
+          rightActions={rightActions}
+          disabled={selectionMode}
+          swipeLock={rowSwipeLock}
+        >
+          <ChatListItem
+            conversation={item}
+            currentUserId={user?.id}
+            isMuted={chatPrefs.isMuted(item.id)}
+            isFavorite={chatPrefs.isFavorite(item.id)}
+            isMarkedUnread={chatPrefs.isMarkedUnread(item.id)}
+            listTags={listTagsByConvId.get(item.id) || []}
+            selectionMode={selectionMode}
+            isSelected={selectedIds.has(item.id)}
+            onPress={() => handlePressItem(item)}
+            onPressIn={() => chatCache.prefetchThread(item.id)}
+            onLongPress={() => handleLongPressItem(item)}
+            onAvatarPress={() => setPeekConv(item)}
+          />
+        </SwipeableConversationRow>
       );
     },
     [
@@ -699,6 +894,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       selectedIds,
       handlePressItem,
       handleLongPressItem,
+      buildSwipeActions,
+      rowSwipeLock,
       prefsTick,
     ]
   );
@@ -915,7 +1112,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         }}
       />
 
-      <View style={styles.listContainer}>
+      <GestureDetector gesture={tabSwipeGesture}>
+        <View style={styles.listContainer} collapsable={false}>
         {initialLoading && displayedConversations.length === 0 ? (
           <View style={styles.centerLoading}>
             <ActivityIndicator size="large" color={Colors.primary} />
@@ -970,7 +1168,8 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
             }
           />
         )}
-      </View>
+        </View>
+      </GestureDetector>
 
       {selectionMode && selectedIds.size > 0 ? (
         <View style={[styles.selectionBar, { paddingBottom: Math.max(insets.bottom, 10) }]}>

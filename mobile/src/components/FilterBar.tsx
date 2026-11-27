@@ -17,29 +17,33 @@ interface FilterBarProps {
   onLongPressCustomList?: (list: ChatList) => void;
 }
 
-export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar({
-  selectedScope,
-  onSelectScope,
+export interface FilterItem {
+  id: FilterScope;
+  label: string;
+  icon?: string;
+  badge?: number;
+  customList?: ChatList;
+}
+
+export interface BuildFilterItemsOptions {
+  unreadCount?: number;
+  favoritesCount?: number;
+  chatLists?: ChatList[];
+  isAgent?: boolean;
+  hideGroups?: boolean;
+}
+
+// Single source of truth for the chip order — the list screen reuses it to
+// resolve "next/previous tab" for horizontal swipe navigation.
+export const buildFilterItems = ({
   unreadCount = 0,
   favoritesCount = 0,
   chatLists = [],
   isAgent = false,
   hideGroups = false,
-  onPressCreateList,
-  onLongPressCustomList,
-}) {
+}: BuildFilterItemsOptions): FilterItem[] => {
   const customLists = chatLists.filter((l) => l.name !== FAVORITES_LIST_NAME);
-
-  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
-  const userScrolledRef = useRef(false);
-
-  const baseFilters: {
-    id: FilterScope;
-    label: string;
-    icon?: string;
-    badge?: number;
-    customList?: ChatList;
-  }[] = [
+  return [
     { id: 'chats', label: 'الشاتات', icon: 'chat-outline' },
     { id: 'unread', label: 'غير مقروءة', badge: unreadCount > 0 ? unreadCount : undefined },
     {
@@ -69,6 +73,29 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
           { id: 'archived' as FilterScope, label: 'المؤرشفة', icon: 'archive-outline' },
         ]),
   ];
+};
+
+export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar({
+  selectedScope,
+  onSelectScope,
+  unreadCount = 0,
+  favoritesCount = 0,
+  chatLists = [],
+  isAgent = false,
+  hideGroups = false,
+  onPressCreateList,
+  onLongPressCustomList,
+}) {
+  const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const userScrolledRef = useRef(false);
+
+  const baseFilters = buildFilterItems({
+    unreadCount,
+    favoritesCount,
+    chatLists,
+    isAgent,
+    hideGroups,
+  });
 
   return (
     <View style={styles.wrapper}>

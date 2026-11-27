@@ -12,6 +12,8 @@ import {
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS } from 'react-native-reanimated';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as ImagePicker from 'expo-image-picker';
@@ -295,6 +297,130 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     () => messages.filter((m) => selectedIds.has(msgKeyOf(m) as any)),
     [messages, selectedIds]
   );
+
+  // Drag-to-select: while a selection is active, a press-hold then vertical
+  // drag across rows extends it — same as WhatsApp's swipe-select. Row
+  // bounds are measured in window space once per drag (no auto-scroll yet,
+  // so they can't go stale mid-gesture).
+  const rowViewRefs = useRef(new Map<string | number, React.ComponentRef<typeof View>>());
+  const selectedIdsRef = useRef<Set<string | number>>(selectedIds);
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+  const dragSel = useRef<{
+    rows: { key: string | number; top: number; bottom: number }[];
+    base: Set<string | number>;
+    originIdx: number;
+    minIdx: number;
+    maxIdx: number;
+    active: boolean;
+  }>({ rows: [], base: new Set(), originIdx: -1, minIdx: -1, maxIdx: -1, active: false });
+
+  const rowIndexForY = useCallback(
+    (rows: { key: string | number; top: number; bottom: number }[], y: number) => {
+      for (let i = 0; i < rows.length; i++) {
+        if (y >= rows[i].top && y <= rows[i].bottom) return i;
+      }
+      if (!rows.length) return -1;
+      let best = 0;
+      let bestDist = Infinity;
+      for (let i = 0; i < rows.length; i++) {
+        const mid = (rows[i].top + rows[i].bottom) / 2;
+        const d = Math.abs(mid - y);
+        if (d < bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      }
+      return best;
+    },
+    []
+  );
+
+  const applyDragRange = useCallback(
+    (targetIdx: number) => {
+      const d = dragSel.current;
+      if (!d.active || targetIdx < 0) return;
+      const lo = Math.min(d.originIdx, targetIdx);
+      const hi = Math.max(d.originIdx, targetIdx);
+      if (lo === d.minIdx && hi === d.maxIdx) return;
+      d.minIdx = lo;
+      d.maxIdx = hi;
+      const next = new Set(d.base);
+      for (let i = lo; i <= hi; i++) next.add(d.rows[i].key);
+      setSelectedIds(next);
+    },
+    []
+  );
+
+  const beginDragSelect = useCallback(
+    async (absY: number) => {
+      const jobs: Promise<{ key: string | number; top: number; bottom: number } | null>[] = [];
+      rowViewRefs.current.forEach((view, key) => {
+        jobs.push(
+          new Promise((res) => {
+            try {
+              view.measureInWindow((_x, y, _w, h) => {
+                res({ key, top: y, bottom: y + h });
+              });
+            } catch {
+              res(null);
+            }
+          })
+        );
+      });
+      const rows = (await Promise.all(jobs)).filter(
+        (r): r is { key: string | number; top: number; bottom: number } => r !== null
+      );
+      rows.sort((a, b) => a.top - b.top);
+      if (!rows.length) return;
+      const idx = rowIndexForY(rows, absY);
+      dragSel.current = {
+        rows,
+        base: new Set(selectedIdsRef.current),
+        originIdx: idx,
+        minIdx: idx,
+        maxIdx: idx,
+        active: true,
+      };
+      applyDragRange(idx);
+    },
+    [rowIndexForY, applyDragRange]
+  );
+
+  const updateDragSelect = useCallback(
+    (absY: number) => {
+      const d = dragSel.current;
+      if (!d.active) return;
+      applyDragRange(rowIndexForY(d.rows, absY));
+    },
+    [rowIndexForY, applyDragRange]
+  );
+
+  const endDragSelect = useCallback(() => {
+    dragSel.current.active = false;
+  }, []);
+
+  /* eslint-disable react-hooks/refs -- the worklets below invoke ref-backed
+     callbacks at gesture-event time, never during render. */
+  const dragSelectGesture = Gesture.Pan()
+    .enabled(selectionMode)
+    // Hold briefly, then drag — moving sooner fails the gesture so the list
+    // keeps scrolling normally inside selection mode.
+    .activateAfterLongPress(320)
+    .onBegin((e) => {
+      'worklet';
+      runOnJS(beginDragSelect)(e.absoluteY);
+    })
+    .onUpdate((e) => {
+      'worklet';
+      runOnJS(updateDragSelect)(e.absoluteY);
+    })
+    .onFinalize(() => {
+      'worklet';
+      runOnJS(endDragSelect)();
+    });
+  /* eslint-enable react-hooks/refs */
 
   const [quickRepliesVisible, setQuickRepliesVisible] = useState(false);
   const [transferVisible, setTransferVisible] = useState(false);
@@ -1440,6 +1566,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         (olderMsg.from || '') !== (item.from || '');
 
       const rowKey = item.client_temp_id || item.id || item.message_id;
+      const regRow = (v: React.ComponentRef<typeof View> | null) => {
+        if (rowKey == null) return;
+        if (v) rowViewRefs.current.set(rowKey, v);
+        else rowViewRefs.current.delete(rowKey);
+      };
       // One-shot: delete() returns true only the first time this key renders.
       const entryAnimation = freshAnimKeys.current.delete(String(rowKey))
         ? item.direction
@@ -1453,7 +1584,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         (!isGroup || item.direction !== 'incoming' || (olderMsg.from || '') === (item.from || ''));
 
       return (
-        <View>
+        <View ref={regRow} collapsable={false}>
           {isFirstOfDay && (
             <View style={styles.daySeparatorWrap}>
               <View style={styles.dayPill}>
@@ -1746,6 +1877,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             </View>
           ) : null}
 
+          <GestureDetector gesture={dragSelectGesture}>
+          <View style={styles.dragSelectHost} collapsable={false}>
           <FlatList
             ref={flatListRef}
             data={invertedMessages}
@@ -1785,6 +1918,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             scrollEventThrottle={64}
             renderItem={renderMessageItem}
           />
+          </View>
+          </GestureDetector>
 
           {typing && (
             <View style={styles.typingRow} pointerEvents="none">
@@ -2236,6 +2371,9 @@ const styles = StyleSheet.create({
   messagesList: {
     paddingVertical: 10,
     paddingHorizontal: 4,
+  },
+  dragSelectHost: {
+    flex: 1,
   },
   olderLoaderWrap: {
     paddingVertical: 12,

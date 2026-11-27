@@ -7,13 +7,17 @@ import React, {
 } from 'react';
 import {
   Alert,
+  I18nManager,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
+  Vibration,
   View,
 } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS, useSharedValue } from 'react-native-reanimated';
 import {
   useAudioRecorder,
   useAudioRecorderState,
@@ -38,6 +42,17 @@ interface ChatInputBarProps {
   onOpenQuickReplies: () => void;
 }
 
+type RecMode = 'off' | 'hold' | 'lock';
+
+const LOCK_DIST = 64;
+const CANCEL_DIST = 64;
+
+const recVibrate = () => {
+  try {
+    Vibration.vibrate(10);
+  } catch {}
+};
+
 export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
   function ChatInputBar(
     {
@@ -52,12 +67,25 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     ref
   ) {
     const [text, setText] = useState('');
-    const [isRecording, setIsRecording] = useState(false);
+    // 'off' = idle | 'hold' = finger still down, release sends | 'lock' =
+    // hands-free (swipe-up or a plain tap) with trash + send buttons.
+    const [recMode, setRecModeState] = useState<RecMode>('off');
     const [recordSecs, setRecordSecs] = useState(0);
+    const [willCancel, setWillCancel] = useState(false);
+
+    const recModeRef = useRef<RecMode>('off');
+    const didStartRef = useRef(false);
+    const lockedSV = useSharedValue(false);
+    const willCancelSV = useSharedValue(false);
 
     const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const recorderState = useAudioRecorderState(recorder, 250);
+
+    const setRecMode = (m: RecMode) => {
+      recModeRef.current = m;
+      setRecModeState(m);
+    };
 
     useImperativeHandle(ref, () => ({
       focus: () => {
@@ -76,13 +104,13 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
 
     useEffect(() => {
       let t: ReturnType<typeof setInterval> | null = null;
-      if (isRecording) {
+      if (recMode !== 'off') {
         t = setInterval(() => setRecordSecs((s) => s + 1), 1000);
       }
       return () => {
         if (t) clearInterval(t);
       };
-    }, [isRecording]);
+    }, [recMode]);
 
     const formatRecTime = (sec: number) => {
       const m = Math.floor(sec / 60);
@@ -97,10 +125,14 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onSendText(trimmed);
     };
 
-    const startRecording = async () => {
+    const startRecording = async (mode: RecMode) => {
+      setRecMode(mode);
+      setRecordSecs(0);
+      didStartRef.current = false;
       try {
         const perm = await requestRecordingPermissionsAsync();
         if (!perm.granted) {
+          setRecMode('off');
           Alert.alert(
             'الصلاحية مطلوبة',
             'اسمح للتطبيق باستخدام الميكروفون لتسجيل الرسائل الصوتية'
@@ -110,29 +142,35 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
         await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
         await recorder.prepareToRecordAsync();
         recorder.record();
-        setIsRecording(true);
-        setRecordSecs(0);
+        didStartRef.current = true;
       } catch (err: any) {
+        setRecMode('off');
         Alert.alert('خطأ', err.message || 'تعذر بدء التسجيل');
       }
     };
 
     const cancelRecording = async () => {
       try {
-        await recorder.stop();
+        if (didStartRef.current) await recorder.stop();
       } catch {}
-      setIsRecording(false);
+      didStartRef.current = false;
+      setRecMode('off');
+      setWillCancel(false);
       setRecordSecs(0);
       setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
     };
 
     const finishAndSendRecording = async () => {
       const capturedSecs = recordSecs;
+      const didStart = didStartRef.current;
+      didStartRef.current = false;
+      setRecMode('off');
+      setWillCancel(false);
+      setRecordSecs(0);
+      if (!didStart) return;
       try {
         await recorder.stop();
       } catch {}
-      setIsRecording(false);
-      setRecordSecs(0);
       setAudioModeAsync({ allowsRecording: false, playsInSilentMode: true }).catch(() => {});
 
       const uri = recorder.uri || recorderState.url;
@@ -144,60 +182,164 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onSendVoice(uri, capturedSecs);
     };
 
-    const padBottom = isKeyboardVisible ? 6 : Math.max(bottomInset, 8);
+    // Hold-to-record lifecycle, driven by the mic pan gesture below.
+    const beginHoldRecord = () => {
+      recVibrate();
+      setWillCancel(false);
+      startRecording('hold');
+    };
 
-    if (isRecording) {
-      return (
-        <View style={[styles.barWrap, { paddingBottom: padBottom }]}>
-          <TouchableOpacity
-            style={styles.sendFab}
-            onPress={finishAndSendRecording}
-            activeOpacity={0.82}
-          >
-            <Ionicons
-              name="send"
-              size={18}
-              color="#FFFFFF"
-              style={{ transform: [{ scaleX: -1 }] }}
-            />
-          </TouchableOpacity>
+    const lockHoldRecord = () => {
+      if (recModeRef.current === 'hold') {
+        recVibrate();
+        setRecMode('lock');
+      }
+    };
 
-          <View style={styles.recordingPill}>
-            <TouchableOpacity onPress={cancelRecording} style={styles.trashRecBtn} hitSlop={8}>
-              <Ionicons name="trash-outline" size={20} color="#EF4444" />
-            </TouchableOpacity>
+    const setWillCancelJS = (v: boolean) => {
+      if (v) recVibrate();
+      setWillCancel(v);
+    };
 
-            <View style={styles.recordingInfo}>
-              <Text style={styles.recordingHint}>جاري تسجيل مقطع صوتي...</Text>
-              <Text style={styles.recordingTimer}>{formatRecTime(recordSecs)}</Text>
-              <View style={styles.recordingBlinkDot} />
-            </View>
-          </View>
-        </View>
-      );
-    }
+    const endHoldRecord = (locked: boolean, cancel: boolean) => {
+      if (locked || recModeRef.current !== 'hold') return;
+      if (cancel) cancelRecording();
+      else finishAndSendRecording();
+    };
 
+    // The mic sits at the screen edge: sliding inward cancels. With an RTL
+    // layout the fab lands on the right so inward is negative X; with LTR it
+    // lands on the left so inward is positive X.
+    const cancelSign = I18nManager.isRTL ? -1 : 1;
     const hasText = text.trim().length > 0;
 
+    const micPan = Gesture.Pan()
+      // Stays enabled while holding — disabling mid-gesture would kill the
+      // drag and lose the release event. 'lock' only disables it once the
+      // recording is already hands-free and no longer needs tracking.
+      .enabled(recMode !== 'lock' && !hasText)
+      .activateAfterLongPress(200)
+      .onStart(() => {
+        'worklet';
+        // Flags may outlive a cancelled gesture — always start clean.
+        lockedSV.value = false;
+        willCancelSV.value = false;
+        runOnJS(beginHoldRecord)();
+      })
+      .onUpdate((e) => {
+        'worklet';
+        if (lockedSV.value) return;
+        if (e.translationY < -LOCK_DIST) {
+          lockedSV.value = true;
+          runOnJS(lockHoldRecord)();
+          return;
+        }
+        const c = e.translationX * cancelSign > CANCEL_DIST;
+        if (c !== willCancelSV.value) {
+          willCancelSV.value = c;
+          runOnJS(setWillCancelJS)(c);
+        }
+      })
+      .onEnd(() => {
+        'worklet';
+        runOnJS(endHoldRecord)(lockedSV.value, willCancelSV.value);
+      })
+      .onFinalize(() => {
+        'worklet';
+        lockedSV.value = false;
+        willCancelSV.value = false;
+      });
+
+    const padBottom = isKeyboardVisible ? 6 : Math.max(bottomInset, 8);
+
+    // One render tree for every mode: the GestureDetector wrapper must stay
+    // mounted while a hold-to-record drag is live — unmounting it mid-gesture
+    // would destroy the handler and lose the release/lock/cancel events.
     return (
       <View style={[styles.barWrap, { paddingBottom: padBottom }]}>
-        <TouchableOpacity
-          style={styles.sendFab}
-          onPress={hasText ? handlePressSend : startRecording}
-          activeOpacity={0.82}
-        >
-          {hasText ? (
-            <Ionicons
-              name="send"
-              size={18}
-              color="#FFFFFF"
-              style={{ transform: [{ scaleX: -1 }] }}
-            />
-          ) : (
-            <Ionicons name="mic" size={21} color="#FFFFFF" />
-          )}
-        </TouchableOpacity>
+        <GestureDetector gesture={micPan}>
+          <View collapsable={false}>
+            {recMode === 'lock' ? (
+              <TouchableOpacity
+                style={styles.sendFab}
+                onPress={finishAndSendRecording}
+                activeOpacity={0.82}
+              >
+                <Ionicons
+                  name="send"
+                  size={18}
+                  color="#FFFFFF"
+                  style={{ transform: [{ scaleX: -1 }] }}
+                />
+              </TouchableOpacity>
+            ) : recMode === 'hold' ? (
+              <View style={styles.sendFab}>
+                <Ionicons name="mic" size={21} color="#FFFFFF" />
+              </View>
+            ) : (
+              <TouchableOpacity
+                style={styles.sendFab}
+                onPress={hasText ? handlePressSend : () => startRecording('lock')}
+                activeOpacity={0.82}
+              >
+                {hasText ? (
+                  <Ionicons
+                    name="send"
+                    size={18}
+                    color="#FFFFFF"
+                    style={{ transform: [{ scaleX: -1 }] }}
+                  />
+                ) : (
+                  <Ionicons name="mic" size={21} color="#FFFFFF" />
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        </GestureDetector>
 
+        {recMode !== 'off' ? (
+          <View style={styles.recordingPill}>
+            {recMode === 'lock' ? (
+              <>
+                <TouchableOpacity onPress={cancelRecording} style={styles.trashRecBtn} hitSlop={8}>
+                  <Ionicons name="trash-outline" size={20} color="#EF4444" />
+                </TouchableOpacity>
+
+                <View style={styles.recordingInfo}>
+                  <Text style={styles.recordingHint}>جاري تسجيل مقطع صوتي...</Text>
+                  <Text style={styles.recordingTimer}>{formatRecTime(recordSecs)}</Text>
+                  <View style={styles.recordingBlinkDot} />
+                </View>
+              </>
+            ) : (
+              <View style={styles.holdRow}>
+                <View style={styles.lockHint}>
+                  <Ionicons name="chevron-up" size={14} color="#8696A0" />
+                  <MaterialCommunityIcons name="lock-outline" size={13} color="#8696A0" />
+                </View>
+
+                <View style={styles.recordingInfo}>
+                  <Text
+                    style={[styles.cancelHint, willCancel && styles.cancelHintActive]}
+                    numberOfLines={1}
+                  >
+                    {willCancel ? 'اتركه للإلغاء' : 'اسحب للإلغاء'}
+                  </Text>
+                  <Ionicons
+                    name={cancelSign > 0 ? 'arrow-forward' : 'arrow-back'}
+                    size={14}
+                    color={willCancel ? '#EF4444' : '#8696A0'}
+                  />
+                </View>
+
+                <View style={styles.recordingInfo}>
+                  <Text style={styles.recordingTimer}>{formatRecTime(recordSecs)}</Text>
+                  <View style={styles.recordingBlinkDot} />
+                </View>
+              </View>
+            )}
+          </View>
+        ) : (
         <View style={styles.composerPill}>
           <View style={styles.leftInsideIcons}>
             <TouchableOpacity
@@ -243,6 +385,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
             <MaterialCommunityIcons name="flash-outline" size={21} color={Colors.primaryDark} />
           </TouchableOpacity>
         </View>
+        )}
       </View>
     );
   }
@@ -340,5 +483,26 @@ const styles = StyleSheet.create({
   recordingHint: {
     fontSize: 12.5,
     color: '#667781',
+  },
+  holdRow: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  lockHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    opacity: 0.9,
+  },
+  cancelHint: {
+    fontSize: 12.5,
+    fontWeight: '700',
+    color: '#8696A0',
+  },
+  cancelHintActive: {
+    color: '#EF4444',
   },
 });
