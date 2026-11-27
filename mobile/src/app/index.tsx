@@ -17,6 +17,7 @@ import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
 import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
+import { GesturesGuideScreen } from '../screens/GesturesGuideScreen';
 import { CareBotLogo } from '../components/CareBotLogo';
 import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
@@ -29,7 +30,8 @@ type OverlayView =
   | 'profile'
   | 'stats'
   | 'starred'
-  | 'statuses';
+  | 'statuses'
+  | 'gestures';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
@@ -114,6 +116,10 @@ export default function IndexPage() {
     openOverlay('statuses');
   }, [openOverlay]);
 
+  const handleOpenGestures = useCallback(() => {
+    openOverlay('gestures');
+  }, [openOverlay]);
+
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
@@ -167,6 +173,7 @@ export default function IndexPage() {
           onOpenStats={handleOpenStats}
           onOpenStarred={handleOpenStarred}
           onOpenStatuses={handleOpenStatuses}
+          onOpenGestures={handleOpenGestures}
         />
       </View>
 
@@ -199,6 +206,8 @@ export default function IndexPage() {
               <StatsScreen onBack={closeOverlay} />
             ) : overlayView === 'statuses' ? (
               <StatusesScreen onBack={closeOverlay} />
+            ) : overlayView === 'gestures' ? (
+              <GesturesGuideScreen onBack={closeOverlay} />
             ) : null)}
         </Animated.View>
       )}

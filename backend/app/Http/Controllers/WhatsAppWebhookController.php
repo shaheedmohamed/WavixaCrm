@@ -1413,6 +1413,12 @@ public function messageRevoked(Request $request)
                 if ($phone && $conversation->contact_phone !== $phone) {
                     $convUpdates['contact_phone'] = $phone;
                 }
+                if (empty($conversation->contact_country)) {
+                    $histCountry = \App\Services\GeoLocator::countryFromPhone($phone);
+                    if ($histCountry) {
+                        $convUpdates['contact_country'] = $histCountry;
+                    }
+                }
                 $lastMsg = collect($msgs)->sortByDesc('timestamp')->first();
                 // Conversation-level fallback travels in milliseconds on some
                 // proto versions — normalize to seconds before Carbon sees it.
@@ -1529,6 +1535,19 @@ public function messageRevoked(Request $request)
                                 : WhatsAppMessage::STATUS_SENT))
                         : WhatsAppMessage::STATUS_DELIVERED;
 
+                    $participantRaw = (string) ($m['participant'] ?? $jid);
+                    $histLat = $histLng = null;
+                    if ($type === 'location') {
+                        $histLat = \App\Services\GeoLocator::coord($m['latitude'] ?? null, -90, 90);
+                        $histLng = \App\Services\GeoLocator::coord($m['longitude'] ?? null, -180, 180);
+                        if ($histLat === null || $histLng === null) {
+                            $parsedLoc = \App\Services\GeoLocator::parseLatLng($m['body'] ?? '');
+                            if ($parsedLoc) {
+                                [$histLat, $histLng] = $parsedLoc;
+                            }
+                        }
+                    }
+
                     $values = [
                         'session_id' => $session->id,
                         'conversation_id' => $conversation->id,
@@ -1541,6 +1560,14 @@ public function messageRevoked(Request $request)
                         'media_caption' => $m['media']['caption'] ?? null,
                         'message_type' => $type,
                         'direction' => $fromMe ? 'outgoing' : 'incoming',
+                        // Group senders behind an unresolved @lid carry no
+                        // usable digits — skip the guess instead of storing
+                        // a wrong country.
+                        'sender_country' => $fromMe || str_ends_with($participantRaw, '@lid')
+                            ? null
+                            : \App\Services\GeoLocator::countryFromPhone(explode('@', $participantRaw)[0]),
+                        'latitude' => $histLat,
+                        'longitude' => $histLng,
                         'reply_to_id' => $m['quotedMessageId'] ?? null,
                         'is_forwarded' => !empty($m['isForwarded']),
                         'mentioned_jids' => !empty($m['mentionedJids']) ? array_values($m['mentionedJids']) : null,
@@ -1858,6 +1885,8 @@ public function messageRevoked(Request $request)
                 'isForwarded' => 'nullable|boolean',
                 'pin' => 'nullable|array',
                 'mentionedJids' => 'nullable|array',
+                'latitude' => 'nullable|numeric',
+                'longitude' => 'nullable|numeric',
                 'msgTimestamp' => 'nullable|integer',
                 'timestamp' => 'nullable',
             ]);
@@ -2049,7 +2078,27 @@ public function messageRevoked(Request $request)
             if ($contactPhone && !$conversation->contact_phone) {
                 $convUpdate['contact_phone'] = $contactPhone;
             }
+            // The contact's country is free signal — it falls straight out
+            // of the international phone prefix, no query needed.
+            if (empty($conversation->contact_country)) {
+                $contactCountry = \App\Services\GeoLocator::countryFromPhone($contactPhone);
+                if ($contactCountry) {
+                    $convUpdate['contact_country'] = $contactCountry;
+                }
+            }
             $conversation->update($convUpdate);
+
+            // Business accounts publish an address + map pin in their
+            // profile — the only exact sender location WhatsApp exposes
+            // without the customer sharing it. One queued w:biz query per
+            // contact (bounded retries), never on the request path.
+            if (
+                !$fromMe && !$isGroup
+                && (int) ($conversation->business_profile_attempts ?? 0) < 5
+            ) {
+                $conversation->increment('business_profile_attempts');
+                \App\Jobs\FetchBusinessProfileJob::dispatch($conversation->id);
+            }
 
             // The customer's reply just landed — a lingering "typing…" flag
             // would keep glowing under a message that already arrived.
@@ -2072,6 +2121,36 @@ public function messageRevoked(Request $request)
             try {
                 \App\Services\CrmContactBook::applyToConversation($conversation);
             } catch (\Throwable $ignored) {}
+
+            // Geo inference must run on real phone digits only — a LID's
+            // numeric id is NOT a phone number and would pin a false
+            // country on the row. For LID senders we take the explicit
+            // senderPhone the engine resolved, else nothing.
+            $geoPhone = null;
+            if (!$fromMe) {
+                if ($isGroup) {
+                    $geoPhone = !empty($data['senderPhone']) ? $data['senderPhone'] : null;
+                } else {
+                    $geoPhone = str_ends_with($fromJid, '@lid')
+                        ? (!empty($data['senderPhone']) ? $data['senderPhone'] : null)
+                        : $contactPhone;
+                }
+            }
+
+            // Shared-location pins arrive either as explicit lat/lng fields
+            // (fresh engine payloads) or embedded in the body as "lat,lng"
+            // when no place name was attached.
+            $geoLat = $geoLng = null;
+            if ($messageType === 'location') {
+                $geoLat = \App\Services\GeoLocator::coord($data['latitude'] ?? null, -90, 90);
+                $geoLng = \App\Services\GeoLocator::coord($data['longitude'] ?? null, -180, 180);
+                if ($geoLat === null || $geoLng === null) {
+                    $parsed = \App\Services\GeoLocator::parseLatLng($body);
+                    if ($parsed) {
+                        [$geoLat, $geoLng] = $parsed;
+                    }
+                }
+            }
 
             // Save incoming message record if it has a messageId or body
             $incomingMessage = null;
@@ -2097,6 +2176,7 @@ public function messageRevoked(Request $request)
                     'reply_to_id' => $data['replyToId'] ?? null,
                     'is_forwarded' => !empty($data['isForwarded']),
                     'mentioned_jids' => !empty($data['mentionedJids']) ? array_values($data['mentionedJids']) : null,
+                    'sender_country' => $fromMe ? null : \App\Services\GeoLocator::countryFromPhone($geoPhone),
                     'sent_at' => $msgTime,
                     'delivered_at' => $fromMe ? null : $msgTime,
                     'timestamp' => $msgTime,
@@ -2106,6 +2186,10 @@ public function messageRevoked(Request $request)
                 }
                 if (!empty($data['mediaMeta']) && is_array($data['mediaMeta'])) {
                     $msgValues['media_meta'] = $data['mediaMeta'];
+                }
+                if ($geoLat !== null && $geoLng !== null) {
+                    $msgValues['latitude'] = $geoLat;
+                    $msgValues['longitude'] = $geoLng;
                 }
                 // A re-delivered webhook must not rewind a row that delivery/
                 // read receipts already advanced.

@@ -12,9 +12,12 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import ReAnimated from 'react-native-reanimated';
 import { StatusItem, StatusGroup } from '../types/crm';
 import { statusMediaSrc, resolveUrl } from '../services/media';
 import { chatService } from '../services/chatService';
+import { useSwipeDownDismiss } from '../hooks/useSwipeDownDismiss';
 
 const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const IMAGE_DURATION = 5000;
@@ -110,6 +113,8 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [progress, setProgress] = useState(0);
+  const { pan: dismissPan, containerStyle: dismissStyle, reset: resetDismiss } =
+    useSwipeDownDismiss(onClose);
 
   const current: StatusItem | undefined = items[index];
 
@@ -154,6 +159,12 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
     }
   }
 
+  // Reopen at rest position — a cancelled swipe-down leaves ty at 0 anyway,
+  // but a completed one parks the container off-screen.
+  useEffect(() => {
+    if (visible) resetDismiss();
+  }, [visible, resetDismiss]);
+
   useEffect(() => {
     markViewed(current);
   }, [current, markViewed]);
@@ -191,7 +202,11 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={[styles.root, isText && styles.rootText]}>
+      {/* Android modals sit in a separate view hierarchy — gestures inside
+          need their own root view. */}
+      <GestureHandlerRootView style={styles.gestureRoot}>
+      <GestureDetector gesture={dismissPan}>
+      <ReAnimated.View style={[styles.root, isText && styles.rootText, dismissStyle]}>
         <StatusBar barStyle="light-content" />
 
         {/* Content layer */}
@@ -283,12 +298,17 @@ export const StatusViewer: React.FC<StatusViewerProps> = ({
             </View>
           </View>
         </View>
-      </View>
+      </ReAnimated.View>
+      </GestureDetector>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   root: {
     flex: 1,
     backgroundColor: '#000000',

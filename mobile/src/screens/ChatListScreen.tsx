@@ -12,6 +12,7 @@ import {
   Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -44,6 +45,7 @@ import { ChatAvatar } from '../components/ChatAvatar';
 import { AvatarPeekModal } from '../components/AvatarPeekModal';
 import { MediaViewerModal, GalleryMediaItem } from '../components/MediaViewerModal';
 import { ContactInfoModal } from '../components/ContactInfoModal';
+import { MyChatsSheet } from '../components/MyChatsSheet';
 import { TransferModal } from '../components/TransferModal';
 import { ResolveModal } from '../components/ResolveModal';
 import { avatarSrc, mediaSrc } from '../services/media';
@@ -57,6 +59,7 @@ interface ChatListScreenProps {
   onOpenStats: () => void;
   onOpenStarred?: () => void;
   onOpenStatuses?: () => void;
+  onOpenGestures?: () => void;
 }
 
 const sortConversations = (list: Conversation[]): Conversation[] =>
@@ -75,8 +78,9 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStats,
   onOpenStarred,
   onOpenStatuses,
+  onOpenGestures,
 }) => {
-  const { user, token } = useAuth();
+  const { user, token, refreshUser } = useAuth();
   const isStatusViewerAccount = (user?.email ?? '').trim().toLowerCase() === 'demo@crm.com';
   const insets = useSafeAreaInsets();
   const isAgent = user?.crm_role === 'agent';
@@ -84,6 +88,10 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [conversations, setConversations] = useState<Conversation[]>(
     () => chatCache.getConversations('chats') || []
   );
+  const conversationsRef = useRef<Conversation[]>(conversations);
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
   const [chatLists, setChatLists] = useState<ChatList[]>(() => chatCache.getChatLists());
   const [initialLoading, setInitialLoading] = useState(() => !chatCache.getConversations('chats'));
   const [refreshing, setRefreshing] = useState(false);
@@ -115,11 +123,33 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   const [peekConv, setPeekConv] = useState<Conversation | null>(null);
   const [infoConv, setInfoConv] = useState<Conversation | null>(null);
   const [avatarViewer, setAvatarViewer] = useState<{ items: GalleryMediaItem[]; index: number } | null>(null);
+  const [myChatsVisible, setMyChatsVisible] = useState(false);
+  // Bumped after a successful snooze so the "my chats" sheet drops that row.
+  const [snoozedSheetConvId, setSnoozedSheetConvId] = useState<number | null>(null);
 
   const reqSeq = useRef(0);
   const lastSeenIncoming = useRef<Map<number, string>>(new Map());
   const firstSyncDone = useRef(false);
   const activeConvIdRef = useRef<number | null>(activeConversationId ?? null);
+
+  // Onboarding hint over the shortcuts tab — floats on every app entry until
+  // the guide has been opened once, then never shows again.
+  const [guideHintVisible, setGuideHintVisible] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    AsyncStorage.getItem('wavixa_guide_seen')
+      .then((v) => {
+        if (alive && v !== '1') setGuideHintVisible(true);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+  const markGuideSeen = useCallback(() => {
+    setGuideHintVisible(false);
+    AsyncStorage.setItem('wavixa_guide_seen', '1').catch(() => {});
+  }, []);
 
   // Owned by this screen and handed to each conversation row: a row that has
   // claimed a horizontal swipe blocks the container's filter-tab switch.
@@ -355,6 +385,98 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     return off;
   }, []);
 
+  // Instant inbox updates — `message.new`/`message.status` land on the CRM
+  // channel the moment they hit the backend, so rows update in place
+  // instead of waiting for the silent poll. Structural events (transfer,
+  // new/removed conversations) still go through one debounced refetch.
+  useEffect(() => {
+    let refetchTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefetch = () => {
+      if (refetchTimer) clearTimeout(refetchTimer);
+      refetchTimer = setTimeout(() => fetchConversations('silent'), 900);
+    };
+
+    const off = realtime.on((ev) => {
+      const d = ev.data || {};
+      if (ev.type === 'message.new') {
+        if (!d.conversation_id) return;
+        const patchConv = d.conversation;
+        const found = conversationsRef.current.some((c) => c.id === d.conversation_id);
+        setConversations((prev) => {
+          if (!found) return prev;
+          return sortConversations(
+            prev.map((c) => {
+              if (c.id !== d.conversation_id) return c;
+              if (!patchConv) {
+                // No snapshot — bump the preview from the message itself.
+                const m = d.message || {};
+                return {
+                  ...c,
+                  last_message: m.message ?? c.last_message,
+                  last_message_type: m.message_type ?? c.last_message_type,
+                  last_message_direction: m.direction ?? c.last_message_direction,
+                  last_message_at: m.timestamp ?? c.last_message_at,
+                  unread_count:
+                    m.direction === 'incoming' && c.id !== activeConversationId
+                      ? (c.unread_count || 0) + 1
+                      : c.unread_count,
+                };
+              }
+              return {
+                ...c,
+                ...patchConv,
+                // The open room reports its own read state — don't flash an
+                // unread badge on the chat the agent is staring at.
+                unread_count:
+                  c.id === activeConversationId
+                    ? 0
+                    : (patchConv.unread_count ?? c.unread_count),
+              };
+            })
+          );
+        });
+        if (patchConv) {
+          chatCache.patchConversationEverywhere(d.conversation_id, patchConv);
+        }
+        // Unknown conversation (brand-new chat, or one outside the loaded
+        // page) → pull the real list; debounce absorbs history-sync bursts.
+        if (!found) scheduleRefetch();
+        return;
+      }
+      if (ev.type === 'message.status') {
+        const items: { conversation_id?: number; conversation_last_status?: any }[] =
+          Array.isArray(d.items) ? d.items : [];
+        const convPatches = new Map<number, any>();
+        for (const i of items) {
+          if (i.conversation_id != null && i.conversation_last_status) {
+            convPatches.set(i.conversation_id, i.conversation_last_status);
+          }
+        }
+        if (!convPatches.size) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            convPatches.has(c.id)
+              ? { ...c, last_message_status: convPatches.get(c.id) }
+              : c
+          )
+        );
+        return;
+      }
+      if (
+        ev.type === 'conversation.update' ||
+        ev.type === 'conversation.transferred' ||
+        ev.type === 'message.revoked' ||
+        ev.type === 'message.deleted'
+      ) {
+        scheduleRefetch();
+      }
+    });
+    return () => {
+      off();
+      if (refetchTimer) clearTimeout(refetchTimer);
+    };
+  }, [fetchConversations, activeConversationId]);
+
   useEffect(() => {
     if (activeConversationId === null) {
       Promise.resolve().then(() => {
@@ -515,6 +637,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
               ? prev.map((c) => (c.id === conv.id ? { ...c, snoozed_until: until } : c))
               : prev.filter((c) => c.id !== conv.id)
           );
+          setSnoozedSheetConvId(conv.id);
         }
       } catch (err: any) {
         Alert.alert('تنبيه', err?.response?.data?.message || 'تعذر تأجيل المحادثة');
@@ -850,13 +973,36 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onOpenStarred?.();
       } else if (tab === 'statuses') {
         if (isStatusViewerAccount) onOpenStatuses?.();
-      } else if (tab === 'replies') {
-        setQuickRepliesVisible(true);
+      } else if (tab === 'shortcuts') {
+        markGuideSeen();
+        onOpenGestures?.();
       } else if (tab === 'settings') {
         onOpenProfile();
       }
     },
-    [onOpenStarred, onOpenStatuses, onOpenProfile, isStatusViewerAccount]
+    [onOpenStarred, onOpenStatuses, onOpenProfile, onOpenGestures, isStatusViewerAccount, markGuideSeen]
+  );
+
+  const handleBottomTabLongPress = useCallback(
+    (tab: BottomTabType) => {
+      try {
+        Vibration.vibrate(12);
+      } catch {}
+      if (tab === 'chats') {
+        // Shortcut: jump straight into the first unread conversation in the
+        // current scope — the most common "get me back to work" action.
+        const firstUnread = displayedConversations.find(
+          (c) => (c.unread_count || 0) > 0 || chatPrefs.isMarkedUnread(c.id)
+        );
+        if (firstUnread) handlePressItem(firstUnread);
+      } else if (tab === 'starred') {
+        onOpenStarred?.();
+      } else if (tab === 'shortcuts') {
+        markGuideSeen();
+        onOpenGestures?.();
+      }
+    },
+    [displayedConversations, handlePressItem, onOpenStarred, onOpenGestures, markGuideSeen]
   );
 
   const renderItem = useCallback(
@@ -1081,6 +1227,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
       <Header
         onOpenMenu={() => setMenuVisible(true)}
         onOpenProfile={onOpenProfile}
+        onOpenMyChats={() => setMyChatsVisible(true)}
       />
 
       <SearchBar
@@ -1109,6 +1256,9 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
               onPress: () => handleDeleteList(list),
             },
           ]);
+        }}
+        onLongPressScope={(scope) => {
+          if (scope === 'mine') setMyChatsVisible(true);
         }}
       />
 
@@ -1222,9 +1372,11 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         <BottomNav
           activeTab={activeTab}
           onTabPress={handleBottomTabPress}
+          onTabLongPress={handleBottomTabLongPress}
           onNewChatPress={() => setNewChatVisible(true)}
           totalUnread={totalUnreadMessages}
           showStatuses={isStatusViewerAccount}
+          guideHintVisible={guideHintVisible}
         />
       )}
 
@@ -1277,6 +1429,25 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onResolve={(conv) => setResolveConvId(conv.id)}
         onSnooze={(conv) => setSnoozeConv(conv)}
         onOpenNotes={(conv) => setNotesConv(conv)}
+      />
+
+      {/* Rendered BEFORE the modals it can spawn — the snooze modal must
+          stack on top of this sheet, not behind it. */}
+      <MyChatsSheet
+        visible={myChatsVisible}
+        onClose={() => setMyChatsVisible(false)}
+        onOpenConversation={(conv) => {
+          setMyChatsVisible(false);
+          handlePressItem(conv);
+        }}
+        // The sheet stays mounted under the SnoozeModal — on success the row
+        // drops out via snoozedConvId, on cancel it simply stays put.
+        onSnooze={(conv) => setSnoozeConv(conv)}
+        snoozedConvId={snoozedSheetConvId}
+        onChanged={() => {
+          fetchConversations('silent');
+          refreshUser().catch(() => {});
+        }}
       />
 
       <SnoozeModal

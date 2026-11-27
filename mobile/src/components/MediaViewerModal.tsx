@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -9,11 +9,15 @@ import {
   Dimensions,
   Linking,
   TouchableOpacity,
+  FlatList,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import Animated, { useSharedValue } from 'react-native-reanimated';
 import { ZoomableImage } from './ZoomableImage';
+import { useSwipeDownDismiss } from '../hooks/useSwipeDownDismiss';
 
 export interface GalleryMediaItem {
   id: string | number;
@@ -32,6 +36,8 @@ interface MediaViewerModalProps {
   onClose: () => void;
 }
 
+const { width: SCREEN_W } = Dimensions.get('window');
+
 export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   visible,
   items,
@@ -41,14 +47,27 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
   const filmstripRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const pagerRef = useRef<FlatList<GalleryMediaItem>>(null);
+  // 1 while the visible page's image is zoomed — veto on pull-to-dismiss so
+  // a vertical drag pans the photo instead of closing the viewer.
+  const zoomedSV = useSharedValue(0);
+  // JS mirror of zoomedSV — disables horizontal paging while a photo is
+  // zoomed so drags pan the image instead of flipping pages.
+  const [isZoomed, setIsZoomed] = useState(false);
+  const { pan, containerStyle, reset } = useSwipeDownDismiss(onClose, {
+    blockedSV: zoomedSV,
+  });
 
   useEffect(() => {
     if (visible) {
       Promise.resolve().then(() => {
         setCurrentIndex(Math.max(0, Math.min(initialIndex, items.length - 1)));
+        setIsZoomed(false);
       });
+      zoomedSV.value = 0;
+      reset();
     }
-  }, [visible, initialIndex, items.length]);
+  }, [visible, initialIndex, items.length, reset, zoomedSV]);
 
   useEffect(() => {
     if (visible && filmstripRef.current && items.length > 0) {
@@ -59,18 +78,67 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
     }
   }, [currentIndex, visible, items.length]);
 
+  /* eslint-disable react-hooks/immutability -- shared-value writes from JS
+     callbacks are the standard reanimated bridge, not render mutation. */
+  const handleScaleChange = useCallback(
+    (scale: number) => {
+      const z = scale > 1.03;
+      zoomedSV.value = z ? 1 : 0;
+      setIsZoomed(z);
+    },
+    [zoomedSV]
+  );
+
+  const handlePageSettled = useCallback(
+    (e: { nativeEvent: { contentOffset: { x: number } } }) => {
+      const idx = Math.round(e.nativeEvent.contentOffset.x / SCREEN_W);
+      if (idx !== currentIndex) {
+        zoomedSV.value = 0;
+        setIsZoomed(false);
+        setCurrentIndex(Math.max(0, Math.min(idx, items.length - 1)));
+      }
+    },
+    [currentIndex, items.length, zoomedSV]
+  );
+
+  const jumpToPage = useCallback(
+    (idx: number) => {
+      pagerRef.current?.scrollToIndex({ index: idx, animated: true });
+      zoomedSV.value = 0;
+      setIsZoomed(false);
+      setCurrentIndex(idx);
+    },
+    [zoomedSV]
+  );
+  /* eslint-enable react-hooks/immutability */
+
+  const renderPage = useCallback(
+    ({ item, index }: { item: GalleryMediaItem; index: number }) => (
+      <View style={styles.page}>
+        {item.kind === 'image' ? (
+          <ZoomableImage uri={item.uri} showControls onScaleChange={handleScaleChange} />
+        ) : (
+          <FullscreenVideo uri={item.uri} active={index === currentIndex} />
+        )}
+      </View>
+    ),
+    [handleScaleChange, currentIndex]
+  );
+
+  const getPageLayout = useCallback(
+    (_: ArrayLike<GalleryMediaItem> | null | undefined, index: number) => ({
+      length: SCREEN_W,
+      offset: SCREEN_W * index,
+      index,
+    }),
+    []
+  );
+
   if (!items || items.length === 0) return null;
 
-  const currentItem = items[currentIndex] || items[0];
+  const clampedIndex = Math.max(0, Math.min(currentIndex, items.length - 1));
+  const currentItem = items[clampedIndex] || items[0];
   if (!currentItem) return null;
-
-  const handlePrev = () => {
-    if (currentIndex > 0) setCurrentIndex(currentIndex - 1);
-  };
-
-  const handleNext = () => {
-    if (currentIndex < items.length - 1) setCurrentIndex(currentIndex + 1);
-  };
 
   const handleDownload = () => {
     const dl = currentItem.downloadUri || currentItem.uri;
@@ -97,111 +165,127 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
       onRequestClose={onClose}
       statusBarTranslucent
     >
-      <View style={styles.backdrop}>
-        <View style={[styles.headerBar, { paddingTop: Math.max(insets.top + 8, 18) }]}>
-          <TouchableOpacity onPress={onClose} style={styles.headerBtn} hitSlop={12}>
-            <Ionicons name="arrow-forward" size={23} color="#FFFFFF" />
-          </TouchableOpacity>
+      {/* Android modals sit in a separate view hierarchy — gestures inside
+          need their own root view. */}
+      <GestureHandlerRootView style={styles.gestureRoot}>
+      <GestureDetector gesture={pan}>
+        <Animated.View style={[styles.backdrop, containerStyle]}>
+          <View style={[styles.headerBar, { paddingTop: Math.max(insets.top + 8, 18) }]}>
+            <TouchableOpacity onPress={onClose} style={styles.headerBtn} hitSlop={12}>
+              <Ionicons name="arrow-forward" size={23} color="#FFFFFF" />
+            </TouchableOpacity>
 
-          <View style={styles.headerInfo}>
-            <Text style={styles.headerTitle} numberOfLines={1}>
-              {currentItem.senderName || 'الوسائط'}
-            </Text>
-            <Text style={styles.headerSub}>
-              {formatTime(currentItem.timestamp)}{' '}
-              {items.length > 1 ? `• (${currentIndex + 1} من ${items.length})` : ''}
-            </Text>
+            <View style={styles.headerInfo}>
+              <Text style={styles.headerTitle} numberOfLines={1}>
+                {currentItem.senderName || 'الوسائط'}
+              </Text>
+              <Text style={styles.headerSub}>
+                {formatTime(currentItem.timestamp)}{' '}
+                {items.length > 1 ? `• (${clampedIndex + 1} من ${items.length})` : ''}
+              </Text>
+            </View>
+
+            <TouchableOpacity onPress={handleDownload} style={styles.headerBtn} hitSlop={12}>
+              <Ionicons name="download-outline" size={22} color="#FFFFFF" />
+            </TouchableOpacity>
           </View>
 
-          <TouchableOpacity onPress={handleDownload} style={styles.headerBtn} hitSlop={12}>
-            <Ionicons name="download-outline" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-        </View>
-
-        <View style={styles.stage}>
-          {currentItem.kind === 'image' ? (
-            <ZoomableImage uri={currentItem.uri} showControls />
-          ) : (
-            <FullscreenVideo key={currentItem.uri} uri={currentItem.uri} />
-          )}
-
-          {currentIndex > 0 && (
-            <TouchableOpacity
-              style={[styles.navBtn, styles.navBtnPrev]}
-              onPress={handlePrev}
-              hitSlop={8}
-            >
-              <Ionicons name="chevron-forward" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
-
-          {currentIndex < items.length - 1 && (
-            <TouchableOpacity
-              style={[styles.navBtn, styles.navBtnNext]}
-              onPress={handleNext}
-              hitSlop={8}
-            >
-              <Ionicons name="chevron-back" size={28} color="#FFFFFF" />
-            </TouchableOpacity>
-          )}
-        </View>
-
-        {currentItem.caption ? (
-          <View style={styles.captionBar}>
-            <Text style={styles.captionText}>{currentItem.caption}</Text>
-          </View>
-        ) : null}
-
-        {items.length > 1 && (
-          <View style={[styles.filmstripContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
-            <ScrollView
-              ref={filmstripRef}
+          <View style={styles.stage}>
+            {/* Page order is the gallery order: items run old → new, and the
+                pager flips itself under RTL so "next" always follows the
+                reading direction — no buttons needed. */}
+            <FlatList
+              ref={pagerRef}
+              key={`pager-${initialIndex}-${items.length}`}
+              data={items}
               horizontal
+              pagingEnabled
+              initialScrollIndex={clampedIndex}
+              getItemLayout={getPageLayout}
+              keyExtractor={(it, idx) => `${it.id}-${idx}`}
               showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.filmstripScroll}
-            >
-              {items.map((it, idx) => {
-                const isActive = idx === currentIndex;
-                return (
-                  <TouchableOpacity
-                    key={`${it.id}-${idx}`}
-                    onPress={() => setCurrentIndex(idx)}
-                    activeOpacity={0.8}
-                    style={[
-                      styles.thumbnailWrap,
-                      isActive && styles.thumbnailActive,
-                    ]}
-                  >
-                    {it.kind === 'image' ? (
-                      <Image
-                        source={{ uri: it.uri }}
-                        style={styles.thumbnail}
-                        resizeMode="cover"
-                      />
-                    ) : (
-                      <View style={styles.videoThumbBox}>
-                        <Ionicons name="videocam" size={18} color="#FFFFFF" />
-                      </View>
-                    )}
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
+              scrollEnabled={!isZoomed}
+              windowSize={3}
+              maxToRenderPerBatch={1}
+              initialNumToRender={1}
+              onMomentumScrollEnd={handlePageSettled}
+              onScrollToIndexFailed={(info) => {
+                pagerRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: false,
+                });
+              }}
+              renderItem={renderPage}
+            />
           </View>
-        )}
-      </View>
+
+          {currentItem.caption ? (
+            <View style={styles.captionBar}>
+              <Text style={styles.captionText}>{currentItem.caption}</Text>
+            </View>
+          ) : null}
+
+          {items.length > 1 && (
+            <View style={[styles.filmstripContainer, { paddingBottom: Math.max(insets.bottom, 10) }]}>
+              <ScrollView
+                ref={filmstripRef}
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={styles.filmstripScroll}
+              >
+                {items.map((it, idx) => {
+                  const isActive = idx === clampedIndex;
+                  return (
+                    <TouchableOpacity
+                      key={`${it.id}-${idx}`}
+                      onPress={() => jumpToPage(idx)}
+                      activeOpacity={0.8}
+                      style={[
+                        styles.thumbnailWrap,
+                        isActive && styles.thumbnailActive,
+                      ]}
+                    >
+                      {it.kind === 'image' ? (
+                        <Image
+                          source={{ uri: it.uri }}
+                          style={styles.thumbnail}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <View style={styles.videoThumbBox}>
+                          <Ionicons name="videocam" size={18} color="#FFFFFF" />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
+        </Animated.View>
+      </GestureDetector>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
 
-const FullscreenVideo: React.FC<{ uri: string }> = ({ uri }) => {
+const FullscreenVideo: React.FC<{ uri: string; active: boolean }> = ({ uri, active }) => {
   const player = useVideoPlayer(uri, (p) => {
     p.play();
   });
+  // Off-screen pages stay mounted inside the pager window — pause them so a
+  // neighbouring clip doesn't keep playing audio while hidden.
+  useEffect(() => {
+    if (active) player.play();
+    else player.pause();
+  }, [player, active]);
   return <VideoView player={player} style={styles.mediaVideo} contentFit="contain" nativeControls />;
 };
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   backdrop: {
     flex: 1,
     backgroundColor: '#0C1317',
@@ -247,26 +331,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     position: 'relative',
   },
+  page: {
+    width: SCREEN_W,
+    flex: 1,
+  },
   mediaVideo: {
     width: '100%',
     height: '100%',
-  },
-  navBtn: {
-    position: 'absolute',
-    top: '46%',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: 'rgba(0, 0, 0, 0.65)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  navBtnPrev: {
-    right: 14,
-  },
-  navBtnNext: {
-    left: 14,
   },
   captionBar: {
     paddingHorizontal: 20,

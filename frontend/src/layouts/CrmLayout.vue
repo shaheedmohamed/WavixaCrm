@@ -128,6 +128,19 @@
           <span>تقييمات الموظفين</span>
         </router-link>
 
+        <!-- Message origins / geo stats (Owner only) -->
+        <router-link
+          v-if="isOwner"
+          to="/crm/locations"
+          class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all group"
+          :class="$route.path === '/crm/locations' ? 'bg-[#00a884]/15 text-[#00a884] border border-[#00a884]/30 font-bold' : 'text-[#aebac1] hover:bg-[#25343d] hover:text-[#f0f2f5]'"
+        >
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+          <span>مصادر الرسائل</span>
+        </router-link>
+
         <!-- Auto Reply / WhatsApp chatbot (Owner only) -->
         <router-link
           v-if="isOwner"

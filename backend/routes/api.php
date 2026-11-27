@@ -176,6 +176,8 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/push-token', [\App\Http\Controllers\Api\CrmController::class, 'savePushToken']);
         Route::delete('/push-token', [\App\Http\Controllers\Api\CrmController::class, 'deletePushToken']);
         Route::get('/stats', [\App\Http\Controllers\Api\CrmController::class, 'stats']);
+        Route::get('/message-origins', [\App\Http\Controllers\Api\CrmController::class, 'messageOrigins']);
+        Route::post('/conversations/{id}/refresh-business-profile', [\App\Http\Controllers\Api\CrmController::class, 'refreshBusinessProfile']);
 
         // Channel authorization under the /api/crm prefix so the split CRM
         // backend can authorize private-crm.{ownerId} for its own tokens.

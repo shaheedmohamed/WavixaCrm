@@ -13,6 +13,9 @@ import { Ionicons } from '@expo/vector-icons';
 interface ZoomableImageProps {
   uri: string;
   showControls?: boolean;
+  // Reports the live zoom factor — the media viewer uses it to disable
+  // pull-to-dismiss while a photo is zoomed in.
+  onScaleChange?: (scale: number) => void;
 }
 
 const MIN_SCALE = 1;
@@ -38,6 +41,7 @@ const clampPan = (x: number, y: number, scale: number) => {
 export const ZoomableImage: React.FC<ZoomableImageProps> = ({
   uri,
   showControls = true,
+  onScaleChange,
 }) => {
   const [scaleAnim] = useState(() => new Animated.Value(1));
   const [panXAnim] = useState(() => new Animated.Value(0));
@@ -67,6 +71,7 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
       stRef.current.panX = nx;
       stRef.current.panY = ny;
       setDisplayScale(Number(clamped.toFixed(1)));
+      onScaleChange?.(clamped);
 
       Animated.parallel([
         Animated.spring(scaleAnim, {
@@ -89,7 +94,7 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
         }),
       ]).start();
     },
-    [scaleAnim, panXAnim, panYAnim]
+    [scaleAnim, panXAnim, panYAnim, onScaleChange]
   );
 
   useEffect(() => {
@@ -110,7 +115,8 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
     panXAnim.setValue(0);
     panYAnim.setValue(0);
     Promise.resolve().then(() => setDisplayScale(1));
-  }, [uri, scaleAnim, panXAnim, panYAnim]);
+    onScaleChange?.(1);
+  }, [uri, scaleAnim, panXAnim, panYAnim, onScaleChange]);
 
   const handleGrant = (evt: GestureResponderEvent) => {
     const touches = evt.nativeEvent.touches;
@@ -155,6 +161,7 @@ export const ZoomableImage: React.FC<ZoomableImageProps> = ({
       st.scale = nextScale;
       scaleAnim.setValue(nextScale);
       setDisplayScale(Number(Math.max(1, nextScale).toFixed(1)));
+      onScaleChange?.(nextScale);
     } else if (!st.isPinching && st.scale > 1.02) {
       const dx = evt.nativeEvent.pageX - st.grantX;
       const dy = evt.nativeEvent.pageY - st.grantY;

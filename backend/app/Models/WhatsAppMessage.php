@@ -32,6 +32,9 @@ class WhatsAppMessage extends Model
         'sent_by_user_id',
         'reply_to_id',
         'is_forwarded',
+        'latitude',
+        'longitude',
+        'sender_country',
         'message_id',
         'job_id',
         'message_type',
@@ -67,6 +70,8 @@ class WhatsAppMessage extends Model
         'starred_at' => 'datetime',
         'media_meta' => 'array',
         'is_forwarded' => 'boolean',
+        'latitude' => 'float',
+        'longitude' => 'float',
     ];
 
     public const STATUS_PENDING = 'pending';

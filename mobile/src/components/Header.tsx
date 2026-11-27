@@ -9,9 +9,11 @@ import { Colors } from '../constants/theme';
 interface HeaderProps {
   onOpenMenu: () => void;
   onOpenProfile?: () => void;
+  // Tap on the workload pill (x/max chats) — opens the "my chats" bubble.
+  onOpenMyChats?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile, onOpenMyChats }) => {
   const { user, isAgent } = useAuth();
   const insets = useSafeAreaInsets();
 
@@ -55,11 +57,17 @@ export const Header: React.FC<HeaderProps> = ({ onOpenMenu, onOpenProfile }) => 
           </TouchableOpacity>
 
           {isAgent && user?.max_active_chats ? (
-            <View style={styles.workloadBadge}>
+            <TouchableOpacity
+              style={styles.workloadBadge}
+              onPress={onOpenMyChats}
+              disabled={!onOpenMyChats}
+              activeOpacity={0.7}
+              hitSlop={{ top: 8, bottom: 8, left: 6, right: 6 }}
+            >
               <Text style={styles.workloadText}>
                 {user.active_chats || 0}/{user.max_active_chats}
               </Text>
-            </View>
+            </TouchableOpacity>
           ) : null}
         </View>
       </View>

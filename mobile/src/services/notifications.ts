@@ -26,6 +26,12 @@ const SILENT = {
 
 // FCM is the single source of push UI — foreground and background — so a
 // message can never alert twice. The chat-list poller still plays the ding.
+//
+// This handler ONLY runs for notifications delivered while the app is in
+// the foreground — while it's open the agent is already looking at the
+// chat list, so we swallow the tray banner entirely (no banner, no sound,
+// no shade entry). Background/killed deliveries never reach this handler:
+// Android posts the FCM `notification` payload to the tray itself.
 Notifications.setNotificationHandler({
   handleNotification: async (notification) => {
     const targetUser = notification?.request?.content?.data?.user_id;
@@ -37,10 +43,10 @@ Notifications.setNotificationHandler({
       return SILENT;
     }
     return {
-      shouldPlaySound: true,
+      shouldPlaySound: false,
       shouldSetBadge: true,
-      shouldShowBanner: true,
-      shouldShowList: true,
+      shouldShowBanner: false,
+      shouldShowList: false,
     };
   },
 });

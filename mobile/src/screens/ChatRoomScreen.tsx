@@ -300,9 +300,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   // Drag-to-select: while a selection is active, a press-hold then vertical
   // drag across rows extends it — same as WhatsApp's swipe-select. Row
-  // bounds are measured in window space once per drag (no auto-scroll yet,
-  // so they can't go stale mid-gesture).
+  // bounds are measured in window space; holding a finger in the edge band
+  // auto-scrolls and re-measures so the range keeps growing.
   const rowViewRefs = useRef(new Map<string | number, React.ComponentRef<typeof View>>());
+  const dragSelectHostRef = useRef<React.ComponentRef<typeof View>>(null);
+  const scrollOffsetRef = useRef(0);
   const selectedIdsRef = useRef<Set<string | number>>(selectedIds);
   useEffect(() => {
     selectedIdsRef.current = selectedIds;
@@ -311,10 +313,25 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     rows: { key: string | number; top: number; bottom: number }[];
     base: Set<string | number>;
     originIdx: number;
+    originKey: string | number | null;
     minIdx: number;
     maxIdx: number;
+    lastY: number;
+    viewportTop: number;
+    viewportBottom: number;
     active: boolean;
-  }>({ rows: [], base: new Set(), originIdx: -1, minIdx: -1, maxIdx: -1, active: false });
+  }>({
+    rows: [],
+    base: new Set(),
+    originIdx: -1,
+    originKey: null,
+    minIdx: -1,
+    maxIdx: -1,
+    lastY: 0,
+    viewportTop: 0,
+    viewportBottom: 0,
+    active: false,
+  });
 
   const rowIndexForY = useCallback(
     (rows: { key: string | number; top: number; bottom: number }[], y: number) => {
@@ -353,53 +370,147 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     []
   );
 
+  const measureRows = useCallback(async () => {
+    const jobs: Promise<{ key: string | number; top: number; bottom: number } | null>[] = [];
+    rowViewRefs.current.forEach((view, key) => {
+      jobs.push(
+        new Promise((res) => {
+          try {
+            view.measureInWindow((_x, y, _w, h) => {
+              res({ key, top: y, bottom: y + h });
+            });
+          } catch {
+            res(null);
+          }
+        })
+      );
+    });
+    const rows = (await Promise.all(jobs)).filter(
+      (r): r is { key: string | number; top: number; bottom: number } => r !== null
+    );
+    rows.sort((a, b) => a.top - b.top);
+    return rows;
+  }, []);
+
+  // Edge auto-scroll: while the finger parks in the top/bottom band the list
+  // creeps in that direction and the row geometry refreshes ~7x a second so
+  // newly-scrolled-in rows join the selection.
+  const edgeScrollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const edgeScrollDir = useRef<0 | 1 | -1>(0);
+  const edgeLastMeasure = useRef(0);
+
+  const edgeScrollStep = useCallback(() => {
+    const dir = edgeScrollDir.current;
+    const d = dragSel.current;
+    if (!dir || !d.active) {
+      if (edgeScrollTimer.current) {
+        clearInterval(edgeScrollTimer.current);
+        edgeScrollTimer.current = null;
+      }
+      return;
+    }
+    const next = Math.max(0, scrollOffsetRef.current + dir * 14);
+    flatListRef.current?.scrollToOffset({ offset: next, animated: false });
+    const now = Date.now();
+    if (now - edgeLastMeasure.current > 140) {
+      edgeLastMeasure.current = now;
+      measureRows().then((rows) => {
+        const dd = dragSel.current;
+        if (!dd.active || !rows.length) return;
+        const oi = rows.findIndex((r) => r.key === dd.originKey);
+        if (oi < 0) return; // anchor row unmounted — keep stale bounds this cycle
+        dd.rows = rows;
+        dd.originIdx = oi;
+        dd.minIdx = -1;
+        dd.maxIdx = -1;
+        applyDragRange(rowIndexForY(rows, dd.lastY));
+      });
+    }
+  }, [measureRows, rowIndexForY, applyDragRange]);
+
+  const stopEdgeScroll = useCallback(() => {
+    edgeScrollDir.current = 0;
+    if (edgeScrollTimer.current) {
+      clearInterval(edgeScrollTimer.current);
+      edgeScrollTimer.current = null;
+    }
+  }, []);
+
+  const startEdgeScroll = useCallback(
+    (dir: 1 | -1) => {
+      if (edgeScrollDir.current === dir) return;
+      edgeScrollDir.current = dir;
+      edgeLastMeasure.current = 0;
+      if (!edgeScrollTimer.current) {
+        edgeScrollTimer.current = setInterval(edgeScrollStep, 16);
+      }
+    },
+    [edgeScrollStep]
+  );
+
+  useEffect(
+    () => () => {
+      if (edgeScrollTimer.current) clearInterval(edgeScrollTimer.current);
+    },
+    []
+  );
+
+  const DRAG_EDGE_ZONE = 90;
+
   const beginDragSelect = useCallback(
     async (absY: number) => {
-      const jobs: Promise<{ key: string | number; top: number; bottom: number } | null>[] = [];
-      rowViewRefs.current.forEach((view, key) => {
-        jobs.push(
-          new Promise((res) => {
-            try {
-              view.measureInWindow((_x, y, _w, h) => {
-                res({ key, top: y, bottom: y + h });
-              });
-            } catch {
-              res(null);
-            }
-          })
-        );
+      const hostBox = await new Promise<{ top: number; bottom: number } | null>((res) => {
+        try {
+          dragSelectHostRef.current?.measureInWindow((_x, y, _w, h) =>
+            res({ top: y, bottom: y + h })
+          );
+        } catch {
+          res(null);
+        }
       });
-      const rows = (await Promise.all(jobs)).filter(
-        (r): r is { key: string | number; top: number; bottom: number } => r !== null
-      );
-      rows.sort((a, b) => a.top - b.top);
+      const rows = await measureRows();
       if (!rows.length) return;
       const idx = rowIndexForY(rows, absY);
       dragSel.current = {
         rows,
         base: new Set(selectedIdsRef.current),
         originIdx: idx,
+        originKey: rows[idx]?.key ?? null,
         minIdx: idx,
         maxIdx: idx,
+        lastY: absY,
+        viewportTop: hostBox?.top ?? -Infinity,
+        viewportBottom: hostBox?.bottom ?? Infinity,
         active: true,
       };
       applyDragRange(idx);
     },
-    [rowIndexForY, applyDragRange]
+    [measureRows, rowIndexForY, applyDragRange]
   );
 
   const updateDragSelect = useCallback(
     (absY: number) => {
       const d = dragSel.current;
       if (!d.active) return;
+      d.lastY = absY;
+      if (absY - d.viewportTop < DRAG_EDGE_ZONE) {
+        // Finger at the visual top → creep toward older messages (offset grows
+        // on the inverted list).
+        startEdgeScroll(1);
+      } else if (d.viewportBottom - absY < DRAG_EDGE_ZONE) {
+        startEdgeScroll(-1);
+      } else {
+        stopEdgeScroll();
+      }
       applyDragRange(rowIndexForY(d.rows, absY));
     },
-    [rowIndexForY, applyDragRange]
+    [rowIndexForY, applyDragRange, startEdgeScroll, stopEdgeScroll]
   );
 
   const endDragSelect = useCallback(() => {
     dragSel.current.active = false;
-  }, []);
+    stopEdgeScroll();
+  }, [stopEdgeScroll]);
 
   /* eslint-disable react-hooks/refs -- the worklets below invoke ref-backed
      callbacks at gesture-event time, never during render. */
@@ -426,6 +537,9 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [transferVisible, setTransferVisible] = useState(false);
   const [resolveVisible, setResolveVisible] = useState(false);
   const [notesVisible, setNotesVisible] = useState(false);
+  // Drives the amber dot on the header notes icon so the next shift knows a
+  // handover note exists before opening the modal.
+  const [notesCount, setNotesCount] = useState(0);
   const [pinDurationVisible, setPinDurationVisible] = useState(false);
   const [selectedMsgForPin, setSelectedMsgForPin] = useState<Message | null>(null);
   const [reactionSheetKey, setReactionSheetKey] = useState<string | number | null>(null);
@@ -436,6 +550,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const onBackRef = useRef(onBack);
 
   const msgLoadSeq = useRef(0);
+  const pollSeq = useRef(0);
   const knownIncomingIds = useRef<Set<string | number>>(new Set());
   // Row keys that landed while the chat was open — drives the slide-in entry
   // animation. Consumed (deleted) on first render so nothing replays.
@@ -465,6 +580,30 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   }, [messages]);
 
   const isGroup = Boolean(conversation.contact_jid?.includes('@g.us'));
+
+  // Double-tap the header → jump to the top of the loaded history. The list
+  // is inverted, so the visual top is scrollToEnd.
+  const scrollToTop = useCallback(() => {
+    flatListRef.current?.scrollToEnd({ animated: true });
+  }, []);
+  const openContactInfo = useCallback(() => setContactInfoVisible(true), []);
+  /* eslint-disable react-hooks/refs -- gesture callbacks run at touch time */
+  const headerTapGesture = Gesture.Exclusive(
+    Gesture.Tap()
+      .numberOfTaps(2)
+      .maxDelay(260)
+      .onEnd(() => {
+        'worklet';
+        runOnJS(scrollToTop)();
+      }),
+    Gesture.Tap()
+      .numberOfTaps(1)
+      .onEnd(() => {
+        'worklet';
+        runOnJS(openContactInfo)();
+      })
+  );
+  /* eslint-enable react-hooks/refs */
 
   const loadWallpaper = useCallback(async () => {
     try {
@@ -500,12 +639,24 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       if (isDeadConversation) return;
       const seq = ++msgLoadSeq.current;
 
+      // Incremental poll: most cycles only fetch rows newer than the newest
+      // one held (status flips ride the realtime channel separately); every
+      // 6th poll refetches the whole window as a reconciliation net.
+      let newestKnown = 0;
+      for (const m of messagesRef.current) {
+        if (!m.client_temp_id && m.id > newestKnown) newestKnown = m.id;
+      }
+      const deltaPoll =
+        mode === 'poll' && newestKnown > 0 && ++pollSeq.current % 6 !== 0;
+
       try {
         const res = await chatService.getMessages(
           initialConv.id,
           focusMessageId && !initialLoadDone.current
             ? { around_id: focusMessageId, limit: 80 }
-            : { limit: 60 }
+            : deltaPoll
+              ? { after_id: newestKnown }
+              : { limit: 60 }
         );
         if (seq !== msgLoadSeq.current || !res?.success || !Array.isArray(res.messages)) {
           return;
@@ -652,6 +803,107 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       });
     });
     return off;
+  }, [initialConv.id]);
+
+  // Instant delivery — the backend broadcasts `message.new`/`message.status`
+  // on the CRM channel; landing them here skips the 4s poll entirely. The
+  // poll stays as a slow reconciliation net for anything missed.
+  useEffect(() => {
+    let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleReconcile = () => {
+      if (reconcileTimer) clearTimeout(reconcileTimer);
+      reconcileTimer = setTimeout(() => fetchLatestWindow('poll'), 1400);
+    };
+
+    const off = realtime.on((ev) => {
+      const d = ev.data || {};
+      if (ev.type === 'message.new') {
+        if (d.conversation_id !== initialConv.id) return;
+        const m: Message | undefined = d.message;
+        if (!m) {
+          scheduleReconcile();
+          return;
+        }
+        const exists = messagesRef.current.some(
+          (x) =>
+            (m.id != null && x.id === m.id) ||
+            (m.message_id != null && x.message_id === m.message_id)
+        );
+        if (exists) return;
+        const key = String(m.client_temp_id || m.id || m.message_id);
+        freshAnimKeys.current.add(key);
+        setMessages((prev) => mergeChronologicalMessages(prev, [m], 'append_newer'));
+        if (m.direction === 'incoming') {
+          knownIncomingIds.current.add(m.id ?? m.message_id);
+          if (!chatPrefs.isMuted(initialConv.id)) playChatIncoming();
+          if (scrolledUpRef.current) setNewBelowCount((c) => c + 1);
+        }
+        if (d.conversation) {
+          setConversation((prev) => ({ ...prev, ...d.conversation }));
+          chatCache.patchConversationEverywhere(initialConv.id, d.conversation);
+        }
+        // The broadcast row is the raw model — a quiet refetch fills in
+        // server-shaped fields (quoted preview, reactions) a beat later.
+        scheduleReconcile();
+        return;
+      }
+      if (ev.type === 'message.status') {
+        const items: {
+          message_id?: number;
+          external_message_id?: string;
+          conversation_id?: number;
+          status?: Message['status'];
+          conversation_last_status?: Conversation['last_message_status'];
+        }[] = Array.isArray(d.items) ? d.items : [];
+        const relevant = items.filter((i) => i.conversation_id === initialConv.id);
+        if (!relevant.length) return;
+        setMessages((prev) =>
+          prev.map((msg) => {
+            const hit = relevant.find(
+              (i) =>
+                (i.message_id != null && i.message_id === msg.id) ||
+                (i.external_message_id && i.external_message_id === msg.message_id)
+            );
+            return hit && hit.status ? { ...msg, status: hit.status } : msg;
+          })
+        );
+        const lastStatus = relevant.find((i) => i.conversation_last_status)
+          ?.conversation_last_status;
+        if (lastStatus) {
+          setConversation((prev) => ({ ...prev, last_message_status: lastStatus }));
+          chatCache.patchConversationEverywhere(initialConv.id, {
+            last_message_status: lastStatus,
+          });
+        }
+        return;
+      }
+      if (ev.type === 'conversation.note') {
+        if (d.conversation_id === initialConv.id) setNotesCount((c) => c + 1);
+        return;
+      }
+      if (ev.type === 'message.revoked' || ev.type === 'message.deleted' || ev.type === 'conversation.update') {
+        if (d.conversation_id === initialConv.id) scheduleReconcile();
+      }
+    });
+    return () => {
+      off();
+      if (reconcileTimer) clearTimeout(reconcileTimer);
+    };
+  }, [initialConv.id, fetchLatestWindow]);
+
+  // One lightweight fetch on mount — the notes icon gets a dot when the
+  // conversation has handover notes for the next shift.
+  useEffect(() => {
+    let alive = true;
+    chatService
+      .getNotes(initialConv.id)
+      .then((res) => {
+        if (alive && res?.success) setNotesCount(res.notes?.length || 0);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
   }, [initialConv.id]);
 
   const handleLoadOlder = useCallback(async () => {
@@ -1738,11 +1990,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             <Ionicons name="arrow-forward" size={24} color="#FFFFFF" />
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.headerContactTouch}
-            onPress={() => setContactInfoVisible(true)}
-            activeOpacity={0.8}
-          >
+          <GestureDetector gesture={headerTapGesture}>
+            <View style={styles.headerContactTouch}>
             <View style={styles.avatarWrap}>
               <ChatAvatar conversation={conversation} title={contactTitle} size={40} badge />
             </View>
@@ -1785,7 +2034,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
                   : ''}
               </Text>
             </View>
-          </TouchableOpacity>
+            </View>
+          </GestureDetector>
         </View>
 
         <View style={styles.headerActions}>
@@ -1795,6 +2045,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             hitSlop={8}
           >
             <MaterialCommunityIcons name="note-text-outline" size={22} color="#FFFFFF" />
+            {notesCount > 0 && <View style={styles.notesDot} />}
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -1878,7 +2129,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           ) : null}
 
           <GestureDetector gesture={dragSelectGesture}>
-          <View style={styles.dragSelectHost} collapsable={false}>
+          <View ref={dragSelectHostRef} style={styles.dragSelectHost} collapsable={false}>
           <FlatList
             ref={flatListRef}
             data={invertedMessages}
@@ -1908,6 +2159,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             }
             onScroll={(e) => {
               const y = e.nativeEvent.contentOffset.y;
+              scrollOffsetRef.current = y;
               const up = y > 220;
               if (up !== scrolledUpRef.current) {
                 scrolledUpRef.current = up;
@@ -2056,6 +2308,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         currentUserId={user?.id}
         isAgent={isAgent}
         onClose={() => setNotesVisible(false)}
+        onChanged={setNotesCount}
       />
 
       <PinDurationModal
@@ -2267,6 +2520,17 @@ const styles = StyleSheet.create({
     borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  notesDot: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    width: 9,
+    height: 9,
+    borderRadius: 5,
+    backgroundColor: '#F59E0B',
+    borderWidth: 1.5,
+    borderColor: Colors.headerBg,
   },
   selectionCount: {
     color: '#FFFFFF',

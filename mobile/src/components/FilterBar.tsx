@@ -15,6 +15,8 @@ interface FilterBarProps {
   hideGroups?: boolean;
   onPressCreateList?: () => void;
   onLongPressCustomList?: (list: ChatList) => void;
+  // Long-press on a non-custom chip (e.g. "محادثاتي" opens the my-chats sheet).
+  onLongPressScope?: (scope: FilterScope) => void;
 }
 
 export interface FilterItem {
@@ -85,6 +87,7 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
   hideGroups = false,
   onPressCreateList,
   onLongPressCustomList,
+  onLongPressScope,
 }) {
   const scrollRef = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const userScrolledRef = useRef(false);
@@ -128,7 +131,9 @@ export const FilterBar: React.FC<FilterBarProps> = React.memo(function FilterBar
               onLongPress={
                 item.customList && onLongPressCustomList
                   ? () => onLongPressCustomList(item.customList!)
-                  : undefined
+                  : onLongPressScope
+                    ? () => onLongPressScope(item.id)
+                    : undefined
               }
               delayLongPress={300}
               activeOpacity={0.75}

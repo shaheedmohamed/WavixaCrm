@@ -23,6 +23,8 @@ interface ConversationNotesModalProps {
   currentUserId?: number;
   isAgent?: boolean;
   onClose: () => void;
+  // Keeps the header icon's dot in sync as notes load/add/delete.
+  onChanged?: (count: number) => void;
 }
 
 const noteTime = (iso?: string | null) => {
@@ -46,6 +48,7 @@ export const ConversationNotesModal: React.FC<ConversationNotesModalProps> = ({
   currentUserId,
   isAgent,
   onClose,
+  onChanged,
 }) => {
   const insets = useSafeAreaInsets();
   const [notes, setNotes] = useState<ConversationNote[]>([]);
@@ -79,6 +82,10 @@ export const ConversationNotesModal: React.FC<ConversationNotesModalProps> = ({
       });
     }
   }, [conversation, load]);
+
+  useEffect(() => {
+    if (conversation) onChanged?.(notes.length);
+  }, [conversation, notes.length, onChanged]);
 
   if (!conversation) return null;
 

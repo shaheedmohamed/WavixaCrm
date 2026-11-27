@@ -518,6 +518,98 @@ class CrmController extends Controller
     }
 
     /**
+     * Message-origin stats — the "جرد حسب المكان" view.
+     *
+     * Three tiers of precision, because WhatsApp never sends the sender's IP
+     * or GPS: country inferred from the phone prefix (every incoming
+     * message), exact coordinates from shared location pins, and the address
+     * a WhatsApp Business contact publishes on its profile.
+     */
+    public function messageOrigins(Request $request)
+    {
+        $allowedSessionIds = $this->getAllowedSessionIds();
+
+        $days = min(365, max(1, (int) $request->input('days', 0)));
+        $msgQuery = WhatsAppMessage::whereIn('session_id', $allowedSessionIds)
+            ->where('direction', 'incoming');
+        if ($days) {
+            $msgQuery->where('created_at', '>=', now()->subDays($days));
+        }
+
+        $byCountry = (clone $msgQuery)
+            ->selectRaw('sender_country, COUNT(*) as messages, MAX(created_at) as last_message_at')
+            ->whereNotNull('sender_country')
+            ->groupBy('sender_country')
+            ->orderByDesc('messages')
+            ->get();
+
+        $totalIncoming = (clone $msgQuery)->count();
+        $withCountry = (clone $msgQuery)->whereNotNull('sender_country')->count();
+        $sharedPins = (clone $msgQuery)->whereNotNull('latitude')->whereNotNull('longitude')->count();
+
+        // Contacts with an exact known location: either a published business
+        // address/pin or a shared location message.
+        $located = WhatsAppConversation::whereIn('session_id', $allowedSessionIds)
+            ->where(function ($q) {
+                $q->whereNotNull('business_address')
+                  ->orWhereNotNull('business_latitude');
+            })
+            ->orderByDesc('last_message_at')
+            ->limit(500)
+            ->get([
+                'id', 'contact_name', 'contact_phone', 'contact_country',
+                'business_address', 'business_latitude', 'business_longitude',
+                'business_profile_checked_at', 'last_message_at',
+            ]);
+
+        // Recent shared pins (contact shares their live/static location).
+        $pins = (clone $msgQuery)
+            ->whereNotNull('latitude')
+            ->whereNotNull('longitude')
+            ->orderByDesc('created_at')
+            ->limit(200)
+            ->get(['id', 'conversation_id', 'from', 'latitude', 'longitude', 'message', 'created_at']);
+
+        return response()->json([
+            'success' => true,
+            'totals' => [
+                'incoming_messages' => $totalIncoming,
+                'with_country' => $withCountry,
+                'shared_pins' => $sharedPins,
+                'business_profiles' => WhatsAppConversation::whereIn('session_id', $allowedSessionIds)
+                    ->whereNotNull('business_profile_checked_at')->count(),
+                'located_contacts' => $located->count(),
+            ],
+            'by_country' => $byCountry,
+            'located' => $located,
+            'pins' => $pins,
+        ]);
+    }
+
+    /**
+     * Re-run the business-profile pull for one conversation on demand —
+     * e.g. the first attempt ran while the device was offline.
+     */
+    public function refreshBusinessProfile(Request $request, int $id)
+    {
+        $allowedSessionIds = $this->getAllowedSessionIds();
+        $conversation = WhatsAppConversation::whereIn('session_id', $allowedSessionIds)
+            ->where('id', $id)
+            ->first();
+        if (!$conversation) {
+            return response()->json(['success' => false, 'message' => 'المحادثة غير موجودة'], 404);
+        }
+        $conversation->update([
+            'business_profile_attempts' => 0,
+            'business_profile_checked_at' => null,
+        ]);
+        $conversation->increment('business_profile_attempts');
+        \App\Jobs\FetchBusinessProfileJob::dispatch($conversation->id);
+
+        return response()->json(['success' => true]);
+    }
+
+    /**
      * List linked WhatsApp devices
      */
     public function getDevices()

@@ -8,6 +8,7 @@ import {
   TextInput,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardSafeView } from './KeyboardSafeView';
 import { SlideToConfirm } from './SlideToConfirm';
 import { chatService } from '../services/chatService';
@@ -51,6 +52,9 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
+      {/* Modals live in their own view hierarchy on Android — gestures inside
+          need a local root view or they never fire. */}
+      <GestureHandlerRootView style={styles.gestureRoot}>
       <KeyboardSafeView style={styles.overlay}>
         <View style={styles.card}>
           <Text style={styles.title}>إنهاء وتوثيق المحادثة</Text>
@@ -116,11 +120,15 @@ export const ResolveModal: React.FC<ResolveModalProps> = ({
           </View>
         </View>
       </KeyboardSafeView>
+      </GestureHandlerRootView>
     </Modal>
   );
 };
 
 const styles = StyleSheet.create({
+  gestureRoot: {
+    flex: 1,
+  },
   overlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',

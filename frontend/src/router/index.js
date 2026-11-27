@@ -100,6 +100,7 @@ import CrmDashboard from '@/pages/crm/CrmDashboard.vue';
 import CrmDevices from '@/pages/crm/CrmDevices.vue';
 import CrmAgents from '@/pages/crm/CrmAgents.vue';
 import CrmPerformance from '@/pages/crm/CrmPerformance.vue';
+import CrmLocations from '@/pages/crm/CrmLocations.vue';
 import CrmContacts from '@/pages/crm/CrmContacts.vue';
 import CrmAdminDashboard from '@/pages/crm/admin/AdminDashboard.vue';
 import CrmAdminCustomer from '@/pages/crm/admin/AdminCustomer.vue';
@@ -624,6 +625,12 @@ const routes = [
         path: 'performance',
         name: 'CrmPerformance',
         component: CrmPerformance,
+        meta: { isCrm: true, requiresOwner: true },
+      },
+      {
+        path: 'locations',
+        name: 'CrmLocations',
+        component: CrmLocations,
         meta: { isCrm: true, requiresOwner: true },
       },
       {
