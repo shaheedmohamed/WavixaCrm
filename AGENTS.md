@@ -36,7 +36,15 @@ stamps existing rows and optionally queues profile pulls (2s-staggered).
 In-app force-update for the employee app (Android). NOT expo-updates — that
 module stays disabled (`expo.modules.updates.ENABLED=false` in the manifest).
 
-- **Publish:** `php artisan crm:apk-publish <path-to.apk> [--notes="…"] [--optional] [--force]`
+- **Release (the normal flow):** `bash mobile/scripts/release-apk.sh
+  [--notes="…"] [--name X.Y.Z] [--optional]`. Builds
+  `android/app/build/outputs/apk/release/app-release.apk` with gradle
+  (JAVA_HOME=/opt/jdk-17.0.21.1+2 — not on PATH by default), stages it as
+  `apk/wavixa-v<vc>-<name>.apk`, publishes, then auto-bumps
+  `android/version.properties` (VERSION_CODE +1, patch +1) which
+  `app/build.gradle` reads — versions never collide and need no manual edits.
+- **Publish (standalone, when the APK is already on the server):**
+  `php artisan crm:apk-publish <path-to.apk> [--notes="…"] [--optional] [--force]`
   in `backend/`. Reads package/versionCode/versionName from the APK binary via
   `aapt dump badging` (`/opt/android-sdk/build-tools/37.0.0/aapt`), copies the
   file into `/var/www/WavixaCRM/apk/` (nginx `location ^~ /apk/` → direct
