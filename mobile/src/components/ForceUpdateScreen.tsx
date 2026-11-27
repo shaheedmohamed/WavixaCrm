@@ -4,12 +4,17 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  Linking,
   ActivityIndicator,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LatestApk } from '../services/appUpdate';
 import { Colors } from '../constants/theme';
+
+export type UpdatePhase =
+  | 'downloading'
+  | 'installing'
+  | 'install_blocked'
+  | 'error';
 
 const formatSize = (bytes: number | null | undefined) => {
   if (!bytes) return null;
@@ -18,64 +23,159 @@ const formatSize = (bytes: number | null | undefined) => {
 };
 
 /**
- * Blocking update wall — rendered above EVERYTHING when the server
- * manifest says this build is too old. No close button, no back handling:
- * the app stays unusable until the new APK is installed, exactly like a
- * banking app's mandatory update.
+ * Blocking update wall — rendered above EVERYTHING when the server manifest
+ * says this build is too old. The download starts automatically, the system
+ * installer opens by itself, and the app stays unusable until the new APK is
+ * installed. `onDismiss` is only provided for optional (non-mandatory)
+ * releases — mandatory walls cannot be closed.
  */
 export const ForceUpdateScreen: React.FC<{
   latest: LatestApk;
+  phase: UpdatePhase;
+  written: number;
+  total: number;
   checking: boolean;
+  onInstall: () => void;
+  onRetry: () => void;
+  onOpenSettings: () => void;
   onRecheck: () => void;
-}> = ({ latest, checking, onRecheck }) => (
-  <View style={styles.root}>
-    <View style={styles.iconWrap}>
-      <Ionicons name="rocket-outline" size={46} color="#FFFFFF" />
-    </View>
+  onDismiss?: () => void;
+}> = ({
+  latest,
+  phase,
+  written,
+  total,
+  checking,
+  onInstall,
+  onRetry,
+  onOpenSettings,
+  onRecheck,
+  onDismiss,
+}) => {
+  const pct =
+    total > 0 ? Math.min(100, Math.round((written / total) * 100)) : 0;
+  const mandatory = latest.mandatory;
 
-    <Text style={styles.title}>تحديث مطلوب</Text>
-    <Text style={styles.subtitle}>
-      في إصدار جديد من التطبيق ({latest.version_name}) ولازم تحمّله عشان تكمل استخدام التطبيق
-    </Text>
+  return (
+    <View style={styles.root}>
+      <View style={styles.iconWrap}>
+        <Ionicons name="rocket-outline" size={46} color="#FFFFFF" />
+      </View>
 
-    {latest.notes ? <Text style={styles.notes}>{latest.notes}</Text> : null}
-
-    <TouchableOpacity
-      style={styles.downloadBtn}
-      activeOpacity={0.85}
-      onPress={() => latest.apk_url && Linking.openURL(latest.apk_url).catch(() => {})}
-    >
-      <Ionicons name="download-outline" size={20} color="#FFFFFF" />
-      <Text style={styles.downloadText}>
-        حمّل التحديث{formatSize(latest.size_bytes) ? ` (${formatSize(latest.size_bytes)})` : ''}
+      <Text style={styles.title}>
+        {mandatory ? 'تحديث مطلوب' : 'تحديث متوفر'}
       </Text>
-    </TouchableOpacity>
+      <Text style={styles.subtitle}>
+        في إصدار جديد من التطبيق ({latest.version_name})
+        {mandatory ? ' ولازم تحمّله عشان تكمل استخدام التطبيق' : ''}
+      </Text>
 
-    <TouchableOpacity
-      style={styles.recheckBtn}
-      activeOpacity={0.7}
-      onPress={onRecheck}
-      disabled={checking}
-    >
-      {checking ? (
-        <ActivityIndicator size="small" color={Colors.primary} />
-      ) : (
-        <>
-          <Ionicons name="refresh" size={16} color={Colors.primary} />
-          <Text style={styles.recheckText}>حدّثت التطبيق؟ اضغط هنا للمتابعة</Text>
-        </>
+      {latest.notes ? <Text style={styles.notes}>{latest.notes}</Text> : null}
+
+      {phase === 'downloading' && (
+        <View style={styles.progressWrap}>
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${pct}%` }]} />
+          </View>
+          <Text style={styles.progressText}>
+            جاري تحميل التحديث… {pct}%
+            {total > 0 ? `  (${formatSize(written)} / ${formatSize(total)})` : ''}
+          </Text>
+          <Text style={styles.progressHint}>سيب التطبيق مفتوح لحد ما التحميل يخلص</Text>
+        </View>
       )}
-    </TouchableOpacity>
 
-    <Text style={styles.hint}>
-      لو التثبيت متعطّل، فعّل "التثبيت من مصادر غير معروفة" للمتصفح وارجع هنا
-    </Text>
-  </View>
-);
+      {phase === 'installing' && (
+        <View style={styles.progressWrap}>
+          <ActivityIndicator size="small" color="#FFFFFF" />
+          <Text style={styles.progressText}>
+            التحميل خلص — لو نافذة التثبيت مشفتش، اضغط الزر تحت
+          </Text>
+          <TouchableOpacity
+            style={styles.downloadBtn}
+            activeOpacity={0.85}
+            onPress={onInstall}
+          >
+            <Ionicons name="download-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.downloadText}>ثبّت التحديث</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {phase === 'install_blocked' && (
+        <View style={styles.progressWrap}>
+          <Ionicons name="shield-checkmark-outline" size={30} color="#FFD166" />
+          <Text style={styles.progressText}>
+            النظام محتاج إذن «تثبيت تطبيقات من مصادر غير معروفة» للتطبيق ده. افتح
+            الإعدادات، فعّل الإذن، وارجع — التثبيت هيكمل لوحده.
+          </Text>
+          <TouchableOpacity
+            style={styles.downloadBtn}
+            activeOpacity={0.85}
+            onPress={onOpenSettings}
+          >
+            <Ionicons name="settings-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.downloadText}>افتح إعدادات التثبيت</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {phase === 'error' && (
+        <View style={styles.progressWrap}>
+          <Ionicons name="cloud-offline-outline" size={30} color="#FF8A80" />
+          <Text style={styles.progressText}>
+            التحميل وقف — اتأكد من النت وحاول تاني
+          </Text>
+          <TouchableOpacity
+            style={styles.downloadBtn}
+            activeOpacity={0.85}
+            onPress={onRetry}
+          >
+            <Ionicons name="refresh" size={20} color="#FFFFFF" />
+            <Text style={styles.downloadText}>
+              حمّل التحديث{formatSize(latest.size_bytes) ? ` (${formatSize(latest.size_bytes)})` : ''}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
+      {onDismiss ? (
+        <TouchableOpacity
+          style={styles.recheckBtn}
+          activeOpacity={0.7}
+          onPress={onDismiss}
+        >
+          <Ionicons name="time-outline" size={16} color="rgba(255,255,255,0.7)" />
+          <Text style={styles.dismissText}>لاحقاً</Text>
+        </TouchableOpacity>
+      ) : (
+        <TouchableOpacity
+          style={styles.recheckBtn}
+          activeOpacity={0.7}
+          onPress={onRecheck}
+          disabled={checking}
+        >
+          {checking ? (
+            <ActivityIndicator size="small" color={Colors.primary} />
+          ) : (
+            <>
+              <Ionicons name="refresh" size={16} color={Colors.primary} />
+              <Text style={styles.recheckText}>حدّثت التطبيق؟ اضغط هنا للمتابعة</Text>
+            </>
+          )}
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+};
 
 const styles = StyleSheet.create({
   root: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     backgroundColor: Colors.headerBg,
     alignItems: 'center',
     justifyContent: 'center',
@@ -120,6 +220,35 @@ const styles = StyleSheet.create({
     marginBottom: 4,
     paddingHorizontal: 8,
   },
+  progressWrap: {
+    alignItems: 'center',
+    marginTop: 26,
+    width: '100%',
+    gap: 12,
+  },
+  progressTrack: {
+    width: '100%',
+    height: 10,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255,255,255,0.18)',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 6,
+    backgroundColor: Colors.secondary,
+  },
+  progressText: {
+    fontSize: 14,
+    color: 'rgba(255,255,255,0.9)',
+    textAlign: 'center',
+    lineHeight: 21,
+  },
+  progressHint: {
+    fontSize: 12,
+    color: 'rgba(255,255,255,0.5)',
+    textAlign: 'center',
+  },
   downloadBtn: {
     flexDirection: 'row-reverse',
     alignItems: 'center',
@@ -128,7 +257,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 30,
     paddingVertical: 15,
     borderRadius: 30,
-    marginTop: 24,
+    marginTop: 8,
     elevation: 4,
   },
   downloadText: {
@@ -149,13 +278,9 @@ const styles = StyleSheet.create({
     fontSize: 13.5,
     fontWeight: '600',
   },
-  hint: {
-    position: 'absolute',
-    bottom: 40,
-    fontSize: 12,
-    color: 'rgba(255,255,255,0.45)',
-    textAlign: 'center',
-    paddingHorizontal: 30,
-    lineHeight: 18,
+  dismissText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 13.5,
+    fontWeight: '600',
   },
 });

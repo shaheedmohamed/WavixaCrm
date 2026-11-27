@@ -24,6 +24,7 @@
       "permissions": [
         "POST_NOTIFICATIONS",
         "RECORD_AUDIO",
+        "REQUEST_INSTALL_PACKAGES",
         "USE_FULL_SCREEN_INTENT",
         "WAKE_LOCK"
       ]

@@ -138,6 +138,11 @@ Route::middleware(['api', HandleCors::class])->group(function () {
     // Public CRM auth route
     Route::post('/crm/auth/login', [\App\Http\Controllers\Api\CrmController::class, 'login'])->middleware('throttle:auth');
 
+    // Mobile app update check — public because the force-update gate runs
+    // before login. Returns only APK metadata, no account data.
+    Route::get('/app-release/latest', [\App\Http\Controllers\Api\AppReleaseController::class, 'latest'])
+        ->middleware('throttle:public');
+
     // CRM Pricing & Plans (Public + Authenticated quote & catalog)
     Route::get('/crm/plans', [\App\Http\Controllers\Api\CrmPricingController::class, 'index'])
         ->middleware('throttle:public');

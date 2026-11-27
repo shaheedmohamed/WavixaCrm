@@ -7,6 +7,7 @@ import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { HAS_KEYBOARD_SYNC } from '../components/KeyboardSafeView';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { CallScreen } from '../components/CallScreen';
+import { UpdateGate } from '../components/UpdateGate';
 import { realtime } from '../services/realtime';
 import { callService } from '../services/callService';
 import {
@@ -32,6 +33,7 @@ export default function RootLayout() {
           </Stack>
           <RealtimeGate />
           <CallScreen />
+          <UpdateGate />
           </AuthProvider>
         </MaybeKeyboardProvider>
       </SafeAreaProvider>

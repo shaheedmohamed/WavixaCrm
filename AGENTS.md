@@ -31,6 +31,36 @@ Page: `/crm/locations` (`CrmLocations.vue`, owner-only).
 Backfill: `php artisan crm:geo-backfill [--with-profiles] [--limit=N]` —
 stamps existing rows and optionally queues profile pulls (2s-staggered).
 
+## Mobile app self-update (2026-11-27) — no more manual APK sideloads
+
+In-app force-update for the employee app (Android). NOT expo-updates — that
+module stays disabled (`expo.modules.updates.ENABLED=false` in the manifest).
+
+- **Publish:** `php artisan crm:apk-publish <path-to.apk> [--notes="…"] [--optional] [--force]`
+  in `backend/`. Reads package/versionCode/versionName from the APK binary via
+  `aapt dump badging` (`/opt/android-sdk/build-tools/37.0.0/aapt`), copies the
+  file into `/var/www/WavixaCRM/apk/` (nginx `location ^~ /apk/` → direct
+  `https://crm.wavixa.net/apk/<file>` downloads), refreshes the
+  `wavixa-latest.apk`/`carebot-latest.apk` pointers, inserts an `app_releases`
+  row, then broadcasts `app.update` on `private-crm.{ownerId}` for every owner
+  → signed-in phones wall themselves within a second.
+- **Check:** public `GET /api/app-release/latest` (`AppReleaseController`,
+  `throttle:public` — must work pre-login). App compares its
+  `Application.nativeBuildVersion` (versionCode) — never versionName.
+- **App side:** `UpdateGate` (`mobile/src/components/UpdateGate.tsx`, mounted
+  in `_layout.tsx`) checks on launch / AppState-active / 5-min timer /
+  `app.update` realtime event. `services/appUpdate.ts` downloads via
+  `File.createDownloadTask` to `Paths.cache`, verifies size+sha256, then fires
+  `ACTION_VIEW` on `file.contentUri` (expo-file-system's own FileProvider) →
+  system installer. Requires `REQUEST_INSTALL_PACKAGES` (in AndroidManifest +
+  app.json android.permissions). If "install unknown apps" is off, the flow
+  deep-links to `MANAGE_UNKNOWN_APP_SOURCES` and resumes on return.
+- Android cannot fully silently self-update (needs device-owner/root/Play
+  Store) — the user taps "update" once in the system dialog; everything else
+  is automatic, no browser involved.
+- Old builds without the gate (≤ vc6) ignore the system — the first gated
+  build still ships manually once; every release after that self-installs.
+
 ## Queue worker must be restarted after code changes
 
 `wavixa-crm-queue.service` is a LONG-RUNNING `queue:work` daemon — PHP keeps
