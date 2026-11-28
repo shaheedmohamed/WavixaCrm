@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { ChatAvatar } from './ChatAvatar';
 import { useNow } from '../hooks/useNow';
+import { useDraft } from '../services/drafts';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
@@ -110,8 +111,14 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
     if (t === 'location') return '📍 موقع';
     if (t === 'contact') return '👤 جهة اتصال';
     if (t === 'call') return '📞 مكالمة';
+    if (t === 'poll') return '📊 استطلاع رأي';
+    if (t === 'event') return '📅 حدث';
+    if (t === 'invite') return '👥 دعوة مجموعة';
     return conversation.last_message || 'بدء المحادثة';
   };
+
+  // Unsent text parked in this chat — WhatsApp's red "مسودة:" prefix.
+  const draft = useDraft(conversation.id);
 
   const isAssignedToMe = Boolean(currentUserId && conversation.assigned_agent_id === currentUserId);
   // The list payload exposes the transferer as `transferred_by_agent` (and
@@ -183,7 +190,16 @@ const ChatListItemComponent: React.FC<ChatListItemProps> = ({
             ]}
             numberOfLines={1}
           >
-            {isTyping ? typingLabel : previewText()}
+            {isTyping ? (
+              typingLabel
+            ) : draft ? (
+              <>
+                <Text style={styles.draftLabel}>مسودة: </Text>
+                {draft}
+              </>
+            ) : (
+              previewText()
+            )}
           </Text>
         </View>
 
@@ -395,6 +411,10 @@ const styles = StyleSheet.create({
   },
   typingText: {
     color: '#00A884',
+    fontWeight: '600',
+  },
+  draftLabel: {
+    color: '#E11D48',
     fontWeight: '600',
   },
   lastMessageUnread: {

@@ -26,6 +26,8 @@ import {
   setAudioModeAsync,
 } from 'expo-audio';
 import { Colors } from '../constants/theme';
+import { drafts } from '../services/drafts';
+import { chatService } from '../services/chatService';
 
 export interface ChatInputBarHandle {
   focus: () => void;
@@ -40,6 +42,8 @@ interface ChatInputBarProps {
   onOpenAttach: () => void;
   onOpenCameraQuick: () => void;
   onOpenQuickReplies: () => void;
+  // Enables per-chat drafts + the outbound "typing…" chatstate relay.
+  conversationId?: number;
 }
 
 type RecMode = 'off' | 'hold' | 'lock';
@@ -63,6 +67,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onOpenAttach,
       onOpenCameraQuick,
       onOpenQuickReplies,
+      conversationId,
     },
     ref
   ) {
@@ -80,6 +85,51 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     const willCancelSV = useSharedValue(false);
 
     const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
+
+    // ── Draft restore + outbound typing relay ────────────────────────
+    // Draft text is hydrated once per conversation (the store warms from
+    // AsyncStorage on the chat list, so by the time a room opens the map
+    // is usually populated already).
+    const draftLoadedForRef = useRef<number | null>(null);
+    const lastTypingSentRef = useRef(0);
+    const typingHadTextRef = useRef(false);
+
+    useEffect(() => {
+      if (conversationId == null || draftLoadedForRef.current === conversationId) return;
+      draftLoadedForRef.current = conversationId;
+      const saved = drafts.get(conversationId);
+      if (saved && !text) setText(saved);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [conversationId]);
+
+    useEffect(() => {
+      if (conversationId != null) drafts.set(conversationId, text);
+      // Customer should see composing while the agent types; 'paused'
+      // clears their indicator when the box is emptied.
+      if (conversationId != null) {
+        const now = Date.now();
+        if (text.length > 0) {
+          typingHadTextRef.current = true;
+          if (now - lastTypingSentRef.current > 3000) {
+            lastTypingSentRef.current = now;
+            chatService.sendTyping(conversationId, 'composing');
+          }
+        } else if (typingHadTextRef.current) {
+          typingHadTextRef.current = false;
+          chatService.sendTyping(conversationId, 'paused');
+        }
+      }
+    }, [text, conversationId]);
+
+    // Leaving the room mid-draft → stop the peer's typing indicator.
+    useEffect(
+      () => () => {
+        if (conversationId != null && typingHadTextRef.current) {
+          chatService.sendTyping(conversationId, 'paused');
+        }
+      },
+      [conversationId],
+    );
     const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
     const recorderState = useAudioRecorderState(recorder, 250);
 
@@ -123,6 +173,11 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       const trimmed = text.trim();
       if (!trimmed) return;
       setText('');
+      if (conversationId != null) {
+        drafts.clear(conversationId);
+        typingHadTextRef.current = false;
+        chatService.sendTyping(conversationId, 'paused');
+      }
       onSendText(trimmed);
     };
 

@@ -101,6 +101,15 @@ export const chatService = {
     return response.data;
   },
 
+  // Relayed to the WhatsApp engine as a chatstate stanza — the customer
+  // sees "typing…" while the agent composes, same as WhatsApp Web.
+  // Backend throttles to one stanza per ~4s per chat.
+  sendTyping(conversationId: number, state: 'composing' | 'paused' = 'composing') {
+    void apiClient
+      .post('/crm/messages/typing', { conversation_id: conversationId, state })
+      .catch(() => undefined);
+  },
+
   async sendMedia(
     conversationId: number,
     file: { uri: string; name?: string; mimeType?: string },

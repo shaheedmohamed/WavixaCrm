@@ -52,6 +52,9 @@ class WhatsAppMessage extends Model
         'delivered_at',
         'read_at',
         'revoked_at',
+        'edited_at',
+        'is_view_once',
+        'payload',
     ];
 
     protected $casts = [
@@ -69,6 +72,9 @@ class WhatsAppMessage extends Model
         'mentioned_jids' => 'array',
         'starred_at' => 'datetime',
         'media_meta' => 'array',
+        'payload' => 'array',
+        'edited_at' => 'datetime',
+        'is_view_once' => 'boolean',
         'is_forwarded' => 'boolean',
         'latitude' => 'float',
         'longitude' => 'float',

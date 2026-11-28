@@ -37,6 +37,8 @@ import { prewarmMediaPermissions } from './ChatRoomScreen';
 import { chatService } from '../services/chatService';
 import { chatCache } from '../services/chatCache';
 import { chatPrefs, FAVORITES_LIST_NAME } from '../services/chatPrefs';
+import { drafts } from '../services/drafts';
+import { BatteryOptimizationPrompt } from '../components/BatteryOptimizationPrompt';
 import { playIncomingMessage } from '../services/notifySound';
 import { initNotifications } from '../services/notifications';
 import { realtime } from '../services/realtime';
@@ -207,6 +209,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   }, []);
 
   useEffect(() => {
+    drafts.ensureLoaded();
     let alive = true;
     Promise.all([chatCache.hydrate(), chatPrefs.init()]).then(() => {
       if (!alive) return;
@@ -1449,6 +1452,10 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onSnooze={(conv) => setSnoozeConv(conv)}
         onOpenNotes={(conv) => setNotesConv(conv)}
       />
+
+      {/* Sideloaded builds get no OEM whitelisting — ask once for the
+          battery exemption so pushes survive aggressive killers. */}
+      <BatteryOptimizationPrompt />
 
       {/* Rendered BEFORE the modals it can spawn — the snooze modal must
           stack on top of this sheet, not behind it. */}

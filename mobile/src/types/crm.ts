@@ -138,6 +138,25 @@ export interface Message {
   sent_by_user_id?: number | null;
   sent_by?: { id: number; name: string } | null;
   revoked_at?: string | null;
+  edited_at?: string | null;
+  is_view_once?: boolean | null;
+  payload?: {
+    poll?: { name: string; options: string[]; selectableCount: number } | null;
+    event?: {
+      name: string;
+      description?: string;
+      startTime?: number;
+      endTime?: number;
+      isCanceled?: boolean;
+      locationName?: string;
+    } | null;
+    invite?: {
+      groupName?: string;
+      caption?: string;
+      inviteCode?: string;
+      inviteExpiration?: number;
+    } | null;
+  } | null;
   local_uri?: string | null;
   upload_progress?: number | null;
   client_temp_id?: string | null;

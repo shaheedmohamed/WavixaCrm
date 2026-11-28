@@ -2271,6 +2271,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             onOpenAttach={() => setAttachVisible(true)}
             onOpenCameraQuick={() => setCameraVisible(true)}
             onOpenQuickReplies={() => setQuickRepliesVisible(true)}
+            conversationId={conversation?.id}
           />
           )}
         </KeyboardSafeView>

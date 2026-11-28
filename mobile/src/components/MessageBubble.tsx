@@ -134,6 +134,9 @@ const quotedLabel = (m: Message): string => {
     location: '📍 موقع',
     contact: '👤 جهة اتصال',
     call: '📞 مكالمة',
+    poll: '📊 استطلاع رأي',
+    event: '📅 حدث',
+    invite: '👥 دعوة مجموعة',
   };
   return labels[m.message_type] || m.message || 'رسالة';
 };
@@ -283,8 +286,37 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
   const isAudio = isAudioMessage(message);
   const isDoc = isDocMessage(message);
   const isSpecialPill = ['location', 'contact', 'call'].includes(type);
+  const isPoll = type === 'poll';
+  const isEvent = type === 'event';
+  const isInvite = type === 'invite';
+  const pollData = message.payload?.poll ?? null;
+  const eventData = message.payload?.event ?? null;
+  const inviteData = message.payload?.invite ?? null;
   const displayCaption = message.media_caption || message.message;
-  const showText = Boolean(displayCaption) && !isSpecialPill && !isPlaceholderText(message);
+  const showText =
+    Boolean(displayCaption) &&
+    !isSpecialPill &&
+    !isPoll &&
+    !isEvent &&
+    !isInvite &&
+    !isPlaceholderText(message);
+  // Anything that reached us with no renderable content — never an empty bubble.
+  const isUnsupported =
+    !isImage &&
+    !isVideo &&
+    !isAudio &&
+    !isDoc &&
+    !isSpecialPill &&
+    !isPoll &&
+    !isEvent &&
+    !isInvite &&
+    !showText &&
+    !message.revoked_at &&
+    !isUploading &&
+    !isFailed;
+  const inviteLink = inviteData?.inviteCode
+    ? `https://chat.whatsapp.com/${inviteData.inviteCode}`
+    : null;
 
   const openDoc = () => {
     if (!isUploading && mediaUri) Linking.openURL(mediaUri).catch(() => {});
@@ -489,6 +521,91 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
             </View>
           ) : null}
 
+          {message.is_view_once ? (
+            <View style={styles.viewOnceRow}>
+              <Ionicons name="eye" size={13} color={isOutgoing ? '#BBF7D0' : Colors.primary} />
+              <Text style={[styles.viewOnceText, isOutgoing && styles.viewOnceTextOut]}>
+                {type === 'video' ? 'فيديو لمرة واحدة' : 'صورة لمرة واحدة'}
+                {' — '}
+                محفوظة في السجل
+              </Text>
+            </View>
+          ) : null}
+
+          {isPoll ? (
+            <View style={styles.pollCard}>
+              <View style={styles.pollHeader}>
+                <Ionicons name="stats-chart" size={15} color={Colors.primary} />
+                <Text style={styles.pollHeaderText}>استطلاع رأي</Text>
+              </View>
+              <Text style={styles.pollQuestion}>{pollData?.name || message.message || 'استطلاع رأي'}</Text>
+              {(pollData?.options || []).map((opt, i) => (
+                <View key={i} style={styles.pollOption}>
+                  <View style={styles.pollOptionDot} />
+                  <Text style={styles.pollOptionText} numberOfLines={2}>{opt}</Text>
+                </View>
+              ))}
+              {pollData && pollData.selectableCount > 1 ? (
+                <Text style={styles.pollHint}>اختيار {pollData.selectableCount} إجابات</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {isEvent ? (
+            <View style={styles.pollCard}>
+              <View style={styles.pollHeader}>
+                <Ionicons name="calendar" size={15} color={Colors.primary} />
+                <Text style={styles.pollHeaderText}>
+                  {eventData?.isCanceled ? 'حدث — أُلغي' : 'حدث'}
+                </Text>
+              </View>
+              <Text style={[styles.pollQuestion, eventData?.isCanceled && { textDecorationLine: 'line-through' }]}>
+                {eventData?.name || message.message || 'حدث'}
+              </Text>
+              {eventData?.description ? (
+                <Text style={styles.eventDesc}>{eventData.description}</Text>
+              ) : null}
+              {eventData?.startTime ? (
+                <Text style={styles.eventMeta}>
+                  📅 {new Date(eventData.startTime * 1000).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })}
+                  {eventData.endTime
+                    ? ` — ${new Date(eventData.endTime * 1000).toLocaleString('ar-EG', { dateStyle: 'medium', timeStyle: 'short' })}`
+                    : ''}
+                </Text>
+              ) : null}
+              {eventData?.locationName ? (
+                <Text style={styles.eventMeta}>📍 {eventData.locationName}</Text>
+              ) : null}
+            </View>
+          ) : null}
+
+          {isInvite ? (
+            <TouchableOpacity
+              style={styles.pollCard}
+              activeOpacity={inviteLink ? 0.7 : 1}
+              onPress={() => inviteLink && Linking.openURL(inviteLink).catch(() => {})}
+            >
+              <View style={styles.pollHeader}>
+                <Ionicons name="people" size={15} color={Colors.primary} />
+                <Text style={styles.pollHeaderText}>دعوة مجموعة</Text>
+              </View>
+              <Text style={styles.pollQuestion}>
+                {inviteData?.groupName || message.message || 'دعوة مجموعة'}
+              </Text>
+              {inviteData?.caption ? <Text style={styles.eventDesc}>{inviteData.caption}</Text> : null}
+              {inviteLink ? <Text style={styles.inviteLink}>اضغط لفتح الدعوة</Text> : null}
+            </TouchableOpacity>
+          ) : null}
+
+          {isUnsupported ? (
+            <View style={styles.unsupportedRow}>
+              <Ionicons name="alert-circle-outline" size={14} color="#8696A0" />
+              <Text style={styles.unsupportedText}>
+                نوع رسالة غير مدعوم — شوفها في واتساب
+              </Text>
+            </View>
+          ) : null}
+
           {isImage && mediaUri ? (
             <TouchableOpacity
               style={type === 'sticker' ? styles.stickerWrap : styles.imageWrap}
@@ -681,6 +798,9 @@ const MessageBubbleComponent: React.FC<MessageBubbleProps> = ({
                   ? 'جاري الإرسال...'
                   : formatTime(message.timestamp)}
               </Text>
+              {message.edited_at ? (
+                <Text style={styles.editedText}>معدّلة</Text>
+              ) : null}
               {message.starred_at ? (
                 <Ionicons name="star" size={11} color="#F59E0B" style={{ marginLeft: 3 }} />
               ) : null}
@@ -881,6 +1001,107 @@ const styles = StyleSheet.create({
   timeText: {
     fontSize: 10.5,
     color: '#667781',
+  },
+  editedText: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    color: '#8696A0',
+  },
+  viewOnceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 4,
+  },
+  viewOnceText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: Colors.primary,
+  },
+  viewOnceTextOut: {
+    color: '#BBF7D0',
+  },
+  pollCard: {
+    minWidth: 200,
+    maxWidth: 250,
+    marginBottom: 2,
+  },
+  pollHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    marginBottom: 3,
+  },
+  pollHeaderText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
+  pollQuestion: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    color: '#111B21',
+    marginBottom: 6,
+    textAlign: 'right',
+  },
+  pollOption: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    backgroundColor: 'rgba(0,168,132,0.07)',
+    borderRadius: 8,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    marginTop: 4,
+  },
+  pollOptionDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: Colors.primary,
+  },
+  pollOptionText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#111B21',
+    textAlign: 'right',
+  },
+  pollHint: {
+    fontSize: 10.5,
+    color: '#8696A0',
+    marginTop: 6,
+    textAlign: 'right',
+  },
+  eventDesc: {
+    fontSize: 12.5,
+    color: '#3B4A54',
+    marginBottom: 4,
+    textAlign: 'right',
+  },
+  eventMeta: {
+    fontSize: 12,
+    color: '#54656F',
+    marginTop: 2,
+    textAlign: 'right',
+  },
+  inviteLink: {
+    fontSize: 12,
+    color: '#027EB5',
+    fontWeight: '600',
+    marginTop: 6,
+    textAlign: 'right',
+  },
+  unsupportedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 2,
+  },
+  unsupportedText: {
+    fontSize: 12.5,
+    fontStyle: 'italic',
+    color: '#8696A0',
   },
   sentByText: {
     fontSize: 10,

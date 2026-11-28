@@ -1885,6 +1885,12 @@ public function messageRevoked(Request $request)
                 'isForwarded' => 'nullable|boolean',
                 'pin' => 'nullable|array',
                 'mentionedJids' => 'nullable|array',
+                'edited' => 'nullable|boolean',
+                'editTargetId' => 'nullable|string',
+                'viewOnce' => 'nullable|boolean',
+                'poll' => 'nullable|array',
+                'event' => 'nullable|array',
+                'invite' => 'nullable|array',
                 'latitude' => 'nullable|numeric',
                 'longitude' => 'nullable|numeric',
                 'msgTimestamp' => 'nullable|integer',
@@ -2177,10 +2183,22 @@ public function messageRevoked(Request $request)
                     'is_forwarded' => !empty($data['isForwarded']),
                     'mentioned_jids' => !empty($data['mentionedJids']) ? array_values($data['mentionedJids']) : null,
                     'sender_country' => $fromMe ? null : \App\Services\GeoLocator::countryFromPhone($geoPhone),
+                    'is_view_once' => !empty($data['viewOnce']),
                     'sent_at' => $msgTime,
                     'delivered_at' => $fromMe ? null : $msgTime,
                     'timestamp' => $msgTime,
                 ];
+                // Rich structured content (poll options, event details,
+                // group-invite data) rides in the payload column so the
+                // bubble can render a real card instead of an empty row.
+                $payloadExtra = array_filter([
+                    'poll' => $data['poll'] ?? null,
+                    'event' => $data['event'] ?? null,
+                    'invite' => $data['invite'] ?? null,
+                ], fn ($v) => $v !== null);
+                if ($payloadExtra) {
+                    $msgValues['payload'] = $payloadExtra;
+                }
                 if (!empty($data['mediaUrl'])) {
                     $msgValues['media_url'] = $data['mediaUrl'];
                 }
@@ -2199,13 +2217,39 @@ public function messageRevoked(Request $request)
                         ->exists()) {
                     unset($msgValues['status'], $msgValues['delivered_at']);
                 }
-                $incomingMessage = WhatsAppMessage::updateOrCreate(
-                    [
-                        'user_id' => $session->user_id,
-                        'message_id' => $messageId ?: ('inc_' . uniqid()),
-                    ],
-                    $msgValues
-                );
+                // WhatsApp "edited message" — the wire stanza carries a NEW
+                // message id while its inner key points at the original row.
+                // Update that row's text in place (never a duplicate bubble);
+                // fall back to a normal insert only when the original is
+                // unknown (pre-sync chat, row purged).
+                $editTarget = !empty($data['edited']) && !empty($data['editTargetId'])
+                    ? WhatsAppMessage::where('user_id', $session->user_id)
+                        ->where('message_id', $data['editTargetId'])
+                        ->first()
+                    : null;
+                if ($editTarget) {
+                    $editValues = [
+                        'message' => $body,
+                        'edited_at' => $msgTime,
+                    ];
+                    if (!empty($msgValues['media_url'])) $editValues['media_url'] = $msgValues['media_url'];
+                    if (!empty($msgValues['media_mime_type'])) $editValues['media_mime_type'] = $msgValues['media_mime_type'];
+                    if (!empty($msgValues['media_meta'])) $editValues['media_meta'] = $msgValues['media_meta'];
+                    if (!empty($msgValues['payload'])) $editValues['payload'] = $msgValues['payload'];
+                    $editTarget->update($editValues);
+                    $incomingMessage = $editTarget->fresh();
+                } else {
+                    if (!empty($data['edited'])) {
+                        $msgValues['edited_at'] = $msgTime;
+                    }
+                    $incomingMessage = WhatsAppMessage::updateOrCreate(
+                        [
+                            'user_id' => $session->user_id,
+                            'message_id' => $messageId ?: ('inc_' . uniqid()),
+                        ],
+                        $msgValues
+                    );
+                }
             }
 
             // Push to the CRM realtime channel so every open agent browser
