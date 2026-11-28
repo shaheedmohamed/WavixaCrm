@@ -65,6 +65,7 @@ interface ChatListScreenProps {
   onOpenStatuses?: () => void;
   onOpenGestures?: () => void;
   onOpenMediaLibrary?: () => void;
+  onOpenWaRegister?: () => void;
   onOpenScheduled?: () => void;
 }
 
@@ -86,6 +87,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStatuses,
   onOpenGestures,
   onOpenMediaLibrary,
+  onOpenWaRegister,
   onOpenScheduled,
 }) => {
   const { user, token, refreshUser } = useAuth();
@@ -1423,6 +1425,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onOpenStarred={onOpenStarred}
         onOpenScheduled={onOpenScheduled}
         onOpenMediaLibrary={onOpenMediaLibrary}
+        onOpenWaRegister={onOpenWaRegister}
         onOpenStats={onOpenStats}
         onOpenArchived={!isAgent ? () => setSelectedScope('archived') : undefined}
         onOpenProfile={onOpenProfile}

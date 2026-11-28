@@ -22,6 +22,7 @@ interface ThreeDotMenuProps {
   onOpenStarred?: () => void;
   onOpenScheduled?: () => void;
   onOpenMediaLibrary?: () => void;
+  onOpenWaRegister?: () => void;
   onOpenStats?: () => void;
 }
 
@@ -36,6 +37,7 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
   onOpenStarred,
   onOpenScheduled,
   onOpenMediaLibrary,
+  onOpenWaRegister,
   onOpenStats,
 }) => {
   const { user, logout, isAgent } = useAuth();
@@ -134,6 +136,16 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
                 >
                   <MaterialCommunityIcons name="image-multiple-outline" size={20} color="#111B21" />
                   <Text style={styles.menuItemText}>مكتبة الوسائط</Text>
+                </TouchableOpacity>
+              )}
+
+              {onOpenWaRegister && (
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => handleAction(onOpenWaRegister)}
+                >
+                  <MaterialCommunityIcons name="cellphone-check" size={20} color="#111B21" />
+                  <Text style={styles.menuItemText}>تسجيل رقم واتساب</Text>
                 </TouchableOpacity>
               )}
 

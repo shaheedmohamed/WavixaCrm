@@ -185,6 +185,14 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/message-origins', [\App\Http\Controllers\Api\CrmController::class, 'messageOrigins']);
         Route::post('/conversations/{id}/refresh-business-profile', [\App\Http\Controllers\Api\CrmController::class, 'refreshBusinessProfile']);
 
+        // WhatsApp number registration — the app performs TEE attestation
+        // between the prepare and send phases.
+        Route::post('/wa-register/check', [\App\Http\Controllers\Api\CrmController::class, 'waRegisterCheck']);
+        Route::post('/wa-register/prepare-code', [\App\Http\Controllers\Api\CrmController::class, 'waRegisterPrepareCode']);
+        Route::post('/wa-register/request-code', [\App\Http\Controllers\Api\CrmController::class, 'waRegisterRequestCode']);
+        Route::post('/wa-register/prepare-register', [\App\Http\Controllers\Api\CrmController::class, 'waRegisterPrepareRegister']);
+        Route::post('/wa-register/submit-code', [\App\Http\Controllers\Api\CrmController::class, 'waRegisterSubmitCode']);
+
         // Channel authorization under the /api/crm prefix so the split CRM
         // backend can authorize private-crm.{ownerId} for its own tokens.
         Route::post('/broadcasting/auth', function (\Illuminate\Http\Request $request) {

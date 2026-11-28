@@ -6017,4 +6017,56 @@ class CrmController extends Controller
         $conv->update(['is_pinned' => $request->boolean('pinned', true)]);
         return response()->json(['success' => true, 'pinned' => (bool) $conv->is_pinned]);
     }
+
+    // ------------------------------------------------------------------
+    // WhatsApp number registration (hosted primary device) — thin proxies to
+    // the engine's /internal/register/* endpoints. The mobile app performs
+    // the TEE attestation between prepare and send phases.
+    // ------------------------------------------------------------------
+
+    private function waRegisterProxy(Request $request, string $path, array $fields)
+    {
+        $payload = [];
+        foreach ($fields as $f) {
+            if ($request->has($f)) {
+                $payload[$f] = $request->input($f);
+            }
+        }
+        try {
+            $res = $this->engineClient()->timeout(45)->post("{$this->engineUrl}/internal/register/{$path}", $payload);
+            return response()->json($res->json() ?? ['success' => false, 'message' => 'empty engine response'], $res->status());
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 502);
+        }
+    }
+
+    public function waRegisterCheck(Request $request)
+    {
+        $request->validate(['phone' => 'required|string']);
+        return $this->waRegisterProxy($request, 'check', ['phone']);
+    }
+
+    public function waRegisterPrepareCode(Request $request)
+    {
+        $request->validate(['sessionId' => 'required|string', 'phone' => 'required|string']);
+        return $this->waRegisterProxy($request, 'prepare-code', ['sessionId', 'phone', 'method', 'mcc', 'mnc']);
+    }
+
+    public function waRegisterRequestCode(Request $request)
+    {
+        $request->validate(['sessionId' => 'required|string']);
+        return $this->waRegisterProxy($request, 'request-code', ['sessionId', 'authorization', 'h']);
+    }
+
+    public function waRegisterPrepareRegister(Request $request)
+    {
+        $request->validate(['sessionId' => 'required|string', 'code' => 'required|string']);
+        return $this->waRegisterProxy($request, 'prepare-register', ['sessionId', 'code']);
+    }
+
+    public function waRegisterSubmitCode(Request $request)
+    {
+        $request->validate(['sessionId' => 'required|string', 'code' => 'required|string']);
+        return $this->waRegisterProxy($request, 'submit-code', ['sessionId', 'code', 'authorization', 'h', 'pushName']);
+    }
 }

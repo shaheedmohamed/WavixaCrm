@@ -25,6 +25,7 @@ import { ChatRoomScreen } from '../screens/ChatRoomScreen';
 import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
 import { ScheduledMessagesScreen } from '../screens/ScheduledMessagesScreen';
 import { MediaLibraryScreen } from '../screens/MediaLibraryScreen';
+import { WaRegisterScreen } from '../screens/WaRegisterScreen';
 import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
@@ -43,7 +44,8 @@ type OverlayView =
   | 'scheduled'
   | 'statuses'
   | 'gestures'
-  | 'media-library';
+  | 'media-library'
+  | 'wa-register';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
@@ -172,6 +174,10 @@ export default function IndexPage() {
     openOverlay('media-library');
   }, [openOverlay]);
 
+  const handleOpenWaRegister = useCallback(() => {
+    openOverlay('wa-register');
+  }, [openOverlay]);
+
   if (isLoading) {
     return (
       <View style={styles.splashContainer}>
@@ -228,6 +234,7 @@ export default function IndexPage() {
           onOpenStatuses={handleOpenStatuses}
           onOpenGestures={handleOpenGestures}
           onOpenMediaLibrary={handleOpenMediaLibrary}
+          onOpenWaRegister={handleOpenWaRegister}
         />
       </View>
 
@@ -274,6 +281,8 @@ export default function IndexPage() {
               />
             ) : overlayView === 'gestures' ? (
               <GesturesGuideScreen onBack={closeOverlay} />
+            ) : overlayView === 'wa-register' ? (
+              <WaRegisterScreen onBack={closeOverlay} />
             ) : null)}
         </Animated.View>
       )}
