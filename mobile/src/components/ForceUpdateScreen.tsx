@@ -5,6 +5,7 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
+  Image,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LatestApk } from '../services/appUpdate';
@@ -59,7 +60,10 @@ export const ForceUpdateScreen: React.FC<{
   return (
     <View style={styles.root}>
       <View style={styles.iconWrap}>
-        <Ionicons name="rocket-outline" size={46} color="#FFFFFF" />
+        <Image
+          source={require('../../assets/logo.png')}
+          style={styles.logo}
+        />
       </View>
 
       <Text style={styles.title}>
@@ -184,10 +188,9 @@ const styles = StyleSheet.create({
     elevation: 9999,
   },
   iconWrap: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: Colors.primary,
+    width: 104,
+    height: 104,
+    borderRadius: 52,
     alignItems: 'center',
     justifyContent: 'center',
     marginBottom: 26,
@@ -196,6 +199,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 10,
     shadowOffset: { width: 0, height: 4 },
+    overflow: 'hidden',
+  },
+  logo: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   title: {
     fontSize: 24,
