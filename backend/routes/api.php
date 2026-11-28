@@ -254,6 +254,8 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::put('/messages/{id}/note', [\App\Http\Controllers\Api\CrmController::class, 'setMessageNote']);
         Route::post('/messages/schedule', [\App\Http\Controllers\Api\CrmController::class, 'scheduleMessage']);
         Route::get('/conversations/{id}/scheduled', [\App\Http\Controllers\Api\CrmController::class, 'listScheduledMessages']);
+        Route::get('/scheduled', [\App\Http\Controllers\Api\CrmController::class, 'listAllScheduledMessages']);
+        Route::post('/scheduled/{id}/reschedule', [\App\Http\Controllers\Api\CrmController::class, 'rescheduleScheduledMessage']);
         Route::delete('/scheduled/{id}', [\App\Http\Controllers\Api\CrmController::class, 'cancelScheduledMessage']);
         Route::post('/conversations/open-member', [\App\Http\Controllers\Api\CrmController::class, 'openMemberConversation']);
         Route::get('/translate', [\App\Http\Controllers\Api\CrmController::class, 'translate']);

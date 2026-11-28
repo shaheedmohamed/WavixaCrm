@@ -58,6 +58,7 @@ import { appEvents } from '../services/appEvents';
 import { useAuth } from '../context/AuthContext';
 import {
   Conversation,
+  GroupMember,
   MediaEditSpec,
   MentionRef,
   Message,
@@ -619,6 +620,24 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const isGroup = Boolean(conversation.contact_jid?.includes('@g.us'));
 
+  // Group members — feeds the composer's @mention suggestion list.
+  const [groupMembers, setGroupMembers] = useState<GroupMember[]>([]);
+  useEffect(() => {
+    if (!isGroup) return;
+    let alive = true;
+    chatService
+      .getGroupMembers(conversation.id)
+      .then((res) => {
+        if (alive && res?.success && Array.isArray(res.members)) {
+          setGroupMembers(res.members);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [isGroup, conversation.id]);
+
   // Double-tap the header → jump to the top of the loaded history. The list
   // is inverted, so the visual top is scrollToEnd.
   const scrollToTop = useCallback(() => {
@@ -1142,13 +1161,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   }, [revealList]);
 
   const executeTextSend = useCallback(
-    async (tempId: string, text: string, replyId: string | null) => {
+    async (tempId: string, text: string, replyId: string | null, mentionJids?: string[]) => {
       try {
         const res = await chatService.sendMessage(
           conversation.id,
           text,
           replyId,
-          conversation.session_id
+          conversation.session_id,
+          mentionJids
         );
         if (res && res.success !== false) {
           const serverMsg: Message | undefined = res.message;
@@ -1166,7 +1186,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               .map((m) => {
                 if (m.client_temp_id !== tempId) return m;
                 if (serverMsg) {
-                  return { ...serverMsg, status: serverMsg.status || 'sent' };
+                  // Backend decorates mentions on the response; fall back to
+                  // the locally resolved refs so chips render either way.
+                  return {
+                    ...serverMsg,
+                    status: serverMsg.status || 'sent',
+                    mentions: serverMsg.mentions || m.mentions || null,
+                  };
                 }
                 return { ...m, client_temp_id: null, status: 'sent' as const };
               });
@@ -1206,7 +1232,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   );
 
   const handleSendText = useCallback(
-    (text: string) => {
+    (text: string, mentionJids?: string[], mentionRefs?: MentionRef[]) => {
       // Edit mode — the composer bar routes to the edit endpoint instead of
       // emitting a new message; the row updates in place with "معدّلة".
       if (editingMsg) {
@@ -1243,11 +1269,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         timestamp: nowIso,
         status: 'pending',
         reply_to_id: replyId,
+        mentioned_jids: mentionJids || null,
+        mentions: mentionRefs || null,
         sent_by: user ? { id: user.id, name: user.name } : null,
         retry_payload: {
           kind: 'text',
           text,
           replyToId: replyId,
+          mentions: mentionJids,
         },
       };
 
@@ -1255,7 +1284,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       freshAnimKeys.current.add(tempId);
       setMessages((prev) => [...prev, optimisticMsg]);
       scrollToLatest(true);
-      executeTextSend(tempId, text, replyId);
+      executeTextSend(tempId, text, replyId, mentionJids);
     },
     [editingMsg, replyTarget, conversation.id, scrollToLatest, executeTextSend, user, fetchLatestWindow]
   );
@@ -1440,7 +1469,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         setMessages((prev) =>
           prev.map((m) => (m.client_temp_id === tempId ? { ...m, status: 'pending' } : m))
         );
-        executeTextSend(tempId, retry.text, retry.replyToId || null);
+        executeTextSend(tempId, retry.text, retry.replyToId || null, retry.mentions);
       } else if (retry.kind === 'media' && retry.file && retry.mediaType) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -2771,6 +2800,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             onOpenQuickReplies={() => setQuickRepliesVisible(true)}
             onSchedule={openSchedule}
             conversationId={conversation?.id}
+            mentionMembers={isGroup ? groupMembers : undefined}
           />
           )}
         </KeyboardSafeView>

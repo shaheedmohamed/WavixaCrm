@@ -91,13 +91,20 @@ export const chatService = {
     return response.data;
   },
 
-  async sendMessage(conversationId: number, message: string, replyToId?: string | null, sessionId?: number) {
+  async sendMessage(
+    conversationId: number,
+    message: string,
+    replyToId?: string | null,
+    sessionId?: number,
+    mentions?: string[] | null,
+  ) {
     const payload: Record<string, any> = {
       conversation_id: conversationId,
       message,
     };
     if (replyToId) payload.reply_to_id = replyToId;
     if (sessionId) payload.session_id = sessionId;
+    if (mentions?.length) payload.mentions = mentions;
 
     const response = await apiClient.post('/crm/messages/send', payload);
     return response.data;
@@ -237,6 +244,19 @@ export const chatService = {
 
   async cancelScheduledMessage(id: number) {
     const response = await apiClient.delete(`/crm/scheduled/${id}`);
+    return response.data;
+  },
+
+  // Global center — every pending scheduled row across all visible chats.
+  async listAllScheduledMessages() {
+    const response = await apiClient.get('/crm/scheduled');
+    return response.data;
+  },
+
+  async rescheduleScheduledMessage(id: number, sendAt: string) {
+    const response = await apiClient.post(`/crm/scheduled/${id}/reschedule`, {
+      send_at: sendAt,
+    });
     return response.data;
   },
 

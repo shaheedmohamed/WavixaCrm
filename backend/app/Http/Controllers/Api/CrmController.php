@@ -2155,6 +2155,22 @@ class CrmController extends Controller
         });
     }
 
+    /**
+     * Sanitize a client-supplied mention JID list — proto.ContextInfo
+     * mentionedJid accepts bare `digits@host` identifiers only.
+     */
+    private function sanitizeMentionJids(mixed $raw): array
+    {
+        if (!is_array($raw)) {
+            return [];
+        }
+        return collect($raw)
+            ->map(fn ($j) => trim((string) $j))
+            ->map(fn ($j) => preg_replace('/:\d+@/', '@', $j))
+            ->filter(fn ($j) => (bool) preg_match('/^\d{5,20}@(s\.whatsapp\.net|lid|g\.us)$/', $j))
+            ->unique()->take(50)->values()->all();
+    }
+
     /** Record an auditable CRM action (who did what, on which conversation). */
     private function audit(string $action, array $meta = [], ?int $conversationId = null, ?int $sessionId = null, ?int $messageId = null): void
     {
@@ -2711,6 +2727,8 @@ class CrmController extends Controller
             'message' => 'required|string',
             'session_id' => 'nullable|integer',
             'reply_to_id' => 'nullable|string',
+            'mentions' => 'nullable|array|max:50',
+            'mentions.*' => 'string|max:64',
         ]);
 
         $allowedSessionIds = $this->getAllowedSessionIds();
@@ -2752,6 +2770,7 @@ class CrmController extends Controller
         // Prefer the raw chat JID — @lid contacts cannot be addressed by digits.
         $dest = $this->resolveDestJid($conversation);
         $text = trim($request->message);
+        $mentions = $this->sanitizeMentionJids($request->input('mentions'));
 
         try {
             $payload = [
@@ -2760,6 +2779,9 @@ class CrmController extends Controller
                 'message' => $text,
                 'type' => 'text',
             ];
+            if ($mentions) {
+                $payload['mentions'] = $mentions;
+            }
 
             $quoted = $this->findQuotedMessage($conversation, $request->reply_to_id);
             if ($quoted && $quoted->message_id) {
@@ -2783,6 +2805,7 @@ class CrmController extends Controller
                     $msgRecord->update(array_filter([
                         'conversation_id' => $msgRecord->conversation_id ?: $conversation->id,
                         'reply_to_id' => $request->reply_to_id,
+                        'mentioned_jids' => $mentions ?: null,
                     ]));
                 } else {
                     $msgRecord = WhatsAppMessage::create([
@@ -2809,6 +2832,11 @@ class CrmController extends Controller
                 }
             }
             $msgRecord?->loadMissing('sentBy:id,name');
+            if ($msgRecord) {
+                // Resolve @digits tokens → {jid,phone,name} chips so the
+                // response + broadcast render names, not bare numbers.
+                $this->decorateMentions($conversation, collect([$msgRecord]));
+            }
 
             // Replying from the app reads the chat — reset its buffered
             // push lines so the next burst starts clean.
@@ -2943,6 +2971,8 @@ class CrmController extends Controller
             'caption' => 'nullable|string',
             'session_id' => 'nullable|integer',
             'reply_to_id' => 'nullable|string',
+            'mentions' => 'nullable|array|max:50',
+            'mentions.*' => 'string|max:64',
             'file' => 'nullable|file|max:51200', // max 50MB
             'media_url' => 'nullable|string',
             'edit_spec' => 'nullable|string|max:200000',
@@ -3097,6 +3127,10 @@ class CrmController extends Controller
                 'mimeType' => $mimeType,
                 'seconds' => $seconds,
             ];
+            $mentions = $this->sanitizeMentionJids($request->input('mentions'));
+            if ($mentions) {
+                $enginePayload['mentions'] = $mentions;
+            }
 
             $quoted = $this->findQuotedMessage($conversation, $request->reply_to_id);
             if ($quoted && $quoted->message_id) {
@@ -3125,6 +3159,7 @@ class CrmController extends Controller
                 'media_mime_type' => $mimeType,
                 'media_size' => $fileSize,
                 'reply_to_id' => $request->reply_to_id,
+                'mentioned_jids' => $mentions ?: null,
                 'sent_at' => now(),
                 'timestamp' => now(),
             ]);
@@ -3176,6 +3211,9 @@ class CrmController extends Controller
                 }
             }
             $msgRecord?->loadMissing('sentBy:id,name');
+            if ($msgRecord) {
+                $this->decorateMentions($conversation, collect([$msgRecord]));
+            }
 
             \App\Services\ExpoPushService::clearConversation($request->user()->id, $conversation->id);
 
@@ -5115,6 +5153,73 @@ class CrmController extends Controller
             $row->update(['status' => 'canceled']);
         }
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * Global scheduled-message center — every pending row across the
+     * caller's visible conversations, with the chat it belongs to so the
+     * app can group/jump without opening each thread.
+     */
+    public function listAllScheduledMessages(Request $request)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $rows = \App\Models\CrmScheduledMessage::where('status', 'pending')
+            ->whereIn(
+                'conversation_id',
+                WhatsAppConversation::whereIn('session_id', $allowed)->select('id')
+            )
+            ->with([
+                'user:id,name',
+                'conversation:id,session_id,contact_jid,contact_name,contact_phone,contact_avatar,is_group',
+            ])
+            ->orderBy('send_at')
+            ->limit(300)
+            ->get()
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'body' => $r->body,
+                'send_at' => $r->send_at->toIso8601String(),
+                'status' => $r->status,
+                'by' => $r->user?->name,
+                'conversation' => $r->conversation ? [
+                    'id' => $r->conversation->id,
+                    'session_id' => $r->conversation->session_id,
+                    'contact_jid' => $r->conversation->contact_jid,
+                    'contact_name' => $r->conversation->contact_name,
+                    'contact_phone' => $r->conversation->contact_phone,
+                    'contact_avatar' => $r->conversation->contact_avatar,
+                    'is_group' => (bool) $r->conversation->is_group,
+                ] : null,
+            ]);
+        return response()->json(['success' => true, 'scheduled' => $rows]);
+    }
+
+    /** Move a pending row to a new send_at (agents only their own). */
+    public function rescheduleScheduledMessage(Request $request, $id)
+    {
+        $data = $request->validate([
+            'send_at' => 'required|date|after:now|before:' . now()->addDays(30)->toIso8601String(),
+        ]);
+        $row = \App\Models\CrmScheduledMessage::findOrFail($id);
+        $user = $request->user();
+        if ($user->crm_role === 'agent' && $row->user_id !== $user->id) {
+            return response()->json(['success' => false, 'message' => 'غير مسموح'], 403);
+        }
+        $allowed = $this->getAllowedSessionIds($user);
+        WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($row->conversation_id);
+        if ($row->status !== 'pending') {
+            return response()->json(['success' => false, 'message' => 'الرسالة اتبعتت أو اتلغت بالفعل'], 409);
+        }
+        $row->update(['send_at' => \Carbon\Carbon::parse($data['send_at'])]);
+        return response()->json([
+            'success' => true,
+            'scheduled' => [
+                'id' => $row->id,
+                'body' => $row->body,
+                'send_at' => $row->send_at->toIso8601String(),
+                'status' => $row->status,
+            ],
+        ]);
     }
 
     // ---- Translation --------------------------------------------------------

@@ -28,6 +28,7 @@ import {
 import { Colors } from '../constants/theme';
 import { drafts } from '../services/drafts';
 import { chatService } from '../services/chatService';
+import { GroupMember, MentionRef } from '../types/crm';
 
 export interface ChatInputBarHandle {
   focus: () => void;
@@ -39,7 +40,7 @@ export interface ChatInputBarHandle {
 interface ChatInputBarProps {
   bottomInset: number;
   isKeyboardVisible: boolean;
-  onSendText: (text: string) => void;
+  onSendText: (text: string, mentions?: string[], mentionRefs?: MentionRef[]) => void;
   onSendVoice: (uri: string, durationSec: number) => void;
   onOpenAttach: () => void;
   onOpenCameraQuick: () => void;
@@ -48,6 +49,8 @@ interface ChatInputBarProps {
   onSchedule?: () => void;
   // Enables per-chat drafts + the outbound "typing…" chatstate relay.
   conversationId?: number;
+  /** Group members — enables the @mention suggestion list while typing. */
+  mentionMembers?: GroupMember[];
 }
 
 type RecMode = 'off' | 'hold' | 'lock';
@@ -73,6 +76,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onOpenQuickReplies,
       onSchedule,
       conversationId,
+      mentionMembers,
     },
     ref
   ) {
@@ -90,6 +94,58 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     const willCancelSV = useSharedValue(false);
 
     const inputRef = useRef<React.ComponentRef<typeof TextInput>>(null);
+
+    // ── @mentions (groups) ────────────────────────────────────────────
+    // The composer carries friendly "@Name" tokens; on send each still-
+    // present token is swapped for WhatsApp's "@<digits>" form and the
+    // JID list goes out as contextInfo.mentionedJid — the same shape the
+    // official client produces.
+    type PendingMention = { token: string; jid: string; name: string; phone?: string | null };
+    const mentionsRef = useRef<PendingMention[]>([]);
+
+    // Drop records whose token was deleted/edited away.
+    useEffect(() => {
+      if (mentionsRef.current.length) {
+        mentionsRef.current = mentionsRef.current.filter((r) => text.includes(r.token));
+      }
+    }, [text]);
+
+    const mentionQuery = (() => {
+      if (!mentionMembers?.length) return null;
+      const m = text.match(/(?:^|\s)@([^\s@]*)$/);
+      return m ? m[1] : null;
+    })();
+
+    const mentionSuggestions =
+      mentionQuery !== null
+        ? (mentionMembers || [])
+            .filter((m) => {
+              const q = mentionQuery.trim().toLowerCase();
+              if (!q) return true;
+              return (
+                (m.name || '').toLowerCase().includes(q) ||
+                (m.phone || '').includes(q)
+              );
+            })
+            .slice(0, 6)
+        : [];
+
+    const pickMention = (member: GroupMember) => {
+      const name =
+        (member.name || '').trim() || (member.phone ? `+${member.phone}` : 'عضو');
+      const token = `@${name}`;
+      const jid =
+        member.jid || (member.phone ? `${member.phone}@s.whatsapp.net` : null);
+      if (!jid) return;
+      setText((prev) => prev.replace(/@[^\s@]*$/, `${token} `));
+      if (!mentionsRef.current.some((r) => r.token === token && r.jid === jid)) {
+        mentionsRef.current = [
+          ...mentionsRef.current,
+          { token, jid, name, phone: member.phone ?? null },
+        ];
+      }
+      setTimeout(() => inputRef.current?.focus(), 30);
+    };
 
     // ── Draft restore + outbound typing relay ────────────────────────
     // Draft text is hydrated once per conversation (the store warms from
@@ -184,13 +240,29 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     const handlePressSend = () => {
       const trimmed = text.trim();
       if (!trimmed) return;
+      // Swap each friendly "@Name" token for the "@<digits>" wire form.
+      // indexOf + one-shot replace handles duplicate names: the first pick
+      // claims the first remaining occurrence, the next finds the next.
+      let out = trimmed;
+      const jids: string[] = [];
+      const refs: MentionRef[] = [];
+      for (const rec of mentionsRef.current) {
+        const i = out.indexOf(rec.token);
+        if (i === -1) continue;
+        const digits = rec.jid.split('@')[0].replace(/\D/g, '');
+        if (!digits) continue;
+        out = `${out.slice(0, i)}@${digits}${out.slice(i + rec.token.length)}`;
+        jids.push(rec.jid);
+        refs.push({ jid: rec.jid, phone: rec.phone ?? digits, name: rec.name });
+      }
+      mentionsRef.current = [];
       setText('');
       if (conversationId != null) {
         drafts.clear(conversationId);
         typingHadTextRef.current = false;
         chatService.sendTyping(conversationId, 'paused');
       }
-      onSendText(trimmed);
+      onSendText(out, jids.length ? jids : undefined, refs.length ? refs : undefined);
     };
 
     const togglePauseRecording = () => {
@@ -339,6 +411,41 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
     // mounted while a hold-to-record drag is live — unmounting it mid-gesture
     // would destroy the handler and lose the release/lock/cancel events.
     return (
+      <View>
+        {mentionSuggestions.length > 0 && (
+          <View style={styles.mentionPanel}>
+            {mentionSuggestions.map((m) => {
+              const label =
+                (m.name || '').trim() || (m.phone ? `+${m.phone}` : 'عضو');
+              const sub = m.phone ? `+${m.phone}` : m.jid;
+              return (
+                <TouchableOpacity
+                  key={m.jid}
+                  style={styles.mentionRow}
+                  activeOpacity={0.7}
+                  onPress={() => pickMention(m)}
+                >
+                  <View style={styles.mentionAvatar}>
+                    <Text style={styles.mentionAvatarText}>
+                      {label.slice(0, 1).toUpperCase()}
+                    </Text>
+                  </View>
+                  <View style={styles.mentionBody}>
+                    <Text style={styles.mentionName} numberOfLines={1}>
+                      {label}
+                    </Text>
+                    <Text style={styles.mentionPhone} numberOfLines={1}>
+                      {sub}
+                    </Text>
+                  </View>
+                  {m.admin ? (
+                    <Text style={styles.mentionAdmin}>مشرف</Text>
+                  ) : null}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       <View style={[styles.barWrap, { paddingBottom: padBottom }]}>
         <GestureDetector gesture={micPan}>
           <View collapsable={false}>
@@ -482,11 +589,64 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
         </View>
         )}
       </View>
+      </View>
     );
   }
 );
 
 const styles = StyleSheet.create({
+  mentionPanel: {
+    marginHorizontal: 10,
+    marginBottom: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+  },
+  mentionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    gap: 12,
+  },
+  mentionAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: Colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mentionAvatarText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  mentionBody: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  mentionName: {
+    fontSize: 14.5,
+    fontWeight: '700',
+    color: '#111B21',
+  },
+  mentionPhone: {
+    fontSize: 12,
+    color: '#667781',
+    marginTop: 1,
+    writingDirection: 'ltr',
+  },
+  mentionAdmin: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: Colors.primary,
+  },
   barWrap: {
     flexDirection: 'row',
     alignItems: 'flex-end',

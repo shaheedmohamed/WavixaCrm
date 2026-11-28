@@ -65,6 +65,7 @@ interface ChatListScreenProps {
   onOpenStatuses?: () => void;
   onOpenGestures?: () => void;
   onOpenMediaLibrary?: () => void;
+  onOpenScheduled?: () => void;
 }
 
 const sortConversations = (list: Conversation[]): Conversation[] =>
@@ -85,6 +86,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStatuses,
   onOpenGestures,
   onOpenMediaLibrary,
+  onOpenScheduled,
 }) => {
   const { user, token, refreshUser } = useAuth();
   const isStatusViewerAccount = (user?.email ?? '').trim().toLowerCase() === 'demo@crm.com';
@@ -1419,6 +1421,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onOpenNewChat={() => setNewChatVisible(true)}
         onOpenQuickReplies={() => setQuickRepliesVisible(true)}
         onOpenStarred={onOpenStarred}
+        onOpenScheduled={onOpenScheduled}
         onOpenMediaLibrary={onOpenMediaLibrary}
         onOpenStats={onOpenStats}
         onOpenArchived={!isAgent ? () => setSelectedScope('archived') : undefined}

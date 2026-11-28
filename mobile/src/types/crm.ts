@@ -167,6 +167,7 @@ export interface Message {
     kind: 'text' | 'media';
     text?: string;
     replyToId?: string | null;
+    mentions?: string[];
     file?: { uri: string; name?: string; mimeType?: string; size?: number };
     mediaType?: 'image' | 'video' | 'audio' | 'voice' | 'document';
     caption?: string;
@@ -272,6 +273,17 @@ export type FilterScope =
   | 'archived'
   | 'all'
   | `list:${number}`;
+
+// One row in the global scheduled-messages center — carries the chat it
+// belongs to so the app can label + deep-link without extra fetches.
+export interface ScheduledMessageItem {
+  id: number;
+  body: string;
+  send_at: string;
+  status: string;
+  by?: string | null;
+  conversation?: Conversation | null;
+}
 
 export interface GroupMember {
   jid: string;

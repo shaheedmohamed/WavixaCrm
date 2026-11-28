@@ -23,6 +23,7 @@ import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatRoomScreen } from '../screens/ChatRoomScreen';
 import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
+import { ScheduledMessagesScreen } from '../screens/ScheduledMessagesScreen';
 import { MediaLibraryScreen } from '../screens/MediaLibraryScreen';
 import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
@@ -39,6 +40,7 @@ type OverlayView =
   | 'profile'
   | 'stats'
   | 'starred'
+  | 'scheduled'
   | 'statuses'
   | 'gestures'
   | 'media-library';
@@ -146,6 +148,10 @@ export default function IndexPage() {
     openOverlay('starred');
   }, [openOverlay]);
 
+  const handleOpenScheduled = useCallback(() => {
+    openOverlay('scheduled');
+  }, [openOverlay]);
+
   const handleOpenProfile = useCallback(() => {
     openOverlay('profile');
   }, [openOverlay]);
@@ -218,6 +224,7 @@ export default function IndexPage() {
           onOpenProfile={handleOpenProfile}
           onOpenStats={handleOpenStats}
           onOpenStarred={handleOpenStarred}
+          onOpenScheduled={handleOpenScheduled}
           onOpenStatuses={handleOpenStatuses}
           onOpenGestures={handleOpenGestures}
           onOpenMediaLibrary={handleOpenMediaLibrary}
@@ -246,6 +253,11 @@ export default function IndexPage() {
                 onOpenMessage={(conv, messageId) =>
                   handleOpenConversation(conv, messageId)
                 }
+              />
+            ) : overlayView === 'scheduled' ? (
+              <ScheduledMessagesScreen
+                onBack={closeOverlay}
+                onOpenConversation={(conv) => handleOpenConversation(conv)}
               />
             ) : overlayView === 'profile' ? (
               <ProfileScreen onBack={closeOverlay} />

@@ -20,6 +20,7 @@ interface ThreeDotMenuProps {
   onOpenProfile?: () => void;
   onOpenNewChat?: () => void;
   onOpenStarred?: () => void;
+  onOpenScheduled?: () => void;
   onOpenMediaLibrary?: () => void;
   onOpenStats?: () => void;
 }
@@ -33,6 +34,7 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
   onOpenProfile,
   onOpenNewChat,
   onOpenStarred,
+  onOpenScheduled,
   onOpenMediaLibrary,
   onOpenStats,
 }) => {
@@ -112,6 +114,16 @@ export const ThreeDotMenu: React.FC<ThreeDotMenuProps> = ({
                 >
                   <Ionicons name="star-outline" size={20} color="#111B21" />
                   <Text style={styles.menuItemText}>الرسائل المميزة</Text>
+                </TouchableOpacity>
+              )}
+
+              {onOpenScheduled && (
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => handleAction(onOpenScheduled)}
+                >
+                  <Ionicons name="alarm-outline" size={20} color="#111B21" />
+                  <Text style={styles.menuItemText}>الرسائل المجدولة</Text>
                 </TouchableOpacity>
               )}
 
