@@ -196,7 +196,11 @@ const mergeChronologicalMessages = (
   } else {
     const byId = new Map<number, Message>();
     for (const m of existing) {
-      if (!m.client_temp_id) byId.set(m.id, m);
+      // Dedupe on BOTH keys — a row sharing the incoming stanza id but a
+      // different local id would otherwise render as a twin.
+      if (!m.client_temp_id && !(m.message_id && serverWamids.has(m.message_id))) {
+        byId.set(m.id, m);
+      }
     }
     for (const m of incomingServer) {
       const prev = byId.get(m.id);
@@ -896,6 +900,33 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           }
           return;
         }
+        // Optimistic-send race: the send broadcast can beat the HTTP
+        // response — a matching pending temp row gets morphed in place
+        // instead of being duplicated beside it.
+        if (m.direction === 'outgoing') {
+          const pending = messagesRef.current.find(
+            (x) =>
+              x.client_temp_id &&
+              x.direction === 'outgoing' &&
+              x.message_type === m.message_type &&
+              (x.message || '') === (m.message || '')
+          );
+          if (pending) {
+            setMessages((prev) =>
+              prev.map((x) =>
+                x.client_temp_id === pending.client_temp_id
+                  ? { ...m, local_uri: x.local_uri || m.local_uri }
+                  : x
+              )
+            );
+            if (d.conversation) {
+              setConversation((prev) => ({ ...prev, ...d.conversation }));
+              chatCache.patchConversationEverywhere(initialConv.id, d.conversation);
+            }
+            scheduleReconcile();
+            return;
+          }
+        }
         const key = String(m.client_temp_id || m.id || m.message_id);
         freshAnimKeys.current.add(key);
         setMessages((prev) => mergeChronologicalMessages(prev, [m], 'append_newer'));
@@ -1122,13 +1153,23 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         if (res && res.success !== false) {
           const serverMsg: Message | undefined = res.message;
           setMessages((prev) => {
-            const next = prev.map((m) => {
-              if (m.client_temp_id !== tempId) return m;
-              if (serverMsg) {
-                return { ...serverMsg, status: serverMsg.status || 'sent' };
-              }
-              return { ...m, client_temp_id: null, status: 'sent' as const };
-            });
+            const next = prev
+              // The realtime broadcast of this same row can beat the HTTP
+              // response — drop that early copy so the temp swap below is
+              // the only survivor (duplicate ids crash VirtualizedList).
+              .filter(
+                (m) =>
+                  !serverMsg ||
+                  m.client_temp_id === tempId ||
+                  (m.id !== serverMsg.id && m.message_id !== serverMsg.message_id)
+              )
+              .map((m) => {
+                if (m.client_temp_id !== tempId) return m;
+                if (serverMsg) {
+                  return { ...serverMsg, status: serverMsg.status || 'sent' };
+                }
+                return { ...m, client_temp_id: null, status: 'sent' as const };
+              });
             syncToCache(next);
             return next;
           });
@@ -1251,24 +1292,31 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         if (res && res.success !== false) {
           const serverMsg: Message | undefined = res.message;
           setMessages((prev) => {
-            const next = prev.map((m) => {
-              if (m.client_temp_id !== tempId) return m;
-              if (serverMsg) {
+            const next = prev
+              .filter(
+                (m) =>
+                  !serverMsg ||
+                  m.client_temp_id === tempId ||
+                  (m.id !== serverMsg.id && m.message_id !== serverMsg.message_id)
+              )
+              .map((m) => {
+                if (m.client_temp_id !== tempId) return m;
+                if (serverMsg) {
+                  return {
+                    ...serverMsg,
+                    local_uri: editSpec ? null : file.uri,
+                    upload_progress: null,
+                    client_temp_id: null,
+                    status: serverMsg.status || 'sent',
+                  };
+                }
                 return {
-                  ...serverMsg,
-                  local_uri: editSpec ? null : file.uri,
+                  ...m,
                   upload_progress: null,
                   client_temp_id: null,
-                  status: serverMsg.status || 'sent',
+                  status: 'sent' as const,
                 };
-              }
-              return {
-                ...m,
-                upload_progress: null,
-                client_temp_id: null,
-                status: 'sent' as const,
-              };
-            });
+              });
             syncToCache(next);
             return next;
           });
