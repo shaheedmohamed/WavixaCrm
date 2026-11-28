@@ -17,6 +17,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { runOnJS, useSharedValue } from 'react-native-reanimated';
+import * as Notifications from 'expo-notifications';
 import { Header } from '../components/Header';
 import { SearchBar } from '../components/SearchBar';
 import { FilterBar, buildFilterItems } from '../components/FilterBar';
@@ -63,6 +64,7 @@ interface ChatListScreenProps {
   onOpenStarred?: () => void;
   onOpenStatuses?: () => void;
   onOpenGestures?: () => void;
+  onOpenMediaLibrary?: () => void;
 }
 
 const sortConversations = (list: Conversation[]): Conversation[] =>
@@ -82,6 +84,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
   onOpenStarred,
   onOpenStatuses,
   onOpenGestures,
+  onOpenMediaLibrary,
 }) => {
   const { user, token, refreshUser } = useAuth();
   const isStatusViewerAccount = (user?.email ?? '').trim().toLowerCase() === 'demo@crm.com';
@@ -568,6 +571,14 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
     void prefsTick;
     return chatPrefs.getFavoriteIds().length;
   }, [prefsTick]);
+
+  // App-icon badge mirrors the total unread count — respects the settings
+  // toggle (chatPrefs.appBadge); when off we force the badge to 0.
+  useEffect(() => {
+    Notifications.setBadgeCountAsync(
+      chatPrefs.isAppBadgeEnabled() ? totalUnreadMessages : 0
+    ).catch(() => {});
+  }, [totalUnreadMessages, prefsTick]);
 
   const handleTogglePin = useCallback(async (conv: Conversation) => {
     const nextPinned = !conv.is_pinned;
@@ -1408,6 +1419,7 @@ export const ChatListScreen: React.FC<ChatListScreenProps> = ({
         onOpenNewChat={() => setNewChatVisible(true)}
         onOpenQuickReplies={() => setQuickRepliesVisible(true)}
         onOpenStarred={onOpenStarred}
+        onOpenMediaLibrary={onOpenMediaLibrary}
         onOpenStats={onOpenStats}
         onOpenArchived={!isAgent ? () => setSelectedScope('archived') : undefined}
         onOpenProfile={onOpenProfile}

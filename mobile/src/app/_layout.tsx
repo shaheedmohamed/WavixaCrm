@@ -1,13 +1,16 @@
+// Must stay the first import — react-native-gesture-handler requires its
+// module to initialize before anything else mounts on Android.
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { HAS_KEYBOARD_SYNC } from '../components/KeyboardSafeView';
 import { AuthProvider, useAuth } from '../context/AuthContext';
 import { CallScreen } from '../components/CallScreen';
 import { UpdateGate } from '../components/UpdateGate';
+import { ConnectionBanner } from '../components/ConnectionBanner';
 import { realtime } from '../services/realtime';
 import { callService } from '../services/callService';
 import {
@@ -34,6 +37,7 @@ export default function RootLayout() {
           <RealtimeGate />
           <CallScreen />
           <UpdateGate />
+          <ConnectionBanner />
           </AuthProvider>
         </MaybeKeyboardProvider>
       </SafeAreaProvider>

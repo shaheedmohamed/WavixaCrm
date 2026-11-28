@@ -8,6 +8,8 @@ interface StoredPrefs {
   markedUnread: number[];
   favoriteIds: number[];
   groupsInChats: boolean;
+  /** Unread count on the app icon — on by default, toggleable in settings. */
+  appBadge: boolean;
 }
 
 let state: StoredPrefs = {
@@ -15,6 +17,7 @@ let state: StoredPrefs = {
   markedUnread: [],
   favoriteIds: [],
   groupsInChats: false,
+  appBadge: true,
 };
 
 let loaded = false;
@@ -44,6 +47,7 @@ export const chatPrefs = {
           markedUnread: Array.isArray(parsed.markedUnread) ? parsed.markedUnread : [],
           favoriteIds: Array.isArray(parsed.favoriteIds) ? parsed.favoriteIds : [],
           groupsInChats: parsed.groupsInChats === true,
+          appBadge: parsed.appBadge !== false,
         };
       }
     } catch {
@@ -95,6 +99,17 @@ export const chatPrefs = {
   setGroupsInChats(enabled: boolean) {
     if (state.groupsInChats === enabled) return;
     state.groupsInChats = enabled;
+    persist();
+    emit();
+  },
+
+  isAppBadgeEnabled(): boolean {
+    return state.appBadge !== false;
+  },
+
+  setAppBadge(enabled: boolean) {
+    if (state.appBadge === enabled) return;
+    state.appBadge = enabled;
     persist();
     emit();
   },

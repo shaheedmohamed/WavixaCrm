@@ -140,6 +140,8 @@ export interface Message {
   revoked_at?: string | null;
   edited_at?: string | null;
   is_view_once?: boolean | null;
+  internal_note?: string | null;
+  internal_note_by?: string | null;
   payload?: {
     poll?: { name: string; options: string[]; selectableCount: number } | null;
     event?: {
@@ -225,6 +227,16 @@ export interface StarredMessageItem {
   timestamp?: string | null;
   starred_at?: string | null;
   starred_by?: { id: number; name: string } | null;
+  conversation?: Conversation | null;
+}
+
+// Global media library — a Message plus the conversation it belongs to.
+// `sent_by` carries the teammate who sent an outgoing row; null there means
+// it went out from the WhatsApp app itself. Incoming rows attribute through
+// sender_name / the conversation contact.
+export type MediaLibraryKind = 'media' | 'docs' | 'links';
+
+export interface MediaLibraryItem extends Message {
   conversation?: Conversation | null;
 }
 

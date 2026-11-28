@@ -24,6 +24,7 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
   const { user, logout, isAgent } = useAuth();
   const insets = useSafeAreaInsets();
   const [groupsInChats, setGroupsInChats] = useState(() => chatPrefs.isGroupsInChats());
+  const [appBadge, setAppBadge] = useState(() => chatPrefs.isAppBadgeEnabled());
 
   const handleLogout = () => {
     Alert.alert('تسجيل الخروج', 'هل تريد بالتأكيد تسجيل الخروج من التطبيق؟', [
@@ -124,6 +125,25 @@ export const ProfileScreen: React.FC<ProfileScreenProps> = ({ onBack }) => {
           </View>
           <Text style={styles.settingHint}>
             لما يتفعل، محادثات المجموعات تظهر جوه فلتر الشاتات بدل فلتر منفصل
+          </Text>
+
+          <View style={styles.actionRow}>
+            <Switch
+              value={appBadge}
+              onValueChange={(v) => {
+                setAppBadge(v);
+                chatPrefs.setAppBadge(v);
+              }}
+              trackColor={{ false: '#D1D5DB', true: Colors.primary }}
+              thumbColor="#FFFFFF"
+            />
+            <View style={styles.actionRight}>
+              <Text style={styles.actionText}>عداد غير المقروء على أيقونة التطبيق</Text>
+              <Ionicons name="notifications-outline" size={20} color={Colors.primary} />
+            </View>
+          </View>
+          <Text style={styles.settingHint}>
+            لما يتفعل، عدد الرسايل الغير مقروءة يظهر على أيقونة التطبيق من بره
           </Text>
         </View>
 

@@ -1,5 +1,47 @@
 # WavixaCRM — Project Notes
 
+## Global media library (2026-11-28) — mobile app
+
+WhatsApp's "Media, links and docs" sheet, but across ALL conversations.
+Entry point: ThreeDotMenu → "مكتبة الوسائط" → `MediaLibraryScreen` overlay in
+`src/app/index.tsx` (same overlay pattern as Starred/Stats — not a route).
+
+- **API:** `GET /api/crm/media-library?kind=media|docs|links&before_id=N&limit=N`
+  (`CrmController::getMediaLibrary`). `media` = image+video+sticker,
+  `docs` = document+audio+voice+ptt, `links` = bodies/captions containing a
+  URL. Same scoping as starred-messages (`getAllowedSessionIds` +
+  `applyAgentVisibility`); group senders resolved via `labelGroupSenders`
+  per conversation found in the page. Cursor = (timestamp,id) tuple like
+  getMessages — history-sync ids can run opposite to time.
+- **Attribution shown on every item:** incoming → `sender_name`/contact;
+  outgoing + `sent_by` → employee name; outgoing without → "واتساب" (sent
+  from the phone app, same rule as the bubble's 'من الواتساب' label).
+- **Screen:** `mobile/src/screens/MediaLibraryScreen.tsx` — 3 tabs (وسائط
+  grid / مستندات cards / روابط cards), day-section headers, swipe between
+  tabs (manual-activation Pan like the chat list scope tabs), pull-refresh,
+  infinite scroll via `before_id`. Hidden panes stay mounted via
+  `display:none` so pages don't refetch on tab switch.
+- **Cells/rows match the in-chat look:** image thumbs via `mediaSrc`, video
+  posters via `videoThumbSrc` + duration pill, doc cards reuse `docInfo`
+  colors, audio rows purple icon. Tap grid cell → `MediaViewerModal` pager
+  over the whole loaded library (header shows "sender • chat", plus an
+  `onOpenItemContext` chatbox button that jumps into the owning chat at
+  that message). Long-press or the chat glyph on a row → opens the
+  conversation at that message (`around_id` focus jump, same as
+  starred-messages rows).
+- **Multi-select actions:** long-press toggles selection mode — header
+  swaps to a WhatsApp-style action bar (forward via existing
+  `ForwardModal` bulk path `messages[]` + `message={null}`; download to
+  gallery via `fetchToCache` → `MediaLibrary.saveToLibraryAsync`; external
+  share via `react-native-share` `Share.open({urls[]})` multi-send —
+  community package, autolinks via expo autolinking, NO config plugin
+  needed because we only use the generic chooser; link-only selections
+  share their URLs as text). Selection state lives at screen level so it
+  survives tab switches; items are resolved from a per-kind ref each pane
+  pushes via `onItems`.
+- `MediaLibraryItem extends Message` in `types/crm.ts`; service:
+  `chatService.getMediaLibrary`.
+
 ## Message geo-origin feature (2026-11-27)
 
 Sender location is derived in three tiers (WhatsApp/Messenger/Telegram never

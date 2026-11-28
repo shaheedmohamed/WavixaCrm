@@ -13,3 +13,7 @@ Schedule::command('backup:database')->dailyAt('02:00');
 // Safety net: keep whatsapp_sessions in sync with the node service so OTP
 // messages are never routed to a device that is no longer connected.
 Schedule::command('whatsapp:sync-sessions')->everyMinute()->withoutOverlapping();
+
+// Agent-scheduled WhatsApp messages parked for later — fire the due batch
+// each minute (the command itself bounds to 50 sends per pass).
+Schedule::command('crm:send-scheduled')->everyMinute()->withoutOverlapping();

@@ -55,6 +55,8 @@ class WhatsAppMessage extends Model
         'edited_at',
         'is_view_once',
         'payload',
+        'internal_note',
+        'internal_note_by',
     ];
 
     protected $casts = [

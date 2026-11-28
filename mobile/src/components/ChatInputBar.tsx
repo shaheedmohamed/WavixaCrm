@@ -32,6 +32,8 @@ import { chatService } from '../services/chatService';
 export interface ChatInputBarHandle {
   focus: () => void;
   appendText: (snippet: string) => void;
+  setText: (value: string) => void;
+  getText: () => string;
 }
 
 interface ChatInputBarProps {
@@ -42,6 +44,8 @@ interface ChatInputBarProps {
   onOpenAttach: () => void;
   onOpenCameraQuick: () => void;
   onOpenQuickReplies: () => void;
+  /** Long-press the send button → scheduled-message picker. */
+  onSchedule?: () => void;
   // Enables per-chat drafts + the outbound "typing…" chatstate relay.
   conversationId?: number;
 }
@@ -67,6 +71,7 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
       onOpenAttach,
       onOpenCameraQuick,
       onOpenQuickReplies,
+      onSchedule,
       conversationId,
     },
     ref
@@ -151,6 +156,13 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
           inputRef.current?.focus();
         }, 40);
       },
+      setText: (value: string) => {
+        setText(value);
+        setTimeout(() => {
+          inputRef.current?.focus();
+        }, 40);
+      },
+      getText: () => text,
     }));
 
     useEffect(() => {
@@ -351,6 +363,8 @@ export const ChatInputBar = forwardRef<ChatInputBarHandle, ChatInputBarProps>(
               <TouchableOpacity
                 style={styles.sendFab}
                 onPress={hasText ? handlePressSend : () => startRecording('lock')}
+                onLongPress={hasText ? onSchedule : undefined}
+                delayLongPress={450}
                 activeOpacity={0.82}
               >
                 {hasText ? (

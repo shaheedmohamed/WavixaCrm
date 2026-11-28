@@ -3472,6 +3472,100 @@ class CrmController extends Controller
     }
 
     /**
+     * Edit an outgoing text message in place — protocolMessage{MESSAGE_EDIT}
+     * keyed at the original stanza, so the customer's WhatsApp and every
+     * linked device swap the bubble text. WhatsApp enforces a ~15-minute
+     * window; we mirror it server-side.
+     */
+    public function editMessage(Request $request)
+    {
+        $request->validate([
+            'message_id' => 'required',
+            'conversation_id' => 'required|integer',
+            'message' => 'required|string|max:4096',
+        ]);
+
+        $allowedSessionIds = $this->getAllowedSessionIds();
+        $conversation = WhatsAppConversation::whereIn('session_id', $allowedSessionIds)
+            ->where('id', $request->conversation_id)
+            ->firstOrFail();
+
+        $mid = (string) $request->message_id;
+        $message = WhatsAppMessage::where('conversation_id', $conversation->id)
+            ->where(function ($q) use ($mid) {
+                $q->where('message_id', $mid);
+                if (ctype_digit($mid)) {
+                    $q->orWhere('id', (int) $mid);
+                }
+            })
+            ->firstOrFail();
+
+        if ($locker = $this->conversationLocker($conversation, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
+        if ($message->direction !== 'outgoing' || !$message->message_id) {
+            return response()->json(['success' => false, 'message' => 'التعديل متاح على رسائلك المرسلة بس'], 400);
+        }
+        if ($message->message_type !== 'text' || !$message->message) {
+            return response()->json(['success' => false, 'message' => 'التعديل متاح على الرسايل النصية بس'], 400);
+        }
+        if ($message->revoked_at) {
+            return response()->json(['success' => false, 'message' => 'الرسالة دي محذوفة'], 400);
+        }
+        $sentAt = $message->sent_at ?: $message->timestamp;
+        if ($sentAt && $sentAt->diffInMinutes(now()) > 15) {
+            return response()->json(['success' => false, 'message' => 'وقت التعديل خلص — واتساب بيسمح بـ 15 دقيقة بس'], 400);
+        }
+
+        $newText = trim((string) $request->message);
+        if ($newText === '' || $newText === $message->message) {
+            return response()->json(['success' => true, 'unchanged' => true]);
+        }
+
+        $session = $conversation->session;
+        if (!$session || !$this->sessionIsLive($session)) {
+            return response()->json(['success' => false, 'message' => 'الجهاز غير متصل'], 400);
+        }
+
+        $token = $session->session_token ?: (string) $session->id;
+        try {
+            $res = $this->engineClient()->post("{$this->engineUrl}/api/whatsapp/edit-message", [
+                'sessionId' => $token,
+                'to' => $this->resolveDestJid($conversation),
+                'messageId' => $message->message_id,
+                'message' => $newText,
+            ]);
+            $engineData = $res->json();
+            if (!$res->successful() || !($engineData['success'] ?? false)) {
+                $err = $engineData['message'] ?? ('HTTP ' . $res->status());
+                Log::warning("CRM editMessage engine rejected: {$err}");
+                return response()->json(['success' => false, 'message' => 'فشل تعديل الرسالة: ' . $err], 502);
+            }
+        } catch (\Throwable $e) {
+            Log::error("CRM editMessage engine error: " . $e->getMessage());
+            return response()->json(['success' => false, 'message' => 'فشل تعديل الرسالة: ' . $e->getMessage()], 500);
+        }
+
+        $message->update([
+            'message' => $newText,
+            'edited_at' => now(),
+        ]);
+        try {
+            event(new \App\Events\CrmRealtimeEvent($message->user_id, 'message.edited', [
+                'message_id' => $message->id,
+                'external_message_id' => $message->message_id,
+                'conversation_id' => $message->conversation_id,
+                'message' => $newText,
+                'edited_at' => $message->edited_at?->toISOString(),
+            ]));
+        } catch (\Throwable $e) {
+            Log::debug('CRM broadcast (edited) failed: ' . $e->getMessage());
+        }
+
+        return response()->json(['success' => true, 'message' => $message->fresh()?->toArray()]);
+    }
+
+    /**
      * Forward a stored message to one or more conversations. The engine marks
      * the stanza with contextInfo.isForwarded so WhatsApp shows the
      * "Forwarded" label like the official client.
@@ -4207,6 +4301,23 @@ class CrmController extends Controller
             return $this->lockedResponse($locker);
         }
 
+        $kind = (string) $request->input('kind', 'media');
+        if ($kind === 'links') {
+            // URL-bearing rows — file-name-only documents excluded by the
+            // LIKE match naturally (no scheme present).
+            $rows = WhatsAppMessage::where('conversation_id', $conversation->id)
+                ->where(function ($w) {
+                    $w->where('message', 'like', '%http://%')
+                      ->orWhere('message', 'like', '%https://%')
+                      ->orWhere('media_caption', 'like', '%http%');
+                })
+                ->orderBy('timestamp', 'desc')->orderBy('id', 'desc')
+                ->limit(min(300, max(1, (int) $request->input('limit', 60))))
+                ->get(['id', 'message_id', 'message_type', 'message', 'media_caption', 'direction', 'timestamp', 'created_at']);
+
+            return response()->json(['success' => true, 'media' => $rows]);
+        }
+
         $rows = WhatsAppMessage::where('conversation_id', $conversation->id)
             ->whereIn('message_type', ['image', 'video', 'document', 'audio', 'voice', 'sticker'])
             ->orderBy('timestamp', 'desc')->orderBy('id', 'desc')
@@ -4903,6 +5014,193 @@ class CrmController extends Controller
         return response()->json(['success' => true]);
     }
 
+    // ---- Message internal note (team-only, pinned under the bubble) -------
+
+    /** Set/clear the internal team note on a single message row. */
+    public function setMessageNote(Request $request, $id)
+    {
+        $data = $request->validate(['note' => 'nullable|string|max:2000']);
+        $message = WhatsAppMessage::findOrFail($id);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->findOrFail($message->conversation_id);
+
+        $note = trim((string) ($data['note'] ?? ''));
+        $message->update([
+            'internal_note' => $note !== '' ? $note : null,
+            'internal_note_by' => $note !== '' ? $request->user()->name : null,
+        ]);
+
+        try {
+            event(new \App\Events\CrmRealtimeEvent($conv->user_id, 'message.note', [
+                'conversation_id' => $conv->id,
+                'message_id' => $message->id,
+                'internal_note' => $message->internal_note,
+                'internal_note_by' => $message->internal_note_by,
+            ]));
+        } catch (\Throwable $e) {
+            Log::debug('CRM broadcast (message note) failed: ' . $e->getMessage());
+        }
+
+        return response()->json([
+            'success' => true,
+            'internal_note' => $message->internal_note,
+            'internal_note_by' => $message->internal_note_by,
+        ]);
+    }
+
+    // ---- Scheduled messages ------------------------------------------------
+
+    public function scheduleMessage(Request $request)
+    {
+        $data = $request->validate([
+            'conversation_id' => 'required|integer',
+            'body' => 'required|string|max:4000',
+            'send_at' => 'required|date|after:now|before:' . now()->addDays(30)->toIso8601String(),
+        ]);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->findOrFail($data['conversation_id']);
+        if ($locker = $this->conversationLocker($conv, $request->user())) {
+            return $this->lockedResponse($locker);
+        }
+
+        $row = \App\Models\CrmScheduledMessage::create([
+            'user_id' => $request->user()->id,
+            'conversation_id' => $conv->id,
+            'body' => trim($data['body']),
+            'send_at' => \Carbon\Carbon::parse($data['send_at']),
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'scheduled' => [
+                'id' => $row->id,
+                'body' => $row->body,
+                'send_at' => $row->send_at->toIso8601String(),
+                'status' => $row->status,
+            ],
+        ]);
+    }
+
+    public function listScheduledMessages(Request $request, $id)
+    {
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $conv = WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($id);
+        $rows = \App\Models\CrmScheduledMessage::where('conversation_id', $conv->id)
+            ->where('status', 'pending')
+            ->with('user:id,name')
+            ->orderBy('send_at')
+            ->get()
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'body' => $r->body,
+                'send_at' => $r->send_at->toIso8601String(),
+                'status' => $r->status,
+                'by' => $r->user?->name,
+            ]);
+        return response()->json(['success' => true, 'scheduled' => $rows]);
+    }
+
+    public function cancelScheduledMessage(Request $request, $id)
+    {
+        $row = \App\Models\CrmScheduledMessage::findOrFail($id);
+        $user = $request->user();
+        if ($user->crm_role === 'agent' && $row->user_id !== $user->id) {
+            return response()->json(['success' => false, 'message' => 'غير مسموح'], 403);
+        }
+        $allowed = $this->getAllowedSessionIds($user);
+        WhatsAppConversation::whereIn('session_id', $allowed)->findOrFail($row->conversation_id);
+        if ($row->status === 'pending') {
+            $row->update(['status' => 'canceled']);
+        }
+        return response()->json(['success' => true]);
+    }
+
+    // ---- Translation --------------------------------------------------------
+
+    /** Server-side translate proxy — Google free endpoint, cached 24h. */
+    public function translate(Request $request)
+    {
+        $data = $request->validate([
+            'text' => 'required|string|max:3000',
+            'target' => 'nullable|string|max:5',
+        ]);
+        $target = preg_replace('/[^a-z-]/i', '', $data['target'] ?? 'ar') ?: 'ar';
+        $text = $data['text'];
+        $cacheKey = 'crm_translate_' . sha1($target . '|' . $text);
+        if ($hit = Cache::get($cacheKey)) {
+            return response()->json(['success' => true] + $hit);
+        }
+
+        try {
+            $res = \Illuminate\Support\Facades\Http::timeout(8)->get(
+                'https://translate.googleapis.com/translate_a/single',
+                [
+                    'client' => 'gtx',
+                    'sl' => 'auto',
+                    'tl' => $target,
+                    'dt' => 't',
+                    'q' => $text,
+                ]
+            );
+            $arr = $res->json();
+            $translated = collect($arr[0] ?? [])->map(fn ($seg) => $seg[0] ?? '')->implode('');
+            $out = ['translated' => $translated !== '' ? $translated : $text, 'lang' => $arr[2] ?? null];
+            Cache::put($cacheKey, $out, now()->addDay());
+            return response()->json(['success' => true] + $out);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => 'الترجمة غير متاحة الآن'], 502);
+        }
+    }
+
+    // ---- Reply privately (group member → direct chat) ------------------------
+
+    /** Resolve a group sender (PN or @lid) to a 1:1 conversation. */
+    public function openMemberConversation(Request $request)
+    {
+        $data = $request->validate([
+            'conversation_id' => 'required|integer', // the group
+            'sender' => 'required|string|max:80',
+        ]);
+        $allowed = $this->getAllowedSessionIds($request->user());
+        $group = WhatsAppConversation::whereIn('session_id', $allowed)
+            ->findOrFail($data['conversation_id']);
+
+        $sender = $data['sender'];
+        // LID senders resolve through the lid→pn map; a raw PN passes through.
+        if (str_ends_with($sender, '@lid') || strlen(preg_replace('/\D/', '', $sender)) >= 15) {
+            $lidJid = str_ends_with($sender, '@lid') ? $sender : $sender . '@lid';
+            $pn = \Illuminate\Support\Facades\DB::table('whatsapp_lid_mappings')
+                ->where('lid', $lidJid)->value('pn');
+            if (!$pn || !str_ends_with($pn, '@s.whatsapp.net')) {
+                return response()->json(['success' => false, 'message' => 'تعذر تحديد رقم العضو'], 404);
+            }
+            $sender = $pn;
+        }
+        $digits = preg_replace('/\D/', '', explode('@', $sender)[0]);
+        if (strlen($digits) < 7) {
+            return response()->json(['success' => false, 'message' => 'تعذر تحديد رقم العضو'], 404);
+        }
+        $jid = $digits . '@s.whatsapp.net';
+
+        $conv = WhatsAppConversation::where('session_id', $group->session_id)
+            ->where(function ($q) use ($jid, $digits) {
+                $q->where('contact_jid', $jid)->orWhere('contact_phone', $digits);
+            })
+            ->first();
+        if (!$conv) {
+            $conv = WhatsAppConversation::create([
+                'session_id' => $group->session_id,
+                'user_id' => $group->user_id,
+                'contact_jid' => $jid,
+                'contact_phone' => $digits,
+                'contact_name' => '+' . $digits,
+            ]);
+        }
+        return response()->json(['success' => true, 'conversation' => $conv]);
+    }
+
     // ---- Custom chat lists (WhatsApp-style filter lists) ------------------
 
     /** GET the agent's lists with member conversation ids. */
@@ -5048,6 +5346,128 @@ class CrmController extends Controller
     }
 
     /**
+     * Global media library — every media/document/link message across all
+     * sessions the caller can see, newest-first, in the same split the
+     * WhatsApp "Media, links and docs" sheet uses: `media` = photos + videos,
+     * `docs` = files & audio, `links` = URL-bearing texts. Each row carries
+     * its conversation + who sent it (employee for outgoing rows, "WhatsApp"
+     * when it went out from the phone directly, the contact for incoming).
+     * `before_id` pages backwards by the (timestamp,id) tuple — history-sync
+     * rows can carry ids opposite to real time, same rule getMessages uses.
+     */
+    public function getMediaLibrary(Request $request)
+    {
+        $user = $request->user();
+        $allowed = $this->getAllowedSessionIds($user);
+
+        $kind = (string) $request->input('kind', 'media');
+        $limit = min(150, max(1, (int) $request->input('limit', 60)));
+
+        $query = WhatsAppMessage::query()
+            ->whereNotNull('conversation_id')
+            ->with([
+                'sentBy:id,name',
+                'conversation:id,session_id,user_id,contact_jid,contact_name,contact_username,contact_phone,contact_avatar,assigned_agent_id,last_message_at,unread_count,archived_at,is_pinned',
+            ])
+            ->whereHas('conversation', function ($c) use ($allowed, $user) {
+                $c->whereIn('session_id', $allowed);
+                $this->applyAgentVisibility($c, $user);
+            });
+
+        if ($kind === 'docs') {
+            // Files + audio — matches the app's isDocMessage/isAudioMessage
+            // split: documents, voice notes and shared audio files.
+            $query->whereIn('message_type', ['document', 'audio', 'voice', 'ptt']);
+        } elseif ($kind === 'links') {
+            $query->where(function ($w) {
+                $w->where('message', 'like', '%http://%')
+                  ->orWhere('message', 'like', '%https://%')
+                  ->orWhere('media_caption', 'like', '%http%');
+            });
+        } else {
+            $kind = 'media';
+            $query->whereIn('message_type', ['image', 'video', 'sticker']);
+        }
+
+        if ($request->filled('before_id')) {
+            $anchor = WhatsAppMessage::find((int) $request->before_id);
+            if ($anchor && $anchor->timestamp) {
+                $query->where(function ($w) use ($anchor) {
+                    $w->where('timestamp', '<', $anchor->timestamp)
+                      ->orWhere(function ($w2) use ($anchor) {
+                          $w2->where('timestamp', '=', $anchor->timestamp)
+                             ->where('id', '<', $anchor->id);
+                      });
+                });
+            } else {
+                $query->where('id', '<', (int) $request->before_id);
+            }
+        }
+
+        $rows = $query->orderBy('timestamp', 'desc')->orderBy('id', 'desc')
+            ->limit($limit + 1)
+            ->get();
+        $hasMore = $rows->count() > $limit;
+        $messages = $rows->take($limit)->values();
+
+        // Group sender labels — same contact-book/pushname resolution the
+        // room itself applies, run per group conversation found in the page.
+        $messages->groupBy('conversation_id')->each(function ($groupRows, $convId) {
+            $conv = $groupRows->first()?->conversation;
+            if ($conv && str_contains((string) $conv->contact_jid, '@g.us')) {
+                $this->labelGroupSenders($conv, $groupRows);
+            }
+        });
+
+        $items = $messages->map(function ($m) {
+            $conv = $m->conversation;
+            return [
+                'id' => $m->id,
+                'message_id' => $m->message_id,
+                'conversation_id' => $m->conversation_id,
+                'message' => $m->message,
+                'message_type' => $m->message_type,
+                'media_url' => $m->media_url,
+                'media_mime_type' => $m->media_mime_type,
+                'media_size' => $m->media_size,
+                'media_meta' => $m->media_meta,
+                'media_caption' => $m->media_caption,
+                'direction' => $m->direction,
+                'sender_name' => $m->sender_name,
+                'sender_phone' => $m->sender_phone ?? null,
+                'status' => $m->status,
+                'is_forwarded' => (bool) $m->is_forwarded,
+                'revoked_at' => $m->revoked_at,
+                'timestamp' => $m->timestamp,
+                'sent_by' => $m->sentBy ? [
+                    'id' => $m->sentBy->id,
+                    'name' => $m->sentBy->name,
+                ] : null,
+                'conversation' => $conv ? [
+                    'id' => $conv->id,
+                    'session_id' => $conv->session_id,
+                    'contact_jid' => $conv->contact_jid,
+                    'contact_name' => $conv->contact_name,
+                    'contact_username' => $conv->contact_username,
+                    'contact_phone' => $conv->contact_phone,
+                    'contact_avatar' => $conv->contact_avatar,
+                    'is_group' => $this->isGroupConv($conv),
+                    'assigned_agent_id' => $conv->assigned_agent_id,
+                    'unread_count' => $conv->unread_count,
+                    'archived_at' => $conv->archived_at,
+                    'is_pinned' => $conv->is_pinned,
+                ] : null,
+            ];
+        })->values();
+
+        return response()->json([
+            'success' => true,
+            'items' => $items,
+            'has_more' => $hasMore,
+        ]);
+    }
+
+    /**
      * WhatsApp-style global message search: find messages by body, media
      * caption or file name across every session the caller can see, newest
      * first. Ordered by id DESC so MySQL stops scanning after `limit` hits.
@@ -5062,8 +5482,10 @@ class CrmController extends Controller
         }
         $q = mb_substr($q, 0, 120);
 
+        $convFilter = (int) $request->query('conversation_id', 0);
         $messages = WhatsAppMessage::query()
             ->whereNull('revoked_at')
+            ->when($convFilter > 0, fn ($w) => $w->where('conversation_id', $convFilter))
             ->where(function ($w) use ($q) {
                 $w->where('message', 'like', "%{$q}%")
                   ->orWhere('media_caption', 'like', "%{$q}%")

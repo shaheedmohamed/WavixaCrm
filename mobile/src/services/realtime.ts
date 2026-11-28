@@ -13,6 +13,8 @@ import { User } from '../types/crm';
 
 type RealtimeEvent = { type: string; data: any };
 type Listener = (ev: RealtimeEvent) => void;
+export type RealtimeStatus = 'idle' | 'connecting' | 'connected' | 'disconnected';
+type StatusListener = (s: RealtimeStatus) => void;
 
 const REVERB_KEY = 'ddaee3e38fe685f64ec6'; // same app key the SPA uses
 const PROTOCOL_VERSION = '7';
@@ -38,10 +40,29 @@ class RealtimeClient {
   private reconnectTimer: any = null;
   private attempts = 0;
   private stopped = true;
+  private status: RealtimeStatus = 'idle';
+  private statusListeners = new Set<StatusListener>();
 
   on(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** UI-facing socket state — the offline banner subscribes here. */
+  onStatus(fn: StatusListener): () => void {
+    this.statusListeners.add(fn);
+    fn(this.status);
+    return () => this.statusListeners.delete(fn);
+  }
+
+  getStatus(): RealtimeStatus {
+    return this.status;
+  }
+
+  private setStatus(s: RealtimeStatus) {
+    if (this.status === s) return;
+    this.status = s;
+    this.statusListeners.forEach((fn) => { try { fn(s); } catch {} });
   }
 
   start(user: User) {
@@ -49,6 +70,7 @@ class RealtimeClient {
     if (!ownerId) return;
     this.channel = `private-crm.${ownerId}`;
     this.stopped = false;
+    this.setStatus('connecting');
     this.open();
   }
 
@@ -59,6 +81,7 @@ class RealtimeClient {
     try { this.ws?.close(); } catch {}
     this.ws = null;
     this.socketId = null;
+    this.setStatus('idle');
   }
 
   /** Foreground-return nudge: if the socket died while suspended, reconnect
@@ -77,6 +100,7 @@ class RealtimeClient {
 
   private open() {
     if (this.stopped || !this.channel) return;
+    this.setStatus('connecting');
     let ws: WebSocket;
     try {
       ws = new WebSocket(wsUrl());
@@ -104,7 +128,10 @@ class RealtimeClient {
         try { ws.send(JSON.stringify({ event: 'pusher:pong' })); } catch {}
         return;
       }
-      if (m.event === 'pusher_internal:subscription_succeeded') return;
+      if (m.event === 'pusher_internal:subscription_succeeded') {
+        this.setStatus('connected');
+        return;
+      }
       if (m.event === 'pusher:error' || m.event === 'pusher:subscription_error') {
         try { ws.close(); } catch {}
         return;
@@ -122,6 +149,7 @@ class RealtimeClient {
     ws.onclose = () => {
       this.ws = null;
       this.socketId = null;
+      if (!this.stopped) this.setStatus('disconnected');
       this.scheduleReconnect();
     };
   }

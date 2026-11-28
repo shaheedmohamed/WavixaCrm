@@ -82,7 +82,8 @@
       ],
       "expo-document-picker",
       "expo-status-bar",
-      "react-native-audio-api"
+      "react-native-audio-api",
+      "expo-sharing"
     ],
     "extra": {
       "router": {

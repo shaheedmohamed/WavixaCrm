@@ -4,6 +4,7 @@ import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Clipboard from 'expo-clipboard';
 import { Message } from '../types/crm';
+import { useNow } from '../hooks/useNow';
 
 const POPULAR_EMOJIS = ['❤️', '👍', '😂', '😮', '😢', '🙏'];
 
@@ -16,10 +17,20 @@ interface MessageActionsSheetProps {
   onPin: (msg: Message) => void;
   onStar: (msg: Message) => void;
   onDelete: (msg: Message) => void;
+  /** WhatsApp "Edit message" — outgoing text inside the 15-min window. */
+  onEdit: (msg: Message) => void;
   /** WhatsApp "Message info" — delivery/read timeline (outgoing only). */
   onInfo: (msg: Message) => void;
   /** Enter WhatsApp-style multi-select starting with this message. */
   onSelect: (msg: Message) => void;
+  /** Group context — enables "reply privately" on incoming member rows. */
+  isGroup?: boolean;
+  /** Open a 1:1 chat with this group sender (WhatsApp "reply privately"). */
+  onReplyPrivately?: (msg: Message) => void;
+  /** Team-only note pinned under this bubble. */
+  onInternalNote?: (msg: Message) => void;
+  /** Translate the message text inline. */
+  onTranslate?: (msg: Message) => void;
 }
 
 /** WhatsApp-style long-press action sheet — emoji reaction row on top,
@@ -34,12 +45,25 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
   onPin,
   onStar,
   onDelete,
+  onEdit,
   onInfo,
   onSelect,
+  isGroup = false,
+  onReplyPrivately,
+  onInternalNote,
+  onTranslate,
 }) => {
   const insets = useSafeAreaInsets();
+  const now = useNow(15_000);
   if (!message) return null;
   const isOutgoing = message.direction === 'outgoing' || message.sent_by_user_id != null;
+  // WhatsApp only allows ~15 minutes of post-send edits.
+  const canEdit =
+    isOutgoing &&
+    !message.revoked_at &&
+    !!message.message &&
+    (message.message_type === 'text' || message.message_type === 'other') &&
+    now - new Date(message.sent_at || message.timestamp).getTime() < 15 * 60 * 1000;
 
   const items = [
     {
@@ -68,6 +92,15 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
       label: message.starred_at ? 'إلغاء التمييز بنجمة' : 'تمييز بنجمة',
       onPress: () => onStar(message),
     },
+    ...(isGroup && !isOutgoing && onReplyPrivately
+      ? [
+          {
+            icon: <Ionicons name="chatbubble-ellipses-outline" size={19} color="#54656F" />,
+            label: 'رد خاص',
+            onPress: () => onReplyPrivately(message),
+          },
+        ]
+      : []),
     ...(message.message
       ? [
           {
@@ -76,6 +109,33 @@ export const MessageActionsSheet: React.FC<MessageActionsSheetProps> = ({
             onPress: () => {
               Clipboard.setStringAsync(message.message || '').catch(() => {});
             },
+          },
+        ]
+      : []),
+    ...(message.message && onTranslate
+      ? [
+          {
+            icon: <Ionicons name="language-outline" size={19} color="#54656F" />,
+            label: 'ترجم',
+            onPress: () => onTranslate(message),
+          },
+        ]
+      : []),
+    ...(onInternalNote
+      ? [
+          {
+            icon: <Ionicons name="document-text-outline" size={19} color="#54656F" />,
+            label: message.internal_note ? 'تعديل الملاحظة الداخلية' : 'ملاحظة داخلية',
+            onPress: () => onInternalNote(message),
+          },
+        ]
+      : []),
+    ...(canEdit
+      ? [
+          {
+            icon: <Ionicons name="create-outline" size={19} color="#54656F" />,
+            label: 'تعديل الرسالة',
+            onPress: () => onEdit(message),
           },
         ]
       : []),

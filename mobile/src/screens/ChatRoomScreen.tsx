@@ -8,7 +8,11 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
+  TextInput,
+  Modal,
+  Pressable,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -260,6 +264,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   );
 
   const [replyTarget, setReplyTarget] = useState<Message | null>(null);
+  const [editingMsg, setEditingMsg] = useState<Message | null>(null);
   const [highlightedMsgKey, setHighlightedMsgKey] = useState<string | number | null>(null);
   const [showScrollBottom, setShowScrollBottom] = useState(false);
   const [newBelowCount, setNewBelowCount] = useState(0);
@@ -547,6 +552,22 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const [selectedMsgForPin, setSelectedMsgForPin] = useState<Message | null>(null);
   const [reactionSheetKey, setReactionSheetKey] = useState<string | number | null>(null);
   const [isDeadConversation, setIsDeadConversation] = useState(false);
+  // In-conversation search (WhatsApp 🔍): query state + server match list +
+  // which match is focused (0 = newest). jumpToMessageKey highlights the row.
+  const [searchMode, setSearchMode] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchMatches, setSearchMatches] = useState<(string | number)[]>([]);
+  const [searchIdx, setSearchIdx] = useState(0);
+  const [searchBusy, setSearchBusy] = useState(false);
+  // Internal team note + translation overlays rendered under the bubble.
+  const [noteTarget, setNoteTarget] = useState<Message | null>(null);
+  const [noteDraft, setNoteDraft] = useState('');
+  const [translations, setTranslations] = useState<Record<string, string>>({});
+  const [translatingKey, setTranslatingKey] = useState<string | null>(null);
+  // Scheduled-message sheet + the header overflow (⋮) menu.
+  const [headerMenuVisible, setHeaderMenuVisible] = useState(false);
+  const [scheduleVisible, setScheduleVisible] = useState(false);
+  const [scheduledList, setScheduledList] = useState<{ id: number; body: string; send_at: string }[]>([]);
 
   const flatListRef = useRef<FlatList<Message>>(null);
   const composerRef = useRef<ChatInputBarHandle>(null);
@@ -563,6 +584,16 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
   const messagesRef = useRef<Message[]>(messages);
   const initialUnreadAnchorIdRef = useRef<number | string | null>(null);
   const capturedInitialUnreadRef = useRef(initialConv.unread_count || 0);
+  // First-unread open (WhatsApp-style): when there were unread rows on entry,
+  // the list stays transparent until it is positioned on the "رسائل غير
+  // مقروءة" anchor, then fades in — the user never sees a bottom→top snap.
+  const needsUnreadJump = (initialConv.unread_count || 0) > 0 && !focusMessageId;
+  const pendingUnreadJumpRef = useRef(needsUnreadJump);
+  const unreadJumpDoneRef = useRef(false);
+  const unreadJumpAttemptsRef = useRef(0);
+  const unreadJumpTargetIdxRef = useRef(-1);
+  const [listOpacity] = useState(() => new Animated.Value(needsUnreadJump ? 0 : 1));
+  const revealedListRef = useRef(!needsUnreadJump);
 
   useEffect(() => {
     onBackRef.current = onBack;
@@ -659,7 +690,15 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             ? { around_id: focusMessageId, limit: 80 }
             : deltaPoll
               ? { after_id: newestKnown }
-              : { limit: 60 }
+              : {
+                  // The first-unread anchor can only resolve if the opening
+                  // window covers it — widen the initial pull when the
+                  // conversation carried a large unread backlog.
+                  limit:
+                    mode === 'initial'
+                      ? Math.min(Math.max(60, capturedInitialUnreadRef.current + 10), 150)
+                      : 60,
+                }
         );
         if (seq !== msgLoadSeq.current || !res?.success || !Array.isArray(res.messages)) {
           return;
@@ -842,7 +881,21 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             (m.id != null && x.id === m.id) ||
             (m.message_id != null && x.message_id === m.message_id)
         );
-        if (exists) return;
+        if (exists) {
+          // A re-broadcast of a known row is the backend's edit path — patch
+          // the text/edited flag in place instead of dropping the event.
+          if (m.edited_at || m.message) {
+            setMessages((prev) =>
+              prev.map((x) =>
+                (m.id != null && x.id === m.id) ||
+                (m.message_id != null && x.message_id === m.message_id)
+                  ? { ...x, message: m.message ?? x.message, edited_at: m.edited_at ?? x.edited_at }
+                  : x
+              )
+            );
+          }
+          return;
+        }
         const key = String(m.client_temp_id || m.id || m.message_id);
         freshAnimKeys.current.add(key);
         setMessages((prev) => mergeChronologicalMessages(prev, [m], 'append_newer'));
@@ -892,6 +945,30 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       }
       if (ev.type === 'conversation.note') {
         if (d.conversation_id === initialConv.id) setNotesCount((c) => c + 1);
+        return;
+      }
+      if (ev.type === 'message.edited') {
+        if (d.conversation_id !== initialConv.id) return;
+        setMessages((prev) =>
+          prev.map((x) =>
+            (d.message_id != null && x.id === d.message_id) ||
+            (d.external_message_id && x.message_id === d.external_message_id)
+              ? { ...x, message: d.message ?? x.message, edited_at: d.edited_at ?? x.edited_at }
+              : x
+          )
+        );
+        return;
+      }
+      // Team note pinned on a bubble — another device added/updated it.
+      if (ev.type === 'message.note') {
+        if (d.conversation_id !== initialConv.id) return;
+        setMessages((prev) =>
+          prev.map((x) =>
+            x.id === d.message_id
+              ? { ...x, internal_note: d.internal_note, internal_note_by: d.internal_note_by }
+              : x
+          )
+        );
         return;
       }
       if (ev.type === 'message.revoked' || ev.type === 'message.deleted' || ev.type === 'conversation.update') {
@@ -958,6 +1035,81 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     flatListRef.current?.scrollToOffset({ offset: 0, animated });
   }, [hasNewerTail, fetchLatestWindow]);
 
+  // ---- Open-at-first-unread positioning -------------------------------
+  // The list mounts transparent while pendingUnreadJumpRef is set; once the
+  // opening window resolves the anchor we scroll straight to it (unanimated,
+  // invisible) and fade the content in. Any failure path still ends in
+  // revealList, so the room can never stay blank.
+  const revealList = useCallback(() => {
+    if (revealedListRef.current) return;
+    revealedListRef.current = true;
+    pendingUnreadJumpRef.current = false;
+    Animated.timing(listOpacity, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: true,
+    }).start();
+  }, [listOpacity]);
+
+  const tryUnreadJump = useCallback(() => {
+    if (
+      !pendingUnreadJumpRef.current ||
+      unreadJumpDoneRef.current ||
+      !initialLoadDone.current
+    ) {
+      return;
+    }
+    const anchor = initialUnreadAnchorIdRef.current;
+    if (anchor == null) {
+      // The unread window predates the fetched slice — nothing to land on.
+      unreadJumpDoneRef.current = true;
+      revealList();
+      return;
+    }
+    const idx = messagesRef.current.findIndex(
+      (m) => m.id === anchor || String(m.message_id) === String(anchor)
+    );
+    if (idx === -1) return; // row not laid out yet — wait for the next trigger
+    const invIdx = messagesRef.current.length - 1 - idx;
+    unreadJumpDoneRef.current = true;
+    // A handful of unread rows already sit inside the first viewport —
+    // repositioning them would feel like the list twitched for no reason.
+    if (invIdx <= 3) {
+      revealList();
+      return;
+    }
+    unreadJumpTargetIdxRef.current = invIdx;
+    try {
+      flatListRef.current?.scrollToIndex({
+        index: invIdx,
+        animated: false,
+        viewPosition: 0.85,
+      });
+    } catch {}
+    scrolledUpRef.current = true;
+    setShowScrollBottom(true);
+    // One layout pass so the scroll lands before the fade-in reveals it.
+    setTimeout(revealList, 110);
+  }, [revealList]);
+
+  // Fires after every render — self-gates on the pending flag, so it runs the
+  // moment the opening fetch lands (which always triggers a re-render). This
+  // covers warm-cache opens where `initialLoading` never flips and the first
+  // payload may be identical (no onContentSizeChange refire).
+  useEffect(() => {
+    if (!pendingUnreadJumpRef.current || unreadJumpDoneRef.current) return;
+    const t = setTimeout(tryUnreadJump, 60);
+    return () => clearTimeout(t);
+  });
+
+  // Safety net: whatever happens (fetch hang, anchor never resolves), the
+  // room must become visible.
+  useEffect(() => {
+    if (!pendingUnreadJumpRef.current) return;
+    const t = setTimeout(revealList, 1500);
+    return () => clearTimeout(t);
+  }, [revealList]);
+
   const executeTextSend = useCallback(
     async (tempId: string, text: string, replyId: string | null) => {
       try {
@@ -1014,6 +1166,27 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
   const handleSendText = useCallback(
     (text: string) => {
+      // Edit mode — the composer bar routes to the edit endpoint instead of
+      // emitting a new message; the row updates in place with "معدّلة".
+      if (editingMsg) {
+        const target = editingMsg;
+        setEditingMsg(null);
+        const key = target.id || target.message_id;
+        setMessages((prev) =>
+          prev.map((m) =>
+            (m.id || m.message_id) === key
+              ? { ...m, message: text, edited_at: new Date().toISOString() }
+              : m,
+          ),
+        );
+        chatService
+          .editMessage(conversation.id, target.message_id || target.id, text)
+          .catch((e) => {
+            fetchLatestWindow('poll');
+            Alert.alert('فشل التعديل', e?.response?.data?.message || 'حاول تاني');
+          });
+        return;
+      }
       const replyId = replyTarget?.message_id || null;
       const tempId = `temp_txt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       const nowIso = new Date().toISOString();
@@ -1043,7 +1216,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       scrollToLatest(true);
       executeTextSend(tempId, text, replyId);
     },
-    [replyTarget, conversation.id, scrollToLatest, executeTextSend, user]
+    [editingMsg, replyTarget, conversation.id, scrollToLatest, executeTextSend, user, fetchLatestWindow]
   );
 
   const executeMediaUpload = useCallback(
@@ -1372,6 +1545,14 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     setForwardTarget(m);
   }, []);
 
+  // WhatsApp edit flow — the composer prefills the old text under an
+  // "تعديل الرسالة" bar; sending patches the same row instead of sending new.
+  const handleActionEdit = useCallback((m: Message) => {
+    setEditingMsg(m);
+    setReplyTarget(null);
+    composerRef.current?.setText(m.message || '');
+  }, []);
+
   // Group member header tap — WhatsApp-style member card first; the
   // "مراسلة" action inside it resolves the number into a 1:1 chat.
   const [memberSheet, setMemberSheet] = useState<{
@@ -1425,6 +1606,116 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     },
     [onOpenConversation]
   );
+
+  // Group "reply privately" — backend resolves PN/LID senders to a 1:1 chat.
+  const handleReplyPrivately = useCallback(
+    async (m: Message) => {
+      if (!onOpenConversation || !m.from) return;
+      try {
+        const res = await chatService.openMemberConversation(conversation.id, m.from);
+        if (res?.success && res.conversation?.id) {
+          onOpenConversation(res.conversation);
+        }
+      } catch (err: any) {
+        Alert.alert('خطأ', err.response?.data?.message || 'تعذر فتح محادثة خاصة');
+      }
+    },
+    [conversation.id, onOpenConversation]
+  );
+
+  // Internal team note — optimistic patch, server persists for all devices.
+  const handleInternalNote = useCallback((m: Message) => {
+    setNoteDraft(m.internal_note || '');
+    setNoteTarget(m);
+  }, []);
+
+  const saveInternalNote = useCallback(async () => {
+    const m = noteTarget;
+    if (!m) return;
+    const trimmed = noteDraft.trim();
+    setNoteTarget(null);
+    setMessages((prev) =>
+      prev.map((x) => (x.id === m.id ? { ...x, internal_note: trimmed || null } : x))
+    );
+    try {
+      await chatService.setMessageNote(m.id, trimmed);
+    } catch (err: any) {
+      Alert.alert('خطأ', err.response?.data?.message || 'فشل حفظ الملاحظة');
+      fetchLatestWindow('poll');
+    }
+  }, [noteTarget, noteDraft, fetchLatestWindow]);
+
+  // Inline translation — cached per row key so it survives re-renders.
+  const handleTranslate = useCallback(async (m: Message) => {
+    const key = String(m.client_temp_id || m.id || m.message_id);
+    if (translations[key] || translatingKey) return;
+    setTranslatingKey(key);
+    try {
+      const res = await chatService.translate(m.message || '', 'ar');
+      const t = res?.translation || res?.translated || res?.text || '';
+      if (t) {
+        setTranslations((prev) => ({ ...prev, [key]: t }));
+      }
+    } catch {
+      Alert.alert('خطأ', 'تعذرت الترجمة الآن');
+    } finally {
+      setTranslatingKey(null);
+    }
+  }, [translations, translatingKey]);
+
+  const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const closeSearch = useCallback(() => {
+    setSearchMode(false);
+    setSearchQuery('');
+    setSearchMatches([]);
+    setSearchIdx(0);
+  }, []);
+
+  // Scheduled messages.
+  const openSchedule = useCallback(async () => {
+    setScheduleVisible(true);
+    try {
+      const res = await chatService.listScheduledMessages(conversation.id);
+      setScheduledList(res?.scheduled || []);
+    } catch {}
+  }, [conversation.id]);
+
+  const pickSchedulePreset = useCallback(
+    async (sendAt: Date) => {
+      const text = composerRef.current?.getText?.()?.trim();
+      if (!text) {
+        Alert.alert('رسالة مجدولة', 'اكتب الرسالة أولاً ثم اختر وقت الإرسال');
+        return;
+      }
+      try {
+        const res = await chatService.scheduleMessage(
+          conversation.id,
+          text,
+          sendAt.toISOString()
+        );
+        if (res?.success) {
+          composerRef.current?.setText?.('');
+          if (res.scheduled?.id) {
+            setScheduledList((prev) =>
+              [...prev, res.scheduled].sort((a, b) => a.send_at.localeCompare(b.send_at))
+            );
+          }
+          Alert.alert('تم', `سيتم الإرسال ${sendAt.toLocaleString('ar-EG')}`);
+        }
+      } catch (err: any) {
+        Alert.alert('خطأ', err.response?.data?.message || 'فشل جدولة الرسالة');
+      }
+    },
+    [conversation.id]
+  );
+
+  const cancelScheduled = useCallback(async (id: number) => {
+    setScheduledList((prev) => prev.filter((s) => s.id !== id));
+    try {
+      await chatService.cancelScheduledMessage(id);
+    } catch {}
+  }, []);
 
   const handleActionPin = useCallback((m: Message) => {
     setSelectedMsgForPin(m);
@@ -1705,6 +1996,49 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
     [invertedMessages, initialConv.id, syncToCache]
   );
 
+  // In-conversation search — server scan, jump + highlight per match.
+  const runSearch = useCallback(
+    async (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) {
+        setSearchMatches([]);
+        setSearchIdx(0);
+        return;
+      }
+      setSearchBusy(true);
+      try {
+        const res = await chatService.searchConversation(conversation.id, trimmed);
+        const ids = (res?.messages || []).map((r) => r.id);
+        setSearchMatches(ids);
+        setSearchIdx(0);
+        if (ids.length > 0) jumpToMessageKey(ids[0]);
+      } catch {
+      } finally {
+        setSearchBusy(false);
+      }
+    },
+    [conversation.id, jumpToMessageKey]
+  );
+
+  const onSearchChange = useCallback(
+    (q: string) => {
+      setSearchQuery(q);
+      if (searchDebounceRef.current) clearTimeout(searchDebounceRef.current);
+      searchDebounceRef.current = setTimeout(() => runSearch(q), 400);
+    },
+    [runSearch]
+  );
+
+  const goSearchMatch = useCallback(
+    (dir: 1 | -1) => {
+      const next = searchIdx + dir;
+      if (next < 0 || next >= searchMatches.length) return;
+      setSearchIdx(next);
+      jumpToMessageKey(searchMatches[next]);
+    },
+    [searchIdx, searchMatches, jumpToMessageKey]
+  );
+
   const jumpToPinned = () => {
     if (!pinnedMsg) return;
     jumpToMessageKey(pinnedMsg.message_id || pinnedMsg.id);
@@ -1902,6 +2236,28 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               onToggleSelect={toggleSelect}
             />
           </SwipeableMessageRow>
+          {item.internal_note ? (
+            <View style={styles.internalNoteChip}>
+              <Ionicons name="document-text-outline" size={12} color="#8B5CF6" />
+              <Text style={styles.internalNoteText} numberOfLines={3}>
+                {item.internal_note}
+                {item.internal_note_by ? ` — ${item.internal_note_by}` : ''}
+              </Text>
+            </View>
+          ) : null}
+          {translatingKey === rowKey ? (
+            <View style={styles.translationChip}>
+              <ActivityIndicator size="small" color="#0EA5E9" />
+              <Text style={styles.translationText}>جاري الترجمة...</Text>
+            </View>
+          ) : translations[rowKey] ? (
+            <View style={styles.translationChip}>
+              <Ionicons name="language-outline" size={12} color="#0EA5E9" />
+              <Text style={styles.translationText} numberOfLines={4}>
+                {translations[rowKey]}
+              </Text>
+            </View>
+          ) : null}
         </View>
       );
     },
@@ -1926,6 +2282,8 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
       selectionMode,
       selectedIds,
       toggleSelect,
+      translations,
+      translatingKey,
     ]
   );
 
@@ -2053,32 +2411,11 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
         <View style={styles.headerActions}>
           <TouchableOpacity
-            onPress={() => setNotesVisible(true)}
+            onPress={() => setHeaderMenuVisible(true)}
             style={styles.actionIconBtn}
             hitSlop={8}
           >
-            <MaterialCommunityIcons name="note-text-outline" size={22} color="#FFFFFF" />
-            {notesCount > 0 && <View style={styles.notesDot} />}
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={handleCallContact}
-            style={styles.actionIconBtn}
-            hitSlop={8}
-          >
-            <Ionicons name="call-outline" size={22} color="#FFFFFF" />
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => setTransferVisible(true)}
-            style={styles.actionIconBtn}
-            hitSlop={8}
-          >
-            <MaterialCommunityIcons
-              name="account-arrow-left-outline"
-              size={22}
-              color="#FFFFFF"
-            />
+            <MaterialCommunityIcons name="dots-vertical" size={22} color="#FFFFFF" />
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -2088,10 +2425,67 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           >
             <MaterialCommunityIcons name="check-circle-outline" size={22} color="#FFFFFF" />
           </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setNotesVisible(true)}
+            style={styles.actionIconBtn}
+            hitSlop={8}
+          >
+            <MaterialCommunityIcons name="note-text-outline" size={22} color="#FFFFFF" />
+            {notesCount > 0 && <View style={styles.notesDot} />}
+          </TouchableOpacity>
         </View>
         </>
       )}
       </View>
+
+      {searchMode ? (
+        <View style={styles.searchBar}>
+          <TextInput
+            style={styles.searchInput}
+            value={searchQuery}
+            onChangeText={onSearchChange}
+            placeholder="ابحث في المحادثة..."
+            placeholderTextColor="#8696A0"
+            autoFocus
+            textAlign="right"
+          />
+          {searchBusy ? (
+            <ActivityIndicator size="small" color="#00A884" />
+          ) : (
+            <Text style={styles.searchCount}>
+              {searchQuery.trim() ? `${searchMatches.length ? searchIdx + 1 : 0}/${searchMatches.length}` : ''}
+            </Text>
+          )}
+          <TouchableOpacity
+            onPress={() => goSearchMatch(1)}
+            disabled={searchIdx + 1 >= searchMatches.length}
+            style={styles.searchNavBtn}
+            hitSlop={8}
+          >
+            <Ionicons
+              name="chevron-up"
+              size={20}
+              color={searchIdx + 1 >= searchMatches.length ? '#CBD5E1' : '#00A884'}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => goSearchMatch(-1)}
+            disabled={searchIdx <= 0}
+            style={styles.searchNavBtn}
+            hitSlop={8}
+          >
+            <Ionicons
+              name="chevron-down"
+              size={20}
+              color={searchIdx <= 0 ? '#CBD5E1' : '#00A884'}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={closeSearch} style={styles.searchNavBtn} hitSlop={8}>
+            <Ionicons name="close" size={20} color="#54656F" />
+          </TouchableOpacity>
+        </View>
+      ) : null}
 
       {pinnedMsg && (
         <View style={styles.pinnedBanner}>
@@ -2143,6 +2537,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
 
           <GestureDetector gesture={dragSelectGesture}>
           <View ref={dragSelectHostRef} style={styles.dragSelectHost} collapsable={false}>
+          <Animated.View style={{ flex: 1, opacity: listOpacity }}>
           <FlatList
             ref={flatListRef}
             data={invertedMessages}
@@ -2154,10 +2549,37 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             removeClippedSubviews={false}
             maxToRenderPerBatch={12}
             windowSize={9}
-            initialNumToRender={14}
+            initialNumToRender={Math.min(
+              Math.max(14, (initialConv.unread_count || 0) + 8),
+              80
+            )}
             onEndReached={handleLoadOlder}
             onEndReachedThreshold={0.35}
+            onContentSizeChange={tryUnreadJump}
             onScrollToIndexFailed={(info) => {
+              // Landed short of the rendered window — estimate-jump closer and
+              // retry while the room is still hidden; after 5 tries the list
+              // reveals wherever it is (close enough to the unread anchor).
+              if (pendingUnreadJumpRef.current && !revealedListRef.current) {
+                flatListRef.current?.scrollToOffset({
+                  offset: info.averageItemLength * info.index,
+                  animated: false,
+                });
+                if (unreadJumpAttemptsRef.current++ < 5) {
+                  const target = unreadJumpTargetIdxRef.current;
+                  setTimeout(() => {
+                    if (revealedListRef.current || target < 0) return;
+                    try {
+                      flatListRef.current?.scrollToIndex({
+                        index: target,
+                        animated: false,
+                        viewPosition: 0.85,
+                      });
+                    } catch {}
+                  }, 140);
+                }
+                return;
+              }
               flatListRef.current?.scrollToOffset({
                 offset: info.averageItemLength * info.index,
                 animated: true,
@@ -2183,6 +2605,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             scrollEventThrottle={64}
             renderItem={renderMessageItem}
           />
+          </Animated.View>
           </View>
           </GestureDetector>
 
@@ -2261,6 +2684,33 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
               );
             })()}
 
+          {editingMsg ? (
+            <View style={styles.replyPreviewBar}>
+              <View style={[styles.replyStrip, { backgroundColor: '#F59E0B' }]} />
+              <View style={styles.replyIconChip}>
+                <Ionicons name="create-outline" size={18} color="#54656F" />
+              </View>
+              <View style={styles.replyPreviewContent}>
+                <Text style={[styles.replySenderName, { color: '#F59E0B' }]} numberOfLines={1}>
+                  تعديل الرسالة
+                </Text>
+                <Text style={styles.replyMessageText} numberOfLines={1}>
+                  {editingMsg.message}
+                </Text>
+              </View>
+              <TouchableOpacity
+                onPress={() => {
+                  setEditingMsg(null);
+                  composerRef.current?.setText('');
+                }}
+                style={styles.closeReplyBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="close" size={20} color="#54656F" />
+              </TouchableOpacity>
+            </View>
+          ) : null}
+
           {!selectionMode && (
           <ChatInputBar
             ref={composerRef}
@@ -2271,6 +2721,7 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
             onOpenAttach={() => setAttachVisible(true)}
             onOpenCameraQuick={() => setCameraVisible(true)}
             onOpenQuickReplies={() => setQuickRepliesVisible(true)}
+            onSchedule={openSchedule}
             conversationId={conversation?.id}
           />
           )}
@@ -2422,8 +2873,13 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
         onPin={handleActionPin}
         onStar={handleActionStar}
         onDelete={handleActionDelete}
+        onEdit={handleActionEdit}
         onInfo={(m) => setInfoFor(m)}
         onSelect={toggleSelect}
+        isGroup={isGroup}
+        onReplyPrivately={handleReplyPrivately}
+        onInternalNote={handleInternalNote}
+        onTranslate={handleTranslate}
       />
 
       <MessageInfoModal message={infoFor} onClose={() => setInfoFor(null)} />
@@ -2439,6 +2895,155 @@ export const ChatRoomScreen: React.FC<ChatRoomScreenProps> = ({
           clearSelection();
         }}
       />
+
+      {/* Header ⋮ overflow menu — everything that used to crowd the bar. */}
+      <Modal
+        visible={headerMenuVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setHeaderMenuVisible(false)}
+      >
+        <Pressable
+          style={styles.menuBackdrop}
+          onPress={() => setHeaderMenuVisible(false)}
+        >
+          <View style={[styles.headerMenu, { top: insets.top + 46 }]}>
+            {[
+              {
+                icon: <Ionicons name="search-outline" size={18} color="#54656F" />,
+                label: 'بحث في المحادثة',
+                onPress: () => setSearchMode(true),
+              },
+              {
+                icon: <Ionicons name="call-outline" size={18} color="#54656F" />,
+                label: 'مكالمة صوتية',
+                onPress: handleCallContact,
+              },
+              {
+                icon: (
+                  <Ionicons name="information-circle-outline" size={18} color="#54656F" />
+                ),
+                label: isGroup ? 'معلومات الجروب' : 'معلومات جهة الاتصال',
+                onPress: () => setContactInfoVisible(true),
+              },
+              {
+                icon: <Ionicons name="time-outline" size={18} color="#54656F" />,
+                label: 'رسالة مجدولة',
+                onPress: openSchedule,
+              },
+              {
+                icon: <Ionicons name="flash-outline" size={18} color="#54656F" />,
+                label: 'ردود جاهزة',
+                onPress: () => setQuickRepliesVisible(true),
+              },
+              {
+                icon: (
+                  <MaterialCommunityIcons
+                    name="account-arrow-left-outline"
+                    size={18}
+                    color="#54656F"
+                  />
+                ),
+                label: 'تحويل المحادثة',
+                onPress: () => setTransferVisible(true),
+              },
+            ].map((item) => (
+              <TouchableOpacity
+                key={item.label}
+                style={styles.headerMenuItem}
+                onPress={() => {
+                  setHeaderMenuVisible(false);
+                  item.onPress();
+                }}
+                activeOpacity={0.7}
+              >
+                {item.icon}
+                <Text style={styles.headerMenuItemText}>{item.label}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Internal team note — staff-only, never sent to the customer. */}
+      <Modal
+        visible={!!noteTarget}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setNoteTarget(null)}
+      >
+        <Pressable style={styles.noteBackdrop} onPress={() => setNoteTarget(null)}>
+          <Pressable style={styles.noteCard} onPress={() => {}}>
+            <Text style={styles.noteTitle}>ملاحظة داخلية (الفريق فقط)</Text>
+            <TextInput
+              style={styles.noteInput}
+              value={noteDraft}
+              onChangeText={setNoteDraft}
+              placeholder="اكتب ملاحظة للفريق على هذه الرسالة..."
+              placeholderTextColor="#8696A0"
+              multiline
+              autoFocus
+              textAlign="right"
+            />
+            <View style={styles.noteActions}>
+              <TouchableOpacity onPress={() => setNoteTarget(null)} hitSlop={8}>
+                <Text style={styles.noteCancel}>إلغاء</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={saveInternalNote} hitSlop={8}>
+                <Text style={styles.noteSave}>حفظ</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      {/* Scheduled messages — quick presets + pending list with cancel. */}
+      <Modal
+        visible={scheduleVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setScheduleVisible(false)}
+      >
+        <Pressable style={styles.noteBackdrop} onPress={() => setScheduleVisible(false)}>
+          <Pressable style={styles.scheduleCard} onPress={() => {}}>
+            <Text style={styles.noteTitle}>رسالة مجدولة</Text>
+            <Text style={styles.scheduleHint}>اكتب الرسالة في الأسفل ثم اختر وقت الإرسال</Text>
+            {[
+              { label: 'بعد ساعة', at: () => new Date(Date.now() + 3600_000) },
+              { label: 'غداً 9 صباحاً', at: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return d; } },
+              { label: 'غداً 6 مساءً', at: () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(18, 0, 0, 0); return d; } },
+              { label: 'بعد 3 أيام 9 صباحاً', at: () => { const d = new Date(); d.setDate(d.getDate() + 3); d.setHours(9, 0, 0, 0); return d; } },
+            ].map((p) => (
+              <TouchableOpacity
+                key={p.label}
+                style={styles.schedulePreset}
+                onPress={() => pickSchedulePreset(p.at())}
+              >
+                <Ionicons name="time-outline" size={18} color="#00A884" />
+                <Text style={styles.schedulePresetText}>{p.label}</Text>
+              </TouchableOpacity>
+            ))}
+            {scheduledList.length > 0 ? (
+              <View style={styles.scheduleList}>
+                <Text style={styles.scheduleListTitle}>مجدولة حالياً</Text>
+                {scheduledList.map((s) => (
+                  <View key={s.id} style={styles.scheduleRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.scheduleRowText} numberOfLines={1}>{s.body}</Text>
+                      <Text style={styles.scheduleRowAt}>
+                        {new Date(s.send_at).toLocaleString('ar-EG')}
+                      </Text>
+                    </View>
+                    <TouchableOpacity onPress={() => cancelScheduled(s.id)} hitSlop={8}>
+                      <Ionicons name="close-circle" size={20} color="#EF4444" />
+                    </TouchableOpacity>
+                  </View>
+                ))}
+              </View>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   );
 };
@@ -2794,5 +3399,209 @@ const styles = StyleSheet.create({
   closeReplyBtn: {
     padding: 6,
     marginHorizontal: 4,
+  },
+  // In-conversation search bar (under the header).
+  searchBar: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    gap: 4,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#E2E8F0',
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#111B21',
+    paddingVertical: 4,
+    paddingHorizontal: 6,
+  },
+  searchCount: {
+    fontSize: 12,
+    color: '#54656F',
+    minWidth: 34,
+    textAlign: 'center',
+  },
+  searchNavBtn: {
+    padding: 5,
+  },
+  // Internal note chip — purple, team-only, under the bubble.
+  internalNoteChip: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    alignSelf: 'flex-end',
+    backgroundColor: '#F3E8FF',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    marginTop: 2,
+    marginHorizontal: 8,
+    maxWidth: '78%',
+    gap: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#DDD6FE',
+  },
+  internalNoteText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#6D28D9',
+    textAlign: 'right',
+    lineHeight: 16,
+  },
+  // Translation chip — sky blue, under the bubble.
+  translationChip: {
+    flexDirection: 'row-reverse',
+    alignItems: 'flex-start',
+    alignSelf: 'flex-start',
+    backgroundColor: '#E0F2FE',
+    borderRadius: 10,
+    paddingHorizontal: 9,
+    paddingVertical: 5,
+    marginTop: 2,
+    marginHorizontal: 8,
+    maxWidth: '78%',
+    gap: 5,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: '#BAE6FD',
+  },
+  translationText: {
+    flex: 1,
+    fontSize: 11.5,
+    color: '#0369A1',
+    textAlign: 'right',
+    lineHeight: 16,
+  },
+  // Header ⋮ overflow dropdown.
+  menuBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.18)',
+  },
+  headerMenu: {
+    position: 'absolute',
+    left: 10,
+    minWidth: 210,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingVertical: 6,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.22,
+    shadowRadius: 10,
+  },
+  headerMenuItem: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+  },
+  headerMenuItemText: {
+    fontSize: 14,
+    color: '#111B21',
+    fontWeight: '600',
+  },
+  // Internal note modal.
+  noteBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  noteCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 18,
+  },
+  noteTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111B21',
+    textAlign: 'right',
+    marginBottom: 10,
+  },
+  noteInput: {
+    minHeight: 80,
+    fontSize: 14,
+    color: '#111B21',
+    backgroundColor: '#F4F6F8',
+    borderRadius: 12,
+    padding: 12,
+    textAlignVertical: 'top',
+  },
+  noteActions: {
+    flexDirection: 'row-reverse',
+    justifyContent: 'flex-start',
+    gap: 24,
+    marginTop: 14,
+  },
+  noteCancel: {
+    fontSize: 14,
+    color: '#54656F',
+    fontWeight: '600',
+  },
+  noteSave: {
+    fontSize: 14,
+    color: '#00A884',
+    fontWeight: '700',
+  },
+  // Scheduled-message sheet.
+  scheduleCard: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    padding: 18,
+    paddingBottom: 26,
+  },
+  scheduleHint: {
+    fontSize: 12,
+    color: '#54656F',
+    textAlign: 'right',
+    marginBottom: 10,
+  },
+  schedulePreset: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F1F5F9',
+  },
+  schedulePresetText: {
+    fontSize: 14.5,
+    color: '#111B21',
+    fontWeight: '600',
+  },
+  scheduleList: {
+    marginTop: 14,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: '#E2E8F0',
+    paddingTop: 10,
+  },
+  scheduleListTitle: {
+    fontSize: 12,
+    color: '#54656F',
+    fontWeight: '700',
+    textAlign: 'right',
+    marginBottom: 6,
+  },
+  scheduleRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 7,
+  },
+  scheduleRowText: {
+    fontSize: 13,
+    color: '#111B21',
+    textAlign: 'right',
+  },
+  scheduleRowAt: {
+    fontSize: 11,
+    color: '#8696A0',
+    textAlign: 'right',
+    marginTop: 2,
   },
 });

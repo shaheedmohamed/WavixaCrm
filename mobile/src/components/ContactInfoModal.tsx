@@ -49,6 +49,10 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
   const insets = useSafeAreaInsets();
   const [mediaItems, setMediaItems] = useState<Message[]>([]);
   const [loadingMedia, setLoadingMedia] = useState(false);
+  const [mediaTab, setMediaTab] = useState<'media' | 'links'>('media');
+  const [linkItems, setLinkItems] = useState<Message[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
+  const linksLoadedRef = React.useRef(false);
   const [isEditingName, setIsEditingName] = useState(false);
   const [editNameText, setEditNameText] = useState(
     conversation.contact_name || conversation.contact_phone || ''
@@ -75,9 +79,24 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
     }
   }, [conversation.id]);
 
+  const loadLinks = React.useCallback(async () => {
+    setLoadingLinks(true);
+    try {
+      const res = await chatService.getConversationMedia(conversation.id, 120, 'links');
+      if (res && res.success && res.media) {
+        setLinkItems(res.media);
+      }
+    } catch {
+    } finally {
+      setLoadingLinks(false);
+    }
+  }, [conversation.id]);
+
   useEffect(() => {
     if (!visible) return;
     Promise.resolve().then(() => {
+      linksLoadedRef.current = false;
+      setMediaTab('media');
       setEditNameText(conversation.contact_name || conversation.contact_phone || '');
       setIsEditingName(false);
       setAvatarViewerOpen(false);
@@ -300,10 +319,63 @@ export const ContactInfoModal: React.FC<ContactInfoModalProps> = ({
           <View style={styles.sectionCard}>
             <View style={styles.mediaHeaderRow}>
               <Text style={styles.sectionTitle}>الوسائط والمستندات المشتركة</Text>
-              <Text style={styles.mediaCountBadge}>{mediaItems.length}</Text>
+              <Text style={styles.mediaCountBadge}>
+                {mediaTab === 'media' ? mediaItems.length : linkItems.length}
+              </Text>
             </View>
 
-            {loadingMedia ? (
+            <View style={styles.mediaTabRow}>
+              {(['media', 'links'] as const).map((t) => (
+                <TouchableOpacity
+                  key={t}
+                  style={[styles.mediaTabBtn, mediaTab === t && styles.mediaTabBtnActive]}
+                  onPress={() => {
+                    setMediaTab(t);
+                    if (t === 'links' && !linksLoadedRef.current) {
+                      linksLoadedRef.current = true;
+                      loadLinks();
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.mediaTabText, mediaTab === t && styles.mediaTabTextActive]}>
+                    {t === 'media' ? 'وسائط' : 'لينكات'}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            {mediaTab === 'links' ? (
+              loadingLinks ? (
+                <View style={styles.mediaLoadingWrap}>
+                  <ActivityIndicator size="small" color="#00A884" />
+                  <Text style={styles.mediaLoadingText}>جاري تحميل اللينكات...</Text>
+                </View>
+              ) : linkItems.length === 0 ? (
+                <Text style={styles.noMediaText}>لا توجد لينكات مشاركة في هذه المحادثة</Text>
+              ) : (
+                <View>
+                  {linkItems.map((m, idx) => {
+                    const url = (m.message || '').match(/https?:\/\/\S+/)?.[0] || '';
+                    return (
+                      <TouchableOpacity
+                        key={`link-${m.id}-${idx}`}
+                        style={styles.linkRow}
+                        onPress={() => url && Linking.openURL(url).catch(() => {})}
+                        activeOpacity={0.7}
+                      >
+                        <Ionicons name="link-outline" size={18} color="#0EA5E9" />
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.linkUrl} numberOfLines={1}>{url}</Text>
+                          <Text style={styles.linkBody} numberOfLines={1}>{m.message}</Text>
+                        </View>
+                        <Ionicons name="open-outline" size={14} color="#8696A0" />
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              )
+            ) : loadingMedia ? (
               <View style={styles.mediaLoadingWrap}>
                 <ActivityIndicator size="small" color="#00A884" />
                 <Text style={styles.mediaLoadingText}>جاري تحميل الوسائط...</Text>
@@ -661,6 +733,48 @@ const styles = StyleSheet.create({
     color: '#8696A0',
     fontSize: 13,
     fontWeight: '700',
+  },
+  mediaTabRow: {
+    flexDirection: 'row-reverse',
+    gap: 8,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  mediaTabBtn: {
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F1F5F9',
+  },
+  mediaTabBtnActive: {
+    backgroundColor: '#D1FAE5',
+  },
+  mediaTabText: {
+    fontSize: 12.5,
+    color: '#54656F',
+    fontWeight: '600',
+  },
+  mediaTabTextActive: {
+    color: '#008069',
+  },
+  linkRow: {
+    flexDirection: 'row-reverse',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#F1F5F9',
+  },
+  linkUrl: {
+    fontSize: 12.5,
+    color: '#0EA5E9',
+    textAlign: 'right',
+  },
+  linkBody: {
+    fontSize: 11.5,
+    color: '#8696A0',
+    textAlign: 'right',
+    marginTop: 2,
   },
   mediaLoadingWrap: {
     flexDirection: 'row-reverse',

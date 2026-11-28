@@ -13,6 +13,8 @@ import {
   StatusesResponse,
   StatusItemsResponse,
   ConversationNote,
+  MediaLibraryItem,
+  MediaLibraryKind,
 } from '../types/crm';
 
 export interface ConversationsParams {
@@ -101,6 +103,17 @@ export const chatService = {
     return response.data;
   },
 
+  // WhatsApp "edit message" — protocolMessage{MESSAGE_EDIT} swaps the text
+  // in place on every device; the backend enforces the 15-minute window.
+  async editMessage(conversationId: number, messageId: string | number, message: string) {
+    const response = await apiClient.post('/crm/messages/edit', {
+      conversation_id: conversationId,
+      message_id: messageId,
+      message,
+    });
+    return response.data;
+  },
+
   // Relayed to the WhatsApp engine as a chatstate stanza — the customer
   // sees "typing…" while the agent composes, same as WhatsApp Web.
   // Backend throttles to one stanza per ~4s per chat.
@@ -174,11 +187,63 @@ export const chatService = {
     return response.data;
   },
 
-  async getConversationMedia(conversationId: number, limit: number = 60) {
+  async getConversationMedia(conversationId: number, limit: number = 60, kind: 'media' | 'links' = 'media') {
     const response = await apiClient.get<{ success: boolean; media: Message[] }>(
       `/crm/conversations/${conversationId}/media`,
-      { params: { limit } }
+      { params: { limit, kind } }
     );
+    return response.data;
+  },
+
+  // In-conversation search — the global messages search scoped to this chat.
+  async searchConversation(
+    conversationId: number,
+    q: string
+  ): Promise<{ success: boolean; messages: { id: number; message_id: string | null; timestamp?: string }[] }> {
+    const response = await apiClient.get('/crm/search/messages', {
+      params: { q, conversation_id: conversationId },
+    });
+    return response.data;
+  },
+
+  // Group member → 1:1 chat (reply privately). Server resolves PN/LID.
+  async openMemberConversation(conversationId: number, sender: string) {
+    const response = await apiClient.post('/crm/conversations/open-member', {
+      conversation_id: conversationId,
+      sender,
+    });
+    return response.data;
+  },
+
+  // Team-only note pinned under a single bubble — null clears it.
+  async setMessageNote(messageId: number, note: string) {
+    const response = await apiClient.put(`/crm/messages/${messageId}/note`, { note });
+    return response.data;
+  },
+
+  async scheduleMessage(conversationId: number, body: string, sendAt: string) {
+    const response = await apiClient.post('/crm/messages/schedule', {
+      conversation_id: conversationId,
+      body,
+      send_at: sendAt,
+    });
+    return response.data;
+  },
+
+  async listScheduledMessages(conversationId: number) {
+    const response = await apiClient.get(`/crm/conversations/${conversationId}/scheduled`);
+    return response.data;
+  },
+
+  async cancelScheduledMessage(id: number) {
+    const response = await apiClient.delete(`/crm/scheduled/${id}`);
+    return response.data;
+  },
+
+  async translate(text: string, target: string = 'ar') {
+    const response = await apiClient.get('/crm/translate', {
+      params: { text, target },
+    });
     return response.data;
   },
 
@@ -324,6 +389,23 @@ export const chatService = {
 
   async getStarredMessages() {
     const response = await apiClient.get('/crm/starred-messages');
+    return response.data;
+  },
+
+  // Global media library — WhatsApp's Media/Docs/Links split across every
+  // visible chat. `before_id` pages backwards; each row carries its
+  // conversation + sender attribution (sent_by employee, or null = WhatsApp).
+  async getMediaLibrary(
+    kind: MediaLibraryKind,
+    opts: { before_id?: number; limit?: number } = {}
+  ): Promise<{ success: boolean; items: MediaLibraryItem[]; has_more: boolean }> {
+    const response = await apiClient.get<{
+      success: boolean;
+      items: MediaLibraryItem[];
+      has_more: boolean;
+    }>('/crm/media-library', {
+      params: { kind, before_id: opts.before_id, limit: opts.limit },
+    });
     return response.data;
   },
 

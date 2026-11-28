@@ -36,6 +36,9 @@ interface MediaViewerModalProps {
   items: GalleryMediaItem[];
   initialIndex: number;
   onClose: () => void;
+  // Optional "open this item in its chat" affordance — the media library
+  // passes it so a viewed photo/file can jump straight to its message.
+  onOpenItemContext?: (item: GalleryMediaItem) => void;
 }
 
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -45,6 +48,7 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
   items,
   initialIndex,
   onClose,
+  onOpenItemContext,
 }) => {
   const insets = useSafeAreaInsets();
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
@@ -218,6 +222,16 @@ export const MediaViewerModal: React.FC<MediaViewerModalProps> = ({
                 {items.length > 1 ? `• (${clampedIndex + 1} من ${items.length})` : ''}
               </Text>
             </View>
+
+            {onOpenItemContext ? (
+              <TouchableOpacity
+                onPress={() => onOpenItemContext(currentItem)}
+                style={[styles.headerBtn, { marginLeft: 8 }]}
+                hitSlop={12}
+              >
+                <Ionicons name="chatbox-ellipses-outline" size={21} color="#FFFFFF" />
+              </TouchableOpacity>
+            ) : null}
 
             <TouchableOpacity onPress={handleDownload} style={styles.headerBtn} hitSlop={12}>
               {saving ? (

@@ -3,23 +3,32 @@ import {
   View,
   StyleSheet,
   ActivityIndicator,
+  AppState,
   BackHandler,
   Animated,
   Dimensions,
   Easing,
 } from 'react-native';
 import { useAuth } from '../context/AuthContext';
+import { InAppBanner } from '../components/InAppBanner';
+import { realtime } from '../services/realtime';
+import { appEvents } from '../services/appEvents';
+import {
+  fetchConversationById,
+  setOpenConversationHandler,
+} from '../services/pushNav';
+import { consumeInitialNotificationResponse, setupPush } from '../services/notifications';
 import { LoginScreen } from '../screens/LoginScreen';
 import { WelcomeScreen } from '../screens/WelcomeScreen';
 import { ChatListScreen } from '../screens/ChatListScreen';
 import { ChatRoomScreen } from '../screens/ChatRoomScreen';
 import { StarredMessagesScreen } from '../screens/StarredMessagesScreen';
+import { MediaLibraryScreen } from '../screens/MediaLibraryScreen';
 import { StatusesScreen } from '../screens/StatusesScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { StatsScreen } from '../screens/StatsScreen';
 import { GesturesGuideScreen } from '../screens/GesturesGuideScreen';
 import { CareBotLogo } from '../components/CareBotLogo';
-import { setupPush } from '../services/notifications';
 import { Conversation } from '../types/crm';
 import { Colors } from '../constants/theme';
 
@@ -31,7 +40,8 @@ type OverlayView =
   | 'stats'
   | 'starred'
   | 'statuses'
-  | 'gestures';
+  | 'gestures'
+  | 'media-library';
 
 export default function IndexPage() {
   const { user, token, isLoading } = useAuth();
@@ -100,6 +110,38 @@ export default function IndexPage() {
     [openOverlay]
   );
 
+  // Notification taps resolve an id → fetch the row → open the room. The
+  // same path serves warm taps, cold-start taps and the in-app banner.
+  const openConversationById = useCallback(
+    (conversationId: number | string) => {
+      void fetchConversationById(Number(conversationId))
+        .then((conv) => {
+          if (conv) handleOpenConversation(conv);
+        })
+        .catch(() => {});
+    },
+    [handleOpenConversation]
+  );
+
+  useEffect(() => {
+    if (!token || !user) return;
+    setOpenConversationHandler(openConversationById);
+    void consumeInitialNotificationResponse();
+    return () => setOpenConversationHandler(null);
+  }, [token, user, openConversationById]);
+
+  // Foreground return → wake the socket instantly + fan a refetch out to
+  // every subscribed screen (chat list, room, update gate).
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        realtime.kick();
+        appEvents.emitForeground();
+      }
+    });
+    return () => sub.remove();
+  }, []);
+
   const handleOpenStarred = useCallback(() => {
     openOverlay('starred');
   }, [openOverlay]);
@@ -118,6 +160,10 @@ export default function IndexPage() {
 
   const handleOpenGestures = useCallback(() => {
     openOverlay('gestures');
+  }, [openOverlay]);
+
+  const handleOpenMediaLibrary = useCallback(() => {
+    openOverlay('media-library');
   }, [openOverlay]);
 
   if (isLoading) {
@@ -174,6 +220,7 @@ export default function IndexPage() {
           onOpenStarred={handleOpenStarred}
           onOpenStatuses={handleOpenStatuses}
           onOpenGestures={handleOpenGestures}
+          onOpenMediaLibrary={handleOpenMediaLibrary}
         />
       </View>
 
@@ -206,11 +253,25 @@ export default function IndexPage() {
               <StatsScreen onBack={closeOverlay} />
             ) : overlayView === 'statuses' ? (
               <StatusesScreen onBack={closeOverlay} />
+            ) : overlayView === 'media-library' ? (
+              <MediaLibraryScreen
+                onBack={closeOverlay}
+                onOpenConversation={(conv, messageId) =>
+                  handleOpenConversation(conv, messageId)
+                }
+              />
             ) : overlayView === 'gestures' ? (
               <GesturesGuideScreen onBack={closeOverlay} />
             ) : null)}
         </Animated.View>
       )}
+
+      <InAppBanner
+        activeConversationId={
+          overlayView === 'chat-room' ? selectedConversation?.id ?? null : null
+        }
+        onOpen={openConversationById}
+      />
     </View>
   );
 }

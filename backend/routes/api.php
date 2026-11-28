@@ -168,6 +168,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::post('/chat-lists/{id}/remove-members', [\App\Http\Controllers\Api\CrmController::class, 'removeChatListMembers']);
         Route::post('/messages/{id}/star', [\App\Http\Controllers\Api\CrmController::class, 'toggleMessageStar']);
         Route::get('/starred-messages', [\App\Http\Controllers\Api\CrmController::class, 'getGlobalStarredMessages']);
+        Route::get('/media-library', [\App\Http\Controllers\Api\CrmController::class, 'getMediaLibrary']);
         Route::get('/search/messages', [\App\Http\Controllers\Api\CrmController::class, 'searchMessages']);
         Route::get('/conversations/{id}/starred', [\App\Http\Controllers\Api\CrmController::class, 'getStarredMessages']);
         Route::get('/quick-replies', [\App\Http\Controllers\Api\CrmController::class, 'getQuickReplies']);
@@ -235,6 +236,7 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/conversations/{id}/members', [\App\Http\Controllers\Api\CrmController::class, 'getGroupMembers']);
         Route::post('/messages/forward', [\App\Http\Controllers\Api\CrmController::class, 'forwardMessage']);
         Route::post('/messages/delete', [\App\Http\Controllers\Api\CrmController::class, 'deleteMessage']);
+        Route::post('/messages/edit', [\App\Http\Controllers\Api\CrmController::class, 'editMessage']);
         Route::put('/conversations/{id}', [\App\Http\Controllers\Api\CrmController::class, 'renameConversation']);
         Route::post('/conversations/{id}/resolve', [\App\Http\Controllers\Api\CrmController::class, 'resolveConversation']);
         Route::post('/conversations/{id}/reopen', [\App\Http\Controllers\Api\CrmController::class, 'reopenConversation']);
@@ -249,6 +251,12 @@ Route::middleware(['api', HandleCors::class])->group(function () {
         Route::get('/conversations/{id}/notes', [\App\Http\Controllers\Api\CrmController::class, 'getNotes']);
         Route::post('/conversations/{id}/notes', [\App\Http\Controllers\Api\CrmController::class, 'addNote']);
         Route::delete('/notes/{id}', [\App\Http\Controllers\Api\CrmController::class, 'deleteNote']);
+        Route::put('/messages/{id}/note', [\App\Http\Controllers\Api\CrmController::class, 'setMessageNote']);
+        Route::post('/messages/schedule', [\App\Http\Controllers\Api\CrmController::class, 'scheduleMessage']);
+        Route::get('/conversations/{id}/scheduled', [\App\Http\Controllers\Api\CrmController::class, 'listScheduledMessages']);
+        Route::delete('/scheduled/{id}', [\App\Http\Controllers\Api\CrmController::class, 'cancelScheduledMessage']);
+        Route::post('/conversations/open-member', [\App\Http\Controllers\Api\CrmController::class, 'openMemberConversation']);
+        Route::get('/translate', [\App\Http\Controllers\Api\CrmController::class, 'translate']);
 
         // WhatsApp statuses (stories) — captured from status@broadcast traffic
         Route::get('/statuses', [\App\Http\Controllers\Api\CrmController::class, 'getStatuses']);
